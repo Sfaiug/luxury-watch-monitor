@@ -2,6 +2,7 @@
 
 import asyncio
 import signal
+import os
 from typing import Dict, List, Set, Optional, Type
 import aiohttp
 
@@ -142,6 +143,12 @@ class WatchMonitor:
             # Create tasks for all sites
             tasks = []
             for site_key, scraper in self.scrapers.items():
+                # Skip sites that consistently fail (can be configured)
+                skip_sites = os.environ.get('SKIP_SITES', '').split(',') if os.environ.get('SKIP_SITES') else []
+                if site_key in skip_sites:
+                    self.logger.info(f"Skipping {site_key} (in SKIP_SITES)")
+                    continue
+                    
                 task = scrape_site_with_semaphore(site_key, scraper)
                 tasks.append(task)
             

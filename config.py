@@ -193,7 +193,7 @@ SITE_CONFIGS = {
     "watch_out": SiteConfig(
         name="Watch Out",
         key="watch_out",
-        url="https://www.watch-out.shop/collections/gebrauchte-uhren?sort_by=created-descending",
+        url="https://www.watch-out.shop/collections/neu-eingetroffen?sort_by=created-descending",
         webhook_env_var="WATCH_OUT_WEBHOOK_URL",
         color=0xC0C0C0,
         base_url="https://www.watch-out.shop",
