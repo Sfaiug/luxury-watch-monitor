@@ -1,0 +1,20 @@
+version: '3.8'
+
+services:
+  watch-monitor:
+    build: .
+    container_name: watch-monitor
+    environment:
+      - PYTHONUNBUFFERED=1
+    volumes:
+      - ./logs:/app/logs
+      - ./seen_watches.json:/app/seen_watches.json
+      - ./session_history.json:/app/session_history.json
+      - ./.env:/app/.env
+    restart: unless-stopped
+    networks:
+      - watch-network
+
+networks:
+  watch-network:
+    driver: bridge
