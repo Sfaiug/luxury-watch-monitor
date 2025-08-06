@@ -158,7 +158,7 @@ SITE_CONFIGS = {
     "tropicalwatch": SiteConfig(
         name="Tropical Watch",
         key="tropicalwatch",
-        url="https://tropicalwatch.com/?sort=recent",
+        url="https://tropicalwatch.com/",
         webhook_env_var="TROPICALWATCH_WEBHOOK_URL",
         color=0x008080,
         base_url="https://tropicalwatch.com",
