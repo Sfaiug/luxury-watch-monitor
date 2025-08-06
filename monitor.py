@@ -176,17 +176,35 @@ class WatchMonitor:
             # Scrape the site
             new_watches = await scraper.scrape()
             
+            # Enhanced logging for debugging
+            if new_watches:
+                self.logger.info(f"[{site_key}] Found {len(new_watches)} NEW watches to notify about:")
+                for watch in new_watches[:3]:  # Log first 3 for debugging
+                    self.logger.debug(f"  - {watch.title} (ID: {watch.composite_id[:8]}...)")
+            
             # Send notifications
             notifications_sent = 0
             if new_watches and APP_CONFIG.enable_notifications:
                 site_config = SITE_CONFIGS[site_key]
+                self.logger.info(f"[{site_key}] Sending {len(new_watches)} notifications...")
                 notifications_sent = await self.notification_manager.send_notifications(
                     new_watches,
                     site_config
                 )
+                if notifications_sent < len(new_watches):
+                    self.logger.warning(
+                        f"[{site_key}] Only {notifications_sent}/{len(new_watches)} notifications sent successfully"
+                    )
+            elif new_watches and not APP_CONFIG.enable_notifications:
+                self.logger.info(f"[{site_key}] Notifications disabled - would have sent {len(new_watches)}")
             
             # Update session statistics
             total_found = len(scraper.seen_ids) - len(self.seen_items.get(site_key, set()))
+            self.logger.debug(
+                f"[{site_key}] Stats - Total seen: {len(scraper.seen_ids)}, "
+                f"Previously seen: {len(self.seen_items.get(site_key, set()))}, "
+                f"New: {len(new_watches)}"
+            )
             session.add_site_result(
                 site_key,
                 total_found=total_found,

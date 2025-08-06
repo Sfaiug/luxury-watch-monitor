@@ -57,14 +57,27 @@ class BaseScraper(ABC):
                 
                 self.logger.info(f"Found {len(watches)} watches on listing page")
                 
+                # Log sample composite IDs for debugging
+                if watches and self.logger.logger.level <= 10:  # DEBUG level
+                    self.logger.debug("Sample watch IDs for debugging:")
+                    for watch in watches[:3]:
+                        self.logger.debug(
+                            f"  - {watch.title[:40]}... | Price: {watch.price_display or 'N/A'} | "
+                            f"ID: {watch.composite_id[:12]}..."
+                        )
+                
                 # Filter new watches
                 new_watches = []
                 for watch in watches:
-                    if watch.composite_id not in self.seen_ids:
+                    composite_id = watch.composite_id
+                    if composite_id not in self.seen_ids:
                         new_watches.append(watch)
-                        self.seen_ids.add(watch.composite_id)
+                        self.seen_ids.add(composite_id)
+                        self.logger.debug(f"New watch detected: {watch.title[:50]}... (ID: {composite_id[:8]}...)")
+                    else:
+                        self.logger.debug(f"Already seen: {watch.title[:50]}... (ID: {composite_id[:8]}...)")
                 
-                self.logger.info(f"Found {len(new_watches)} new watches")
+                self.logger.info(f"Found {len(new_watches)} new watches (Total seen: {len(self.seen_ids)})")
                 
                 # Fetch details for new watches
                 if new_watches and APP_CONFIG.enable_detail_scraping:

@@ -225,6 +225,19 @@ Examples:
         help="Run health check and exit"
     )
     
+    parser.add_argument(
+        "--reset-seen",
+        nargs="*",
+        metavar="SITE",
+        help="Reset seen watches for testing. Specify sites or leave empty for all sites"
+    )
+    
+    parser.add_argument(
+        "--test-notifications",
+        action="store_true",
+        help="Test notifications by clearing seen watches and running one cycle"
+    )
+    
     args = parser.parse_args()
     
     # Handle special commands that don't need monitor
@@ -248,6 +261,39 @@ Examples:
         print("\n💡 Tip: Create a .env file with webhook URLs or set environment variables")
         print("   Run with --create-env to generate a template")
         sys.exit(1)
+    
+    # Handle reset-seen before creating monitor
+    if args.reset_seen is not None:
+        from persistence import PersistenceManager
+        from logging_config import setup_logging
+        
+        temp_logger = setup_logging("INFO")
+        temp_persistence = PersistenceManager(temp_logger)
+        
+        # Load current seen items
+        seen_items = temp_persistence.load_seen_items()
+        
+        if not seen_items:
+            print("ℹ️  No seen watches to reset")
+        else:
+            # Reset specified sites or all if none specified
+            sites_to_reset = args.reset_seen if args.reset_seen else list(seen_items.keys())
+            
+            for site in sites_to_reset:
+                if site in seen_items:
+                    count = len(seen_items[site])
+                    del seen_items[site]
+                    print(f"✅ Reset {count} seen watches for {site}")
+                else:
+                    print(f"ℹ️  No seen watches for {site}")
+            
+            # Save updated seen items
+            temp_persistence.save_seen_items(seen_items)
+            print("\n🔄 Seen watches reset successfully!")
+        
+        if not args.test_notifications and not args.single:
+            # Exit if just resetting
+            return
     
     # Create monitor instance
     log_file = args.log_file
@@ -367,9 +413,16 @@ Examples:
                 print("\n❌ Some validations failed. Fix issues before deploying.")
                 sys.exit(1)
                 
-        elif args.single:
+        elif args.single or args.test_notifications:
             # Run single cycle
-            print("\n🔄 Running single monitoring cycle...")
+            if args.test_notifications:
+                print("\n🧪 Testing notifications with fresh detection...")
+                print("   - Seen watches have been reset")
+                print("   - Running single monitoring cycle")
+                print("   - Check your Discord for notifications\n")
+            else:
+                print("\n🔄 Running single monitoring cycle...")
+            
             start_time = datetime.now()
             
             session = await monitor.run_monitoring_cycle()
@@ -381,8 +434,18 @@ Examples:
             print(f"   New watches found:    {session.total_new_watches:,}")
             print(f"   Notifications sent:   {session.notifications_sent:,}")
             
-            if session.errors > 0:
-                print(f"   ⚠️  Errors encountered: {session.errors}")
+            if session.errors_encountered > 0:
+                print(f"   ⚠️  Errors encountered: {session.errors_encountered}")
+            
+            if args.test_notifications:
+                if session.notifications_sent > 0:
+                    print("\n✅ Notification test successful! Check Discord.")
+                else:
+                    print("\n⚠️  No notifications sent. This could mean:")
+                    print("   - No watches found on the sites")
+                    print("   - Webhook URLs not configured")
+                    print("   - Network issues")
+                    print("\nCheck the logs for details.")
             
         else:
             # Run continuous monitoring
