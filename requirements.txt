@@ -2,6 +2,7 @@
 aiohttp>=3.9.0
 beautifulsoup4>=4.12.0
 requests>=2.31.0  # For synchronous fallback
+psutil>=5.9.0  # For memory monitoring
 
 # Testing
 pytest>=7.4.0

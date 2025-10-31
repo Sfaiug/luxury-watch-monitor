@@ -62,8 +62,14 @@ class AppConfig:
     exchange_rate_cache_duration: int = int(os.getenv('EXCHANGE_RATE_CACHE_DURATION', '3600'))
     
     # Data retention
-    max_seen_items_per_site: int = int(os.getenv('MAX_SEEN_ITEMS_PER_SITE', '10000'))
+    max_seen_items_per_site: int = int(os.getenv('MAX_SEEN_ITEMS_PER_SITE', '5000'))
     session_history_retention_days: int = int(os.getenv('SESSION_HISTORY_RETENTION_DAYS', '30'))
+    
+    # Memory management
+    memory_warning_threshold_mb: int = int(os.getenv('MEMORY_WARNING_THRESHOLD_MB', '400'))
+    memory_critical_threshold_mb: int = int(os.getenv('MEMORY_CRITICAL_THRESHOLD_MB', '500'))
+    force_gc_every_n_cycles: int = int(os.getenv('FORCE_GC_EVERY_N_CYCLES', '10'))
+    max_session_history_entries: int = int(os.getenv('MAX_SESSION_HISTORY_ENTRIES', '1000'))
     
     # Feature flags
     enable_notifications: bool = os.getenv('ENABLE_NOTIFICATIONS', 'true').lower() in ('true', '1', 'yes')

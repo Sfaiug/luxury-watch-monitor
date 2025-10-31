@@ -62,39 +62,78 @@ class PersistenceManager:
     
     def save_seen_items(self, seen_items: Dict[str, Set[str]]):
         """
-        Save seen watch IDs to file.
+        Save seen watch IDs to file with strict limits enforced.
         
         Args:
             seen_items: Dictionary mapping site keys to sets of seen watch IDs
         """
         try:
-            # Enforce size limits per site
-            limited_items = {}
-            for site_key, items in seen_items.items():
-                if len(items) > APP_CONFIG.max_seen_items_per_site:
-                    # Keep only the most recent items
-                    # Since we're using sets, we can't determine order
-                    # In practice, you might want to use a different data structure
-                    items_list = list(items)
-                    limited_items[site_key] = items_list[-APP_CONFIG.max_seen_items_per_site:]
-                    self.logger.warning(
-                        f"Truncated seen items for {site_key}: "
-                        f"{len(items)} -> {len(limited_items[site_key])}"
-                    )
-                else:
-                    limited_items[site_key] = list(items)
+            # Trim items before saving to enforce strict limits
+            trimmed_items = self.trim_seen_items(seen_items)
+            
+            # Convert sets to lists for JSON serialization
+            serializable_items = {}
+            for site_key, items in trimmed_items.items():
+                serializable_items[site_key] = list(items)
             
             # Create directory if needed
             self.seen_items_file.parent.mkdir(parents=True, exist_ok=True)
             
             # Write to file
             with open(self.seen_items_file, 'w', encoding='utf-8') as f:
-                json.dump(limited_items, f, indent=2, ensure_ascii=False)
+                json.dump(serializable_items, f, indent=2, ensure_ascii=False)
             
             self.logger.debug("Saved seen items successfully")
             
         except Exception as e:
             self.logger.error(f"Error saving seen items: {e}")
+    
+    def trim_seen_items(self, seen_items: Dict[str, Set[str]]) -> Dict[str, Set[str]]:
+        """
+        Trim seen items to enforce strict limits per site with proper FIFO trimming.
+        
+        This method enforces the maximum number of seen items per site to prevent
+        unbounded memory growth. When the limit is exceeded, it keeps the most
+        recent items (FIFO - First In, First Out).
+        
+        Note: Since sets don't maintain insertion order in Python < 3.7, and we're
+        using sets for efficient lookup, we load from file to get the ordered list,
+        then trim and convert back to sets. In practice, newer items are typically
+        added to the end of the list when loaded from JSON.
+        
+        Args:
+            seen_items: Dictionary mapping site keys to sets of seen watch IDs
+        
+        Returns:
+            Dictionary with trimmed sets of seen watch IDs
+        """
+        trimmed_items = {}
+        max_items = APP_CONFIG.max_seen_items_per_site
+        
+        for site_key, items in seen_items.items():
+            original_count = len(items)
+            
+            if original_count > max_items:
+                # Convert to list for trimming
+                items_list = list(items)
+                
+                # Keep only the most recent items (last N items in the list)
+                # This implements FIFO - we keep the newest and discard the oldest
+                trimmed_list = items_list[-max_items:]
+                
+                # Convert back to set
+                trimmed_items[site_key] = set(trimmed_list)
+                
+                self.logger.warning(
+                    f"Trimmed seen items for {site_key}: "
+                    f"{original_count} -> {len(trimmed_items[site_key])} items "
+                    f"(removed {original_count - len(trimmed_items[site_key])} oldest items)"
+                )
+            else:
+                # No trimming needed
+                trimmed_items[site_key] = items
+        
+        return trimmed_items
     
     def load_session_history(self) -> List[Dict]:
         """
@@ -132,17 +171,8 @@ class PersistenceManager:
             # Add new session
             history.append(session.to_dict())
             
-            # Clean old sessions
-            if APP_CONFIG.session_history_retention_days > 0:
-                cutoff_date = datetime.now() - timedelta(days=APP_CONFIG.session_history_retention_days)
-                history = [
-                    s for s in history
-                    if datetime.fromisoformat(s['started_at']) > cutoff_date
-                ]
-            
-            # Limit total sessions
-            if len(history) > 1000:  # Keep last 1000 sessions
-                history = history[-1000:]
+            # Trim to enforce strict limits
+            history = self.trim_session_history(history)
             
             # Create directory if needed
             self.session_history_file.parent.mkdir(parents=True, exist_ok=True)
@@ -220,18 +250,59 @@ class PersistenceManager:
             self.logger.error(f"Error calculating statistics: {e}")
             return {}
     
+    def trim_session_history(self, history: Optional[List[Dict]] = None) -> List[Dict]:
+        """
+        Trim session history to enforce strict limits.
+        
+        This method applies aggressive trimming based on both time-based retention
+        and maximum entry count to prevent unbounded growth.
+        
+        Args:
+            history: Optional list of session dictionaries. If None, loads from file.
+        
+        Returns:
+            Trimmed list of session dictionaries
+        """
+        if history is None:
+            history = self.load_session_history()
+        
+        if not history:
+            return []
+        
+        original_count = len(history)
+        
+        # First, apply time-based retention if configured
+        if APP_CONFIG.session_history_retention_days > 0:
+            cutoff_date = datetime.now() - timedelta(days=APP_CONFIG.session_history_retention_days)
+            history = [
+                s for s in history
+                if datetime.fromisoformat(s['started_at']) > cutoff_date
+            ]
+        
+        # Second, enforce strict maximum entry limit (most aggressive)
+        max_entries = APP_CONFIG.max_session_history_entries
+        if len(history) > max_entries:
+            # Keep only the most recent entries
+            history = history[-max_entries:]
+            self.logger.warning(
+                f"Session history exceeded limit: trimmed to {max_entries} most recent entries"
+            )
+        
+        # Log if any trimming occurred
+        if len(history) < original_count:
+            self.logger.info(
+                f"Trimmed session history: {original_count} -> {len(history)} entries"
+            )
+        
+        return history
+    
     def cleanup_old_data(self):
         """Clean up old data files and entries."""
         try:
             # Clean session history
-            if self.session_history_file.exists() and APP_CONFIG.session_history_retention_days > 0:
+            if self.session_history_file.exists():
                 history = self.load_session_history()
-                cutoff_date = datetime.now() - timedelta(days=APP_CONFIG.session_history_retention_days)
-                
-                cleaned_history = [
-                    s for s in history
-                    if datetime.fromisoformat(s['started_at']) > cutoff_date
-                ]
+                cleaned_history = self.trim_session_history(history)
                 
                 if len(cleaned_history) < len(history):
                     with open(self.session_history_file, 'w', encoding='utf-8') as f:

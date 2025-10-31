@@ -314,6 +314,11 @@ class ScrapingSession:
     notifications_sent: int = 0
     errors_encountered: int = 0
     
+    # Memory tracking
+    memory_usage_start_mb: Optional[float] = None
+    memory_usage_end_mb: Optional[float] = None
+    memory_delta_mb: Optional[float] = None
+    
     # Per-site statistics
     site_stats: Dict[str, Dict[str, int]] = field(default_factory=dict)
     
@@ -355,5 +360,8 @@ class ScrapingSession:
             "total_new_watches": self.total_new_watches,
             "notifications_sent": self.notifications_sent,
             "errors_encountered": self.errors_encountered,
+            "memory_usage_start_mb": self.memory_usage_start_mb,
+            "memory_usage_end_mb": self.memory_usage_end_mb,
+            "memory_delta_mb": self.memory_delta_mb,
             "site_stats": self.site_stats
         }

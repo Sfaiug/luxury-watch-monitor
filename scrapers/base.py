@@ -42,6 +42,7 @@ class BaseScraper(ABC):
             List of new watches found
         """
         with PerformanceLogger(self.logger.logger, f"scraping {self.config.name}"):
+            soup = None
             try:
                 # Fetch listing page
                 self.logger.info(f"Fetching listing page: {self.config.url}")
@@ -54,6 +55,10 @@ class BaseScraper(ABC):
                 # Parse watches
                 soup = BeautifulSoup(content, 'html.parser')
                 watches = await self._extract_watches(soup)
+                
+                # Clean up soup object immediately after parsing
+                self._cleanup_soup(soup)
+                soup = None
                 
                 self.logger.info(f"Found {len(watches)} watches on listing page")
                 
@@ -88,6 +93,10 @@ class BaseScraper(ABC):
             except Exception as e:
                 self.logger.exception(f"Error during scraping: {e}")
                 return []
+            finally:
+                # Ensure soup is cleaned up even if an exception occurs
+                if soup is not None:
+                    self._cleanup_soup(soup)
     
     @abstractmethod
     async def _extract_watches(self, soup: BeautifulSoup) -> List[WatchData]:
@@ -138,12 +147,18 @@ class BaseScraper(ABC):
         if not content:
             return
         
-        soup = BeautifulSoup(content, 'html.parser')
-        
-        # Call site-specific detail extraction
-        await self._extract_watch_details(watch, soup)
-        
-        watch.detail_scraped = True
+        soup = None
+        try:
+            soup = BeautifulSoup(content, 'html.parser')
+            
+            # Call site-specific detail extraction
+            await self._extract_watch_details(watch, soup)
+            
+            watch.detail_scraped = True
+        finally:
+            # Clean up soup object after use
+            if soup is not None:
+                self._cleanup_soup(soup)
     
     async def _extract_watch_details(self, watch: WatchData, soup: BeautifulSoup):
         """
@@ -155,6 +170,20 @@ class BaseScraper(ABC):
             soup: BeautifulSoup of detail page
         """
         pass
+    
+    def _cleanup_soup(self, soup: BeautifulSoup):
+        """
+        Explicitly clean up BeautifulSoup object to release memory.
+        
+        Args:
+            soup: BeautifulSoup object to clean up
+        """
+        if soup is not None:
+            try:
+                # Decompose the soup tree to break circular references
+                soup.decompose()
+            except Exception as e:
+                self.logger.debug(f"Error during soup cleanup: {e}")
     
     # Common parsing helpers
     
