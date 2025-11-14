@@ -21,8 +21,14 @@ def setup_logging(log_level: str = "INFO", log_file: Optional[str] = None) -> lo
     # Create logger
     logger = logging.getLogger("watch_monitor")
     logger.setLevel(getattr(logging, log_level.upper()))
-    
-    # Remove existing handlers
+
+    # Remove existing handlers (close them first to prevent handle leaks)
+    for handler in logger.handlers[:]:
+        try:
+            handler.close()
+        except Exception:
+            pass  # Ignore errors during handler cleanup
+        logger.removeHandler(handler)
     logger.handlers.clear()
     
     # Create formatters

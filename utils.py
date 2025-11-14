@@ -16,11 +16,22 @@ from logging_config import PerformanceLogger
 T = TypeVar('T')
 
 
-# Exchange rate cache
+# Exchange rate cache (module-level for cross-session sharing)
+# Note: This is intentionally module-level to cache rates across all scrapers
+# Memory footprint is minimal (2 values: float + timestamp)
 _exchange_rate_cache = {
     "rate": None,
     "last_fetched": 0
 }
+
+
+def clear_exchange_rate_cache():
+    """Clear the exchange rate cache to release memory."""
+    global _exchange_rate_cache
+    _exchange_rate_cache = {
+        "rate": None,
+        "last_fetched": 0
+    }
 
 
 async def retry_with_backoff(
@@ -76,10 +87,13 @@ async def fetch_page(session: aiohttp.ClientSession, url: str, logger=None) -> O
     async def _fetch():
         headers = {"User-Agent": APP_CONFIG.user_agent}
         timeout = aiohttp.ClientTimeout(total=APP_CONFIG.request_timeout)
-        
+
         async with session.get(url, headers=headers, timeout=timeout) as response:
             response.raise_for_status()
-            return await response.text()
+            text = await response.text()
+            # Explicitly release response to free connection buffers
+            await response.release()
+            return text
     
     try:
         if logger:

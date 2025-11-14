@@ -13,6 +13,7 @@ from notifications import NotificationManager
 from logging_config import setup_logging, PerformanceLogger
 from scrapers.base import BaseScraper
 from memory_monitor import MemoryMonitor
+from utils import clear_exchange_rate_cache
 
 # Import all scraper implementations
 from scrapers.worldoftime import WorldOfTimeScraper
@@ -150,15 +151,19 @@ class WatchMonitor:
                 if self.scrapers:
                     self.scrapers.clear()
                     self.scrapers = {}
-                
+
                 self.logger.debug("Clearing seen_items dictionary...")
                 if self.seen_items:
                     self.seen_items.clear()
                     self.seen_items = {}
-                
+
                 # Clear notification manager reference
                 self.notification_manager = None
-                
+
+                # Clear module-level caches
+                self.logger.debug("Clearing exchange rate cache...")
+                clear_exchange_rate_cache()
+
                 self.logger.info("Watch monitor cleaned up successfully")
             except Exception as e:
                 self.logger.error(f"Error during final cleanup: {e}", exc_info=True)
@@ -426,7 +431,15 @@ class WatchMonitor:
             
             # Update global seen items
             self.seen_items[site_key] = scraper.seen_ids
-            
+
+            # Trim this site's items immediately to prevent accumulation
+            if len(self.seen_items[site_key]) > APP_CONFIG.max_seen_items_per_site:
+                items_list = list(self.seen_items[site_key])
+                self.seen_items[site_key] = set(items_list[-APP_CONFIG.max_seen_items_per_site:])
+                self.logger.debug(
+                    f"[{site_key}] Trimmed seen items: {len(items_list)} -> {len(self.seen_items[site_key])}"
+                )
+
             # Save seen items after each site
             self.persistence.save_seen_items(self.seen_items)
             

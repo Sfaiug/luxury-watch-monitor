@@ -1,6 +1,7 @@
 # Core dependencies
 aiohttp>=3.9.0
 beautifulsoup4>=4.12.0
+lxml>=4.9.0  # For BeautifulSoup parser with better memory management
 requests>=2.31.0  # For synchronous fallback
 psutil>=5.9.0  # For memory monitoring
 

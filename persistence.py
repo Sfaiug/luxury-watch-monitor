@@ -167,12 +167,12 @@ class PersistenceManager:
         try:
             # Load existing history
             history = self.load_session_history()
-            
+
+            # Trim to enforce strict limits BEFORE appending (prevents memory spikes)
+            history = self.trim_session_history(history)
+
             # Add new session
             history.append(session.to_dict())
-            
-            # Trim to enforce strict limits
-            history = self.trim_session_history(history)
             
             # Create directory if needed
             self.session_history_file.parent.mkdir(parents=True, exist_ok=True)

@@ -53,11 +53,12 @@ class BaseScraper(ABC):
                     return []
                 
                 # Parse watches
-                soup = BeautifulSoup(content, 'html.parser')
+                soup = BeautifulSoup(content, 'lxml')
                 watches = await self._extract_watches(soup)
-                
+
                 # Clean up soup object immediately after parsing
                 self._cleanup_soup(soup)
+                del soup
                 soup = None
                 
                 self.logger.info(f"Found {len(watches)} watches on listing page")
@@ -149,16 +150,17 @@ class BaseScraper(ABC):
         
         soup = None
         try:
-            soup = BeautifulSoup(content, 'html.parser')
-            
+            soup = BeautifulSoup(content, 'lxml')
+
             # Call site-specific detail extraction
             await self._extract_watch_details(watch, soup)
-            
+
             watch.detail_scraped = True
         finally:
             # Clean up soup object after use
             if soup is not None:
                 self._cleanup_soup(soup)
+                del soup
     
     async def _extract_watch_details(self, watch: WatchData, soup: BeautifulSoup):
         """

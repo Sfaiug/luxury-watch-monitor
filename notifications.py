@@ -135,8 +135,9 @@ class NotificationManager:
                             if retry_response.status == 204:
                                 return True
                     
-                    # Log error response
+                    # Log error response (limit size to prevent memory accumulation)
                     error_text = await response.text()
+                    error_text = error_text[:500] if error_text else "No error message"
                     self.logger.error(
                         f"Discord webhook error for {site_name}: "
                         f"Status {response.status}, Response: {error_text}"
