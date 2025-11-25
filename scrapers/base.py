@@ -54,6 +54,12 @@ class BaseScraper(ABC):
                 
                 # Parse watches
                 soup = BeautifulSoup(content, 'lxml')
+
+                # CRITICAL FIX: Delete content string immediately after soup creation
+                # to prevent memory leak from accumulating large HTML strings
+                del content
+                content = None
+
                 watches = await self._extract_watches(soup)
 
                 # Clean up soup object immediately after parsing
@@ -151,6 +157,11 @@ class BaseScraper(ABC):
         soup = None
         try:
             soup = BeautifulSoup(content, 'lxml')
+
+            # CRITICAL FIX: Delete content string immediately after soup creation
+            # to prevent memory leak from accumulating large HTML strings
+            del content
+            content = None
 
             # Call site-specific detail extraction
             await self._extract_watch_details(watch, soup)

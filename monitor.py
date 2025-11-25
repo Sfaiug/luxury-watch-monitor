@@ -128,9 +128,19 @@ class WatchMonitor:
             if self.session:
                 try:
                     self.logger.debug("Closing aiohttp session...")
-                    await self.session.close()
-                    # Wait a bit for connections to close properly
-                    await asyncio.sleep(0.25)
+
+                    # ENHANCED: Close the session properly
+                    if not self.session.closed:
+                        await self.session.close()
+
+                    # INCREASED DELAY: Give more time for connections to close
+                    await asyncio.sleep(0.5)  # Increased from 0.25
+
+                    # ENHANCED: Force connector cleanup
+                    if hasattr(self.session, '_connector') and self.session._connector:
+                        if not self.session._connector.closed:
+                            await self.session._connector.close()
+
                     self.session = None
                     self.logger.debug("aiohttp session closed successfully")
                 except Exception as e:
@@ -181,7 +191,15 @@ class WatchMonitor:
             # Log memory before cleanup
             memory_before = self.memory_monitor.get_current_usage_mb()
             self.logger.info(f"Memory before cleanup: {memory_before:.2f}MB")
-            
+
+            # ENHANCED: Clear scraper internal state
+            self.logger.debug("Clearing scraper internal state...")
+            for site_key, scraper in self.scrapers.items():
+                # Reset any cached data in scrapers (if present)
+                if hasattr(scraper, '_cache'):
+                    scraper._cache = {}
+                    self.logger.debug(f"Cleared cache for {site_key}")
+
             # Trim session history
             self.logger.debug("Trimming session history...")
             self.persistence.cleanup_old_data()

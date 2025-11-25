@@ -93,6 +93,16 @@ async def fetch_page(session: aiohttp.ClientSession, url: str, logger=None) -> O
             text = await response.text()
             # Explicitly release response to free connection buffers
             await response.release()
+
+            # ENHANCED: Monitor response size to identify problematic sites
+            text_size_mb = len(text) / (1024 * 1024)
+            if text_size_mb > 1.0:  # Warn if page exceeds 1MB
+                if logger:
+                    logger.warning(
+                        f"Large response from {url}: {text_size_mb:.2f}MB "
+                        f"({len(text):,} bytes) - may contribute to memory pressure"
+                    )
+
             return text
     
     try:
