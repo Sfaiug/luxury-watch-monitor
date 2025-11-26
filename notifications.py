@@ -153,6 +153,11 @@ class NotificationManager:
             except Exception as e:
                 self.logger.exception(f"Unexpected error sending notification to {site_name}: {e}")
                 return False
+            finally:
+                # ENHANCED: Explicit cleanup of payload/embed to prevent retention
+                if 'payload' in locals():
+                    payload.clear()
+                    del payload
     
     async def test_webhook(self, webhook_url: str) -> bool:
         """

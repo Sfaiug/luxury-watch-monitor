@@ -123,3 +123,66 @@ class MemoryMonitor:
             collected.append(num_collected)
         
         return tuple(collected)
+
+    def trim_memory(self) -> bool:
+        """
+        Force Python to return freed memory to the operating system.
+
+        Uses malloc_trim() on Linux to release memory from Python's memory
+        allocator back to the OS. This is critical for preventing RSS growth
+        because Python's pymalloc does not automatically return freed memory.
+
+        Background:
+        - Python uses reference counting + garbage collection for memory management
+        - When objects are freed, memory is released to Python's internal pool
+        - BUT Python does not automatically return this memory to the OS
+        - RSS (Resident Set Size) stays high even with freed objects
+        - malloc_trim() forces the allocator to return memory to OS
+
+        Platform support:
+        - Linux: malloc_trim() from libc.so.6 (fully supported)
+        - macOS: Not available (no equivalent function)
+        - Windows: Uses _heapmin() from msvcrt
+
+        Returns:
+            bool: True if malloc_trim was called successfully, False otherwise
+
+        Requirements: 3.1, 4.1
+        """
+        try:
+            import ctypes
+            import platform
+
+            system = platform.system()
+
+            if system == 'Linux':
+                # On Linux, use malloc_trim from glibc
+                try:
+                    libc = ctypes.CDLL('libc.so.6')
+                    # malloc_trim(0) releases all possible memory to OS
+                    # Returns 1 if memory was released, 0 otherwise
+                    result = libc.malloc_trim(0)
+                    return result == 1
+                except (OSError, AttributeError) as e:
+                    return False
+
+            elif system == 'Darwin':  # macOS
+                # macOS doesn't have malloc_trim
+                # We'll rely on GC more heavily here
+                return False
+
+            elif system == 'Windows':
+                # Windows uses _heapmin to compact heap
+                try:
+                    msvcrt = ctypes.CDLL('msvcrt')
+                    result = msvcrt._heapmin()
+                    return result == 0  # 0 = success
+                except (OSError, AttributeError):
+                    return False
+
+            # Unknown platform
+            return False
+
+        except Exception as e:
+            # If anything goes wrong, fail gracefully
+            return False

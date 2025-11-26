@@ -218,9 +218,23 @@ class WatchMonitor:
                 f"Garbage collection complete: "
                 f"gen0={collected[0]}, gen1={collected[1]}, gen2={collected[2]} objects collected"
             )
-            
+
+            # Force memory return to OS using malloc_trim
+            self.logger.debug("Forcing memory return to OS...")
+            trim_success = self.memory_monitor.trim_memory()
+            if trim_success:
+                self.logger.info("Successfully trimmed memory and returned to OS")
+            else:
+                self.logger.debug("malloc_trim not available (using GC only)")
+
+            # Log memory after trim
+            memory_after_trim = self.memory_monitor.get_current_usage_mb()
+            trim_freed = memory_before - memory_after_trim
+            if trim_freed > 0:
+                self.logger.info(f"Memory freed by malloc_trim: {trim_freed:.2f}MB")
+
             # Log memory after cleanup
-            memory_after = self.memory_monitor.get_current_usage_mb()
+            memory_after = memory_after_trim
             memory_freed = memory_before - memory_after
             self.logger.info(
                 f"Memory after cleanup: {memory_after:.2f}MB "
@@ -300,7 +314,22 @@ class WatchMonitor:
                 f"Total garbage collection: "
                 f"gen0={total_collected[0]}, gen1={total_collected[1]}, gen2={total_collected[2]} objects collected"
             )
-            
+
+            # CRITICAL: Force aggressive memory return to OS
+            self.logger.critical("Forcing aggressive memory return to OS...")
+            trim_success = self.memory_monitor.trim_memory()
+            if trim_success:
+                self.logger.warning("Successfully forced memory trim in emergency cleanup")
+
+                # Log memory after emergency trim
+                memory_after_trim = self.memory_monitor.get_current_usage_mb()
+                emergency_trim_freed = memory_before - memory_after_trim
+                if emergency_trim_freed > 0:
+                    self.logger.warning(
+                        f"Emergency malloc_trim freed {emergency_trim_freed:.2f}MB "
+                        f"(total freed in emergency: {memory_before - memory_after_trim:.2f}MB)"
+                    )
+
             # Log memory after emergency cleanup
             memory_after = self.memory_monitor.get_current_usage_mb()
             memory_freed = memory_before - memory_after
@@ -483,7 +512,17 @@ class WatchMonitor:
                 # Perform periodic cleanup every N cycles
                 if self.cycle_count % APP_CONFIG.force_gc_every_n_cycles == 0:
                     self._perform_periodic_cleanup()
-                
+
+                # Suggest restart after 100 cycles (~8 hours) for complete memory reclamation
+                max_cycles = int(os.getenv('MAX_CYCLES_BEFORE_RESTART', '100'))
+                if max_cycles > 0 and self.cycle_count >= max_cycles:
+                    self.logger.warning(
+                        f"Reached maximum cycle count ({max_cycles}). "
+                        f"Recommending process restart for complete memory reclamation."
+                    )
+                    self.running = False
+                    break
+
                 # Wait for next cycle or shutdown
                 try:
                     await asyncio.wait_for(
