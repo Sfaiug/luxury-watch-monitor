@@ -494,12 +494,19 @@ class WatchMonitor:
             self.logger.exception(f"Error scraping {site_key}: {e}")
             session.add_site_result(site_key, 0, 0, 0, errors=1)
     
-    async def run_continuous(self):
-        """Run continuous monitoring with configured interval."""
+    async def run_continuous(self) -> bool:
+        """
+        Run continuous monitoring with configured interval.
+        
+        Returns:
+            bool: True if restart is requested, False otherwise
+        """
         self.running = True
         self.logger.info(
             f"Starting continuous monitoring with {APP_CONFIG.check_interval_seconds}s interval"
         )
+        
+        should_restart = False
         
         while self.running:
             try:
@@ -518,9 +525,10 @@ class WatchMonitor:
                 if max_cycles > 0 and self.cycle_count >= max_cycles:
                     self.logger.warning(
                         f"Reached maximum cycle count ({max_cycles}). "
-                        f"Recommending process restart for complete memory reclamation."
+                        f"Requesting process restart for complete memory reclamation."
                     )
                     self.running = False
+                    should_restart = True
                     break
 
                 # Wait for next cycle or shutdown
@@ -540,7 +548,8 @@ class WatchMonitor:
                 # Wait a bit before retrying
                 await asyncio.sleep(10)
         
-        self.logger.info("Continuous monitoring stopped")
+        self.logger.info(f"Continuous monitoring stopped (restart={should_restart})")
+        return should_restart
     
     async def validate_configuration(self) -> bool:
         """

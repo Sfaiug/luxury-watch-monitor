@@ -118,7 +118,13 @@ async def run_with_restart(monitor: WatchMonitor, max_restarts: int = 3):
                 print(f"\n🔄 Restarting monitor (attempt {restart_count}/{max_restarts})...")
                 await asyncio.sleep(10)  # Wait before restart
             
-            await monitor.run_continuous()
+            should_restart = await monitor.run_continuous()
+            if should_restart:
+                print("\n🔄 Performing planned process restart for memory cleanup...")
+                await monitor.cleanup()
+                # Restart process
+                os.execv(sys.executable, [sys.executable] + sys.argv)
+            
             break  # Normal exit
             
         except KeyboardInterrupt:
@@ -459,7 +465,11 @@ Examples:
             if args.auto_restart:
                 await run_with_restart(monitor, args.max_restarts)
             else:
-                await monitor.run_continuous()
+                should_restart = await monitor.run_continuous()
+                if should_restart:
+                    print("\n🔄 Performing planned process restart for memory cleanup...")
+                    await monitor.cleanup()
+                    os.execv(sys.executable, [sys.executable] + sys.argv)
             
     except KeyboardInterrupt:
         print("\n\n⏹️  Monitoring stopped by user")

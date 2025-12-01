@@ -98,6 +98,16 @@ class GrimmeissenScraper(BaseScraper):
                 # Update model by removing brand from title
                 watch.model = extract_text_from_element(title_detail_tag, separator=" ").replace(watch.brand, "").strip()
         
+        # Extract price from detail page (fallback/override if missing or different)
+        # Selector: sibling paragraph of the title h1
+        price_detail_tag = soup.select_one("h1.lowpad-b + p")
+        if price_detail_tag:
+            price_text = extract_text_from_element(price_detail_tag)
+            if price_text:
+                parsed_price = parse_price(price_text, "EUR")
+                if parsed_price:
+                    watch.price = parsed_price
+        
         # Parse details from tables - exact mapping from original
         details_container = soup.select_one("div.c-7.do-lefty")
         if details_container:
