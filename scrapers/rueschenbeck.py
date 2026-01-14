@@ -16,10 +16,10 @@ class RueschenbeckScraper(BaseScraper):
     async def _extract_watches(self, soup: BeautifulSoup) -> List[WatchData]:
         """Extract watches from Rüschenbeck listing page."""
         watches = []
-        
-        # Use exact selectors from original implementation
-        watch_elements = soup.select('li.-rb-list-item')
-        
+
+        # Updated selector for new website structure (2025+)
+        watch_elements = soup.select('div.product-list-item.card.product-box')
+
         for item_tag in watch_elements:
             try:
                 watch = self._parse_watch_element(item_tag)
@@ -31,70 +31,113 @@ class RueschenbeckScraper(BaseScraper):
         return watches
     
     def _parse_watch_element(self, item_tag) -> Optional[WatchData]:
-        """Parse a single watch element from listing page - matching original logic exactly."""
-        
-        # Skip sold items
-        availability_div = item_tag.select_one('.-rb-availability .out-of-stock span.value, .-rb-availability .sold span.value')
-        if availability_div and "verkauft" in extract_text_from_element(availability_div).lower():
-            return None
-        
-        # Extract URL
-        link_tag = item_tag.select_one('a.-rb-list-item-link')
+        """Parse a single watch element from listing page - updated for 2025 website structure."""
+
+        # Extract URL and title from the main card link
+        link_tag = item_tag.select_one('a.card-body')
         if not (link_tag and link_tag.has_attr('href')):
             return None
-        
-        url = urljoin(self.config.base_url, link_tag['href'])
-        
+
+        url = link_tag['href']
+        if not url.startswith('http'):
+            url = urljoin(self.config.base_url, url)
+
+        # Get title from data-title attribute
+        full_title_from_listing = link_tag.get('data-title', 'Unknown Watch')
+
         # Extract image URL
-        img_tag = item_tag.select_one('.-rb-list-image img')
+        img_tag = item_tag.select_one('img.product-image')
         image_url = None
-        if img_tag and img_tag.has_attr('src'):
-            image_url = urljoin(self.config.base_url, img_tag['src'])
-        
-        # Extract brand
-        brand_elem = item_tag.select_one('span.-rb-manufacturer-name')
-        brand = extract_text_from_element(brand_elem) if brand_elem else None
-        
-        # Extract model
-        model_elem = item_tag.select_one('span.-rb-line-name')
-        model = extract_text_from_element(model_elem) if model_elem else None
-        
-        # Extract title and reference from product name
-        prod_name_tag = item_tag.select_one('span.-rb-prod-name')
-        full_title_from_listing = extract_text_from_element(prod_name_tag) if prod_name_tag else "Unknown Watch"
-        
-        # Extract reference from title using original logic
+        if img_tag:
+            # Prefer srcset for higher resolution, fallback to src
+            srcset = img_tag.get('srcset', '')
+            if srcset:
+                # Get the highest resolution from srcset
+                sources = [s.strip().split(' ')[0] for s in srcset.split(',') if s.strip()]
+                if sources:
+                    image_url = sources[-1]  # Last one is usually highest res
+            if not image_url:
+                image_url = img_tag.get('src')
+            if image_url and not image_url.startswith('http'):
+                image_url = urljoin(self.config.base_url, image_url)
+
+        # Extract brand, model, and reference from URL slug
+        # URL format: /brand-model-reference-sku-certified-pre-owned
+        brand = None
+        model = None
         reference = None
-        if full_title_from_listing:
+
+        # Parse URL path for watch details
+        url_path = url.split('/')[-1] if '/' in url else ''
+        if url_path and 'certified-pre-owned' in url_path:
+            # Remove the "certified-pre-owned" suffix
+            slug_parts = url_path.replace('-certified-pre-owned', '').split('-')
+
+            # Known watch brands (lowercase)
+            known_brands = {
+                'rolex': 'Rolex', 'omega': 'Omega', 'patek': 'Patek Philippe',
+                'audemars': 'Audemars Piguet', 'cartier': 'Cartier', 'iwc': 'IWC',
+                'breitling': 'Breitling', 'panerai': 'Panerai', 'tudor': 'Tudor',
+                'jaeger': 'Jaeger-LeCoultre', 'hublot': 'Hublot', 'tag': 'TAG Heuer',
+                'vacheron': 'Vacheron Constantin', 'zenith': 'Zenith', 'longines': 'Longines',
+                'tissot': 'Tissot', 'seiko': 'Seiko', 'grand': 'Grand Seiko',
+                'chopard': 'Chopard', 'girard': 'Girard-Perregaux', 'blancpain': 'Blancpain',
+                'glashutte': 'Glashütte Original', 'a': 'A. Lange & Söhne'
+            }
+
+            if slug_parts:
+                # First part is typically the brand
+                first_part = slug_parts[0].lower()
+                brand = known_brands.get(first_part, slug_parts[0].title())
+
+                # Try to extract reference from data-product-number attribute
+                price_wrapper = item_tag.select_one('[data-product-number]')
+                if price_wrapper:
+                    product_number = price_wrapper.get('data-product-number', '')
+                    # Format: "16710#*510918" -> reference is "16710"
+                    if '#*' in product_number:
+                        reference = product_number.split('#*')[0]
+                    elif product_number:
+                        reference = product_number
+
+                # Extract model from slug (parts between brand and reference)
+                if len(slug_parts) > 2:
+                    # Find where the reference starts in the slug
+                    model_parts = []
+                    for part in slug_parts[1:]:
+                        # Stop when we hit the reference or SKU (usually numeric)
+                        if reference and part == reference.lower():
+                            break
+                        if part.isdigit() and len(part) >= 5:  # Likely SKU
+                            break
+                        model_parts.append(part)
+                    if model_parts:
+                        model = ' '.join(model_parts).title().replace('-', ' ')
+
+        # Fallback: extract reference from title if not found
+        if not reference and full_title_from_listing:
             ref_match = re.match(r'^([A-Za-z0-9\-./]+)', full_title_from_listing)
             if ref_match:
                 potential_ref = ref_match.group(1)
-                if not (potential_ref.lower() == "certified" or 
+                if not (potential_ref.lower() == "certified" or
                        (potential_ref.isdigit() and len(potential_ref) < 4)):
                     reference = potential_ref
-        
+
         # Extract price
-        price_box = item_tag.select_one('.price-box')
         price = None
-        if price_box:
-            # Check for special price first, then regular price
-            special_price_tag = price_box.select_one('p.special-price span.price')
-            regular_price_tag = price_box.select_one('span.regular-price span.price')
-            
-            price_text_raw = None
-            if special_price_tag:
-                price_text_raw = extract_text_from_element(special_price_tag)
-            elif regular_price_tag:
-                price_text_raw = extract_text_from_element(regular_price_tag)
-            
+        price_tag = item_tag.select_one('span.product-price')
+        if price_tag:
+            price_text_raw = extract_text_from_element(price_tag)
+            # Clean up: may contain both sale price and original price
+            # Take the first price value (current price)
             if price_text_raw:
                 price = parse_price(price_text_raw, "EUR")
-        
-        # Set initial condition based on certification badge
+
+        # Set condition based on CPO badge
         condition = None
-        if item_tag.select_one('span.-rb-icon.icn-cpo'):
+        if item_tag.select_one('div.badge-cpo, .badge.badge-cpo'):
             condition = "★★★★☆"  # CPO (Certified Pre-Owned) condition
-        
+
         # Create watch data
         return WatchData(
             title=full_title_from_listing,
