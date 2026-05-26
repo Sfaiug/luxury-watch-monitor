@@ -17,7 +17,7 @@ if Path(".env").exists():
     try:
         from dotenv import load_dotenv
 
-        load_dotenv()
+        load_dotenv(dotenv_path=Path(".env"), override=True)
         print("✅ Loaded configuration from .env file")
     except ImportError:
         print(
