@@ -1,5 +1,6 @@
 """Tests for Discord interaction handling."""
 
+import asyncio
 import json
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -43,6 +44,11 @@ class FakeOfferRequest:
 
     async def json(self):
         return self._payload
+
+
+class FakeLinkRequest:
+    def __init__(self, custom_id):
+        self.match_info = {"custom_id": custom_id}
 
 
 @pytest.mark.asyncio
@@ -118,6 +124,36 @@ async def test_duplicate_component_click_reports_existing_status(mock_logger, te
         )
 
         assert "already `queued`" in response["data"]["content"]
+    finally:
+        await server.stop()
+        store.close()
+
+
+@pytest.mark.asyncio
+async def test_signed_link_queues_muv_action(mock_logger, temp_dir):
+    store = ActionStore(str(temp_dir / "actions.sqlite3"))
+    fake_muv = FakeMUVService()
+    try:
+        watch = WatchData(
+            title="Rolex Submariner",
+            url="https://example.com/submariner",
+            site_name="Example",
+            site_key="example",
+        )
+        action_id = store.save_watch(watch)
+        custom_id = ActionStore.custom_id(action_id, "shared-secret")
+        server = DiscordInteractionServer(store, fake_muv, mock_logger)
+
+        with patch("discord_interactions.APP_CONFIG") as mock_config:
+            mock_config.action_token_secret = "shared-secret"
+            response = await server.handle_muv_action_link(FakeLinkRequest(custom_id))
+
+        assert response.status == 200
+        assert "queued on the VM" in response.text
+        assert store.get(action_id).status == "queued"
+
+        await asyncio.sleep(0)
+        assert fake_muv.handled == [action_id]
     finally:
         await server.stop()
         store.close()

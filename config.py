@@ -128,6 +128,9 @@ class AppConfig:
     )
     discord_public_key: str = os.getenv("DISCORD_PUBLIC_KEY", "")
     action_token_secret: str = os.getenv("ACTION_TOKEN_SECRET", "")
+    muv_http_actions_enabled: bool = _env_bool("MUV_HTTP_ACTIONS_ENABLED", "false")
+    muv_action_base_url: str = os.getenv("MUV_ACTION_BASE_URL", "")
+    muv_action_web_path: str = os.getenv("MUV_ACTION_WEB_PATH", "/muv/actions")
     muv_offer_webhook_path: str = os.getenv("MUV_OFFER_WEBHOOK_PATH", "/muv/offers")
     muv_offer_link_urls: str = os.getenv("MUV_OFFER_LINK_URLS", "")
     muv_offer_link_poll_seconds: int = int(

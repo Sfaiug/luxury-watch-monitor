@@ -50,13 +50,27 @@ class DiscordInteractionServer:
         self._tasks: Set[asyncio.Task] = set()
 
     async def start(self):
-        if not APP_CONFIG.discord_public_key:
+        if (
+            APP_CONFIG.discord_interactions_enabled
+            and not APP_CONFIG.discord_public_key
+        ):
             raise ValueError(
                 "DISCORD_PUBLIC_KEY is required when DISCORD_INTERACTIONS_ENABLED=true"
             )
 
         app = web.Application(client_max_size=512 * 1024)
-        app.router.add_post(APP_CONFIG.discord_interactions_path, self.handle_request)
+        discord_route_enabled = APP_CONFIG.discord_interactions_enabled or bool(
+            APP_CONFIG.discord_public_key
+        )
+        if discord_route_enabled:
+            app.router.add_post(
+                APP_CONFIG.discord_interactions_path, self.handle_request
+            )
+        if APP_CONFIG.muv_http_actions_enabled:
+            action_path = APP_CONFIG.muv_action_web_path.rstrip("/")
+            app.router.add_get(
+                action_path + "/{custom_id}", self.handle_muv_action_link
+            )
         app.router.add_post(APP_CONFIG.muv_offer_webhook_path, self.handle_muv_offer)
 
         self._runner = web.AppRunner(app)
@@ -68,10 +82,14 @@ class DiscordInteractionServer:
         )
         await self._site.start()
         self.logger.info(
-            "Discord interaction server listening on %s:%s%s and %s",
+            "MUV HTTP server listening on %s:%s%s and %s",
             APP_CONFIG.discord_interactions_host,
             APP_CONFIG.discord_interactions_port,
-            APP_CONFIG.discord_interactions_path,
+            (
+                APP_CONFIG.discord_interactions_path
+                if discord_route_enabled
+                else APP_CONFIG.muv_action_web_path
+            ),
             APP_CONFIG.muv_offer_webhook_path,
         )
 
@@ -142,6 +160,36 @@ class DiscordInteractionServer:
         return web.json_response(
             {"status": result.status, "error": result.error}, status=status
         )
+
+    async def handle_muv_action_link(self, request: web.Request) -> web.Response:
+        if not APP_CONFIG.action_token_secret:
+            return web.Response(status=503, text="ACTION_TOKEN_SECRET is required")
+
+        action_id = ActionStore.parse_custom_id(
+            request.match_info.get("custom_id", ""), APP_CONFIG.action_token_secret
+        )
+        if not action_id:
+            return web.Response(status=401, text="Invalid or expired MUV action link")
+
+        queued, record = self.store.queue_action(
+            action_id,
+            requested_by=None,
+            requested_by_name="signed-link",
+            interaction_id=None,
+        )
+        if not record:
+            return web.Response(status=404, text="MUV action was not found on the VM")
+
+        title = record.listing.get("title") or "this listing"
+        if queued:
+            task = asyncio.create_task(self._run_action(action_id))
+            self._tasks.add(task)
+            task.add_done_callback(self._tasks.discard)
+            text = f"MUV action queued on the VM for {title[:120]}. You can close this tab."
+        else:
+            text = f"MUV action is already {record.status} for {title[:120]}."
+
+        return web.Response(text=text, content_type="text/plain")
 
     async def handle_payload(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         interaction_type = payload.get("type")

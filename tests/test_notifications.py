@@ -5,6 +5,7 @@ import asyncio
 import json
 from unittest.mock import AsyncMock, Mock, patch
 from decimal import Decimal
+from urllib.parse import unquote
 
 from notifications import NotificationManager
 from models import WatchData
@@ -194,6 +195,9 @@ class TestNotificationManager:
                     mock_config.enable_muv_actions = True
                     mock_config.muv_action_label = "Send to MUV"
                     mock_config.action_token_secret = ""
+                    mock_config.muv_http_actions_enabled = False
+                    mock_config.muv_action_base_url = ""
+                    mock_config.muv_action_web_path = "/muv/actions"
                     mock_config.emoji_config = {
                         "question": "?",
                         "price": "Price",
@@ -224,6 +228,71 @@ class TestNotificationManager:
             assert payload["components"][0]["components"][0]["custom_id"].startswith(
                 "muv:"
             )
+        finally:
+            store.close()
+
+    @pytest.mark.asyncio
+    async def test_send_notification_adds_muv_link_button(
+        self,
+        mock_aiohttp_session,
+        mock_logger,
+        sample_watch_data,
+        test_site_config,
+        temp_dir,
+    ):
+        """Test MUV can use a VM-side signed link button without Discord app keys."""
+        store = ActionStore(str(temp_dir / "actions.sqlite3"))
+        try:
+            mock_response = AsyncMock()
+            mock_response.status = 204
+            mock_aiohttp_session.post.return_value.__aenter__.return_value = (
+                mock_response
+            )
+
+            with patch.dict(
+                "os.environ",
+                {
+                    test_site_config.webhook_env_var: "https://discord.com/api/webhooks/test/token"
+                },
+            ):
+                with patch("notifications.APP_CONFIG") as mock_config:
+                    mock_config.enable_notifications = True
+                    mock_config.enable_muv_actions = True
+                    mock_config.muv_action_label = "Send to MUV"
+                    mock_config.action_token_secret = "shared-secret"
+                    mock_config.muv_http_actions_enabled = True
+                    mock_config.muv_action_base_url = "https://atlas.hopcomp.com"
+                    mock_config.muv_action_web_path = "/muv/actions"
+                    mock_config.emoji_config = {
+                        "question": "?",
+                        "price": "Price",
+                        "reference": "Ref",
+                        "search": "Search",
+                        "year": "Year",
+                        "condition": "Condition",
+                        "box": "Box",
+                        "papers": "Papers",
+                        "material": "Material",
+                        "diameter": "Diameter",
+                        "check": "yes",
+                        "cross": "no",
+                    }
+
+                    manager = NotificationManager(
+                        mock_aiohttp_session, mock_logger, store
+                    )
+                    result = await manager.send_notifications(
+                        [sample_watch_data], test_site_config
+                    )
+
+            assert result == 1
+            payload = mock_aiohttp_session.post.call_args.kwargs["json"]
+            button = payload["components"][0]["components"][0]
+            assert button["style"] == 5
+            assert "custom_id" not in button
+            assert button["url"].startswith("https://atlas.hopcomp.com/muv/actions/")
+            custom_id = unquote(button["url"].rsplit("/", 1)[1])
+            assert ActionStore.parse_custom_id(custom_id, "shared-secret")
         finally:
             store.close()
 

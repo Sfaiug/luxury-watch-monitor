@@ -29,6 +29,23 @@ MUV_RESULT_WEBHOOK_URL=https://discord.com/api/webhooks/...
 
 `ACTION_TOKEN_SECRET` signs button custom IDs so stale or forged IDs are rejected.
 
+## Signed Link Button Fallback
+
+If there is no Discord application public key yet, use a normal Discord link
+button. The click opens a signed VM URL, and the VM queues the MUV action
+server-side:
+
+```env
+ENABLE_MUV_ACTIONS=true
+MUV_HTTP_ACTIONS_ENABLED=true
+MUV_ACTION_BASE_URL=https://YOUR_DOMAIN
+MUV_ACTION_WEB_PATH=/muv/actions
+ACTION_TOKEN_SECRET=long-random-secret
+```
+
+Expose `MUV_ACTION_WEB_PATH` and `MUV_OFFER_WEBHOOK_PATH` from nginx/Caddy to the
+monitor process on `DISCORD_INTERACTIONS_HOST:DISCORD_INTERACTIONS_PORT`.
+
 ## MUV Modes
 
 Default mode is safe preparation only:

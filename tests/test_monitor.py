@@ -26,6 +26,7 @@ def configure_monitor_config(
     mock_config.force_gc_every_n_cycles = 1000
     mock_config.enable_muv_actions = False
     mock_config.discord_interactions_enabled = False
+    mock_config.muv_http_actions_enabled = False
     mock_config.muv_offer_link_urls = ""
     mock_config.muv_offer_link_poll_seconds = 900
 

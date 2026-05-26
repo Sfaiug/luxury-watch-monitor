@@ -3,6 +3,7 @@
 import asyncio
 from datetime import datetime
 from typing import List, Dict, Any, Optional
+from urllib.parse import quote
 import aiohttp
 import logging
 
@@ -219,18 +220,43 @@ class NotificationManager:
             return None
 
         action_id = self.action_store.save_watch(watch)
+        custom_id = ActionStore.custom_id(action_id, APP_CONFIG.action_token_secret)
+        action_url = self._build_muv_action_url(custom_id)
+        if action_url:
+            button = {
+                "type": 2,
+                "style": 5,
+                "label": APP_CONFIG.muv_action_label,
+                "url": action_url,
+            }
+        else:
+            button = {
+                "type": 2,
+                "style": 1,
+                "label": APP_CONFIG.muv_action_label,
+                "custom_id": custom_id,
+            }
+
         return [
             {
                 "type": 1,
-                "components": [
-                    {
-                        "type": 2,
-                        "style": 1,
-                        "label": APP_CONFIG.muv_action_label,
-                        "custom_id": ActionStore.custom_id(
-                            action_id, APP_CONFIG.action_token_secret
-                        ),
-                    }
-                ],
+                "components": [button],
             }
         ]
+
+    @staticmethod
+    def _build_muv_action_url(custom_id: str) -> Optional[str]:
+        """Build a signed VM link-button URL when configured."""
+        if APP_CONFIG.muv_http_actions_enabled is not True:
+            return None
+        base_config = APP_CONFIG.muv_action_base_url
+        base_url = (
+            base_config.strip().rstrip("/") if isinstance(base_config, str) else ""
+        )
+        if not base_url:
+            return None
+        path_config = APP_CONFIG.muv_action_web_path
+        path = "/" + (
+            path_config.strip("/") if isinstance(path_config, str) else "muv/actions"
+        )
+        return f"{base_url}{path}/{quote(custom_id, safe='')}"

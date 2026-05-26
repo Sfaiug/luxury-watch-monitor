@@ -107,6 +107,7 @@ class WatchMonitor:
         muv_features_enabled = (
             APP_CONFIG.enable_muv_actions
             or APP_CONFIG.discord_interactions_enabled
+            or APP_CONFIG.muv_http_actions_enabled
             or bool(APP_CONFIG.muv_offer_link_urls)
         )
         if muv_features_enabled:
@@ -121,7 +122,10 @@ class WatchMonitor:
             self.session, self.logger, self.action_store
         )
 
-        if APP_CONFIG.discord_interactions_enabled:
+        if (
+            APP_CONFIG.discord_interactions_enabled
+            or APP_CONFIG.muv_http_actions_enabled
+        ):
             if not self.action_store or not self.muv_service:
                 raise RuntimeError("MUV action store failed to initialize")
             self.discord_interaction_server = DiscordInteractionServer(
