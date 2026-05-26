@@ -5,6 +5,7 @@ import json
 import os
 import re
 import tempfile
+import unicodedata
 from dataclasses import dataclass
 from difflib import SequenceMatcher
 from pathlib import Path
@@ -187,14 +188,14 @@ class MUVActionService:
         if not whitelist:
             return None
 
-        brand = self._normalize(listing.get("brand") or "")
+        brand = self._normalize_brand(listing.get("brand") or "")
         model = self._normalize(listing.get("model") or "")
         title = self._normalize(listing.get("title") or "")
         search_text = " ".join(part for part in [brand, model, title] if part)
 
-        best: Optional[Tuple[float, Dict[str, Any]]] = None
+        best: Optional[Tuple[float, int, Dict[str, Any]]] = None
         for item in whitelist:
-            item_brand = self._normalize(item.get("BrandName") or "")
+            item_brand = self._normalize_brand(item.get("BrandName") or "")
             item_model = self._normalize(item.get("ModelName") or "")
             item_full = f"{item_brand} {item_model}".strip()
             if brand and item_brand != brand:
@@ -202,19 +203,24 @@ class MUVActionService:
 
             score = SequenceMatcher(None, search_text, item_full).ratio()
             if item_model and item_model in title:
-                score = max(score, 0.92)
+                score = max(score, min(0.99, 0.90 + len(item_model) / 100))
             if item_full and item_full in search_text:
-                score = max(score, 0.98)
+                score = max(score, min(0.995, 0.94 + len(item_full) / 200))
             if model and item_model and item_model == model:
-                score = max(score, 0.96)
+                score = max(score, 1.0)
 
-            if not best or score > best[0]:
-                best = (score, item)
+            specificity = len(item_model)
+            if (
+                not best
+                or score > best[0]
+                or (score == best[0] and specificity > best[1])
+            ):
+                best = (score, specificity, item)
 
         if not best or best[0] < APP_CONFIG.muv_match_threshold:
             return None
 
-        item = best[1]
+        item = best[2]
         return MUVMatch(
             brand_name=item["BrandName"],
             brand_id=int(item["BrandId"]),
@@ -541,7 +547,23 @@ class MUVActionService:
 
     @staticmethod
     def _normalize(value: str) -> str:
+        value = (
+            unicodedata.normalize("NFKD", value.casefold())
+            .encode("ascii", "ignore")
+            .decode("ascii")
+        )
         return re.sub(r"[^a-z0-9]+", " ", value.casefold()).strip()
+
+    @classmethod
+    def _normalize_brand(cls, value: str) -> str:
+        normalized = cls._normalize(value)
+        aliases = {
+            "bulgari": "bvlgari",
+            "bvlgari": "bvlgari",
+            "glashuette": "glashutte",
+            "glashutte": "glashutte",
+        }
+        return aliases.get(normalized, normalized)
 
     @staticmethod
     def _map_condition(condition: Optional[str]) -> int:
