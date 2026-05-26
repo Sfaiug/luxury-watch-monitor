@@ -4,6 +4,8 @@ beautifulsoup4>=4.12.0
 lxml>=4.9.0  # For BeautifulSoup parser with better memory management
 requests>=2.31.0  # For synchronous fallback
 psutil>=5.9.0  # For memory monitoring
+PyNaCl>=1.5.0  # For Discord interaction Ed25519 signature verification
+playwright>=1.44.0  # Optional VM-side browser submitter for MUV
 
 # Testing
 pytest>=7.4.0
