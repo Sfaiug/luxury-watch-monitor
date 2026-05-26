@@ -86,3 +86,26 @@ Content-Type: application/json
 
 This keeps the monitor VM-side. The offer source can be a mailbox parser, a MUV
 callback if they provide one later, or a small manual/internal relay.
+
+You can also post a MUV offer URL directly. The monitor will fetch the MUV
+review page, parse the accepted/rejected/price state, and post the result
+overview:
+
+```json
+{
+  "muv_url": "https://www.meineuhrverkaufen.de/Sell/REQUEST_ID?mt=MODEL_TOKEN"
+}
+```
+
+## Offer Link Monitoring
+
+To poll known MUV offer links from the 24/7 monitor process, configure:
+
+```env
+MUV_OFFER_LINK_URLS=https://www.meineuhrverkaufen.de/Sell/REQUEST_ID?mt=MODEL_TOKEN
+MUV_OFFER_LINK_POLL_SECONDS=900
+```
+
+Multiple links can be comma-separated. The monitor stores the last parsed state
+in `ACTION_STORE_FILE` and only sends a new Discord result webhook when the
+offer state changes.

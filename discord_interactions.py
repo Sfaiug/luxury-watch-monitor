@@ -128,6 +128,12 @@ class DiscordInteractionServer:
             action_id = ActionStore.parse_custom_id(
                 payload["custom_id"], APP_CONFIG.action_token_secret
             )
+        if not action_id and payload.get("muv_url"):
+            result = await self.muv_service.publish_offer_link(payload["muv_url"])
+            status = 200 if result.status != "failed" else 422
+            return web.json_response(
+                {"status": result.status, "error": result.error}, status=status
+            )
         if not action_id:
             return web.json_response({"error": "action_id is required"}, status=400)
 

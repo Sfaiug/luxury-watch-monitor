@@ -21,12 +21,17 @@ class FakeMUVService:
     def __init__(self):
         self.handled = []
         self.published = []
+        self.published_links = []
 
     async def handle_action(self, action_id):
         self.handled.append(action_id)
 
     async def publish_offer(self, action_id, payload):
         self.published.append((action_id, payload))
+        return SimpleNamespace(status="completed", error=None)
+
+    async def publish_offer_link(self, url):
+        self.published_links.append(url)
         return SimpleNamespace(status="completed", error=None)
 
 
@@ -156,6 +161,28 @@ async def test_muv_offer_webhook_publishes_received_price(mock_logger, temp_dir)
         assert fake_muv.published == [
             ("abc123", {"action_id": "abc123", "price": "24000", "currency": "EUR"})
         ]
+    finally:
+        await server.stop()
+        store.close()
+
+
+@pytest.mark.asyncio
+async def test_muv_offer_webhook_accepts_muv_url_without_action_id(
+    mock_logger, temp_dir
+):
+    store = ActionStore(str(temp_dir / "actions.sqlite3"))
+    fake_muv = FakeMUVService()
+    try:
+        server = DiscordInteractionServer(store, fake_muv, mock_logger)
+        url = "https://www.meineuhrverkaufen.de/Sell/request-1?mt=token"
+        request = FakeOfferRequest({"muv_url": url}, secret="shared-secret")
+
+        with patch("discord_interactions.APP_CONFIG") as mock_config:
+            mock_config.action_token_secret = "shared-secret"
+            response = await server.handle_muv_offer(request)
+
+        assert response.status == 200
+        assert fake_muv.published_links == [url]
     finally:
         await server.stop()
         store.close()

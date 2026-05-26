@@ -129,6 +129,10 @@ class AppConfig:
     discord_public_key: str = os.getenv("DISCORD_PUBLIC_KEY", "")
     action_token_secret: str = os.getenv("ACTION_TOKEN_SECRET", "")
     muv_offer_webhook_path: str = os.getenv("MUV_OFFER_WEBHOOK_PATH", "/muv/offers")
+    muv_offer_link_urls: str = os.getenv("MUV_OFFER_LINK_URLS", "")
+    muv_offer_link_poll_seconds: int = int(
+        os.getenv("MUV_OFFER_LINK_POLL_SECONDS", "900")
+    )
     muv_result_webhook_url: str = os.getenv("MUV_RESULT_WEBHOOK_URL", "")
     muv_base_url: str = os.getenv("MUV_BASE_URL", "https://www.meineuhrverkaufen.de")
     muv_submission_mode: str = os.getenv("MUV_SUBMISSION_MODE", "prepare")

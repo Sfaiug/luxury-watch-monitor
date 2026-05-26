@@ -59,6 +59,7 @@ class WatchMonitor:
         self.muv_service: Optional[MUVActionService] = None
         self.discord_interaction_server: Optional[DiscordInteractionServer] = None
         self.memory_monitor = MemoryMonitor()
+        self._last_muv_offer_link_check = 0.0
 
         # State
         self.seen_items: Dict[str, Set[str]] = {}
@@ -103,11 +104,17 @@ class WatchMonitor:
         )
 
         # Initialize optional MUV action services
-        if APP_CONFIG.enable_muv_actions or APP_CONFIG.discord_interactions_enabled:
+        muv_features_enabled = (
+            APP_CONFIG.enable_muv_actions
+            or APP_CONFIG.discord_interactions_enabled
+            or bool(APP_CONFIG.muv_offer_link_urls)
+        )
+        if muv_features_enabled:
             self.action_store = ActionStore(APP_CONFIG.action_store_file)
             self.muv_service = MUVActionService(
                 self.session, self.action_store, self.logger
             )
+            await self.muv_service.register_configured_offer_links()
 
         # Initialize notification manager
         self.notification_manager = NotificationManager(
@@ -436,6 +443,9 @@ class WatchMonitor:
             # Wait for all to complete
             await asyncio.gather(*tasks)
 
+            # Poll reviewed MUV offer links without a separate worker process.
+            await self._monitor_muv_offer_links()
+
             # Finalize session
             session.finalize()
 
@@ -549,6 +559,30 @@ class WatchMonitor:
         except Exception as e:
             self.logger.exception(f"Error scraping {site_key}: {e}")
             session.add_site_result(site_key, 0, 0, 0, errors=1)
+
+    async def _monitor_muv_offer_links(self, *, force: bool = False) -> int:
+        """Poll stored MUV offer links and post changed states to Discord."""
+        if not self.muv_service:
+            return 0
+
+        interval = max(APP_CONFIG.muv_offer_link_poll_seconds, 0)
+        now = asyncio.get_running_loop().time()
+        if (
+            not force
+            and self._last_muv_offer_link_check
+            and now - self._last_muv_offer_link_check < interval
+        ):
+            return 0
+
+        self._last_muv_offer_link_check = now
+        try:
+            sent = await self.muv_service.monitor_offer_links()
+            if sent:
+                self.logger.info("Sent %s MUV offer link update(s)", sent)
+            return sent
+        except Exception as exc:
+            self.logger.exception("Error monitoring MUV offer links: %s", exc)
+            return 0
 
     async def run_continuous(self) -> bool:
         """

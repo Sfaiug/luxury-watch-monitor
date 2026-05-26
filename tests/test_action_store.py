@@ -90,3 +90,27 @@ def test_custom_id_signature_round_trip():
     assert ActionStore.parse_custom_id(custom_id, "secret") == action_id
     assert ActionStore.parse_custom_id(custom_id, "wrong") is None
     assert ActionStore.parse_custom_id("muv:abc123", "secret") is None
+
+
+def test_offer_link_state_round_trip(temp_dir):
+    store = ActionStore(str(temp_dir / "actions.sqlite3"))
+    try:
+        url = "https://www.meineuhrverkaufen.de/Sell/request-1?mt=token"
+        store.save_offer_link(url, action_id="action-1")
+        store.update_offer_link_state(
+            url,
+            "fingerprint-1",
+            {"status": "offered", "price": "3,000"},
+            notified=True,
+        )
+
+        links = store.list_offer_links()
+
+        assert len(links) == 1
+        assert links[0].url == url
+        assert links[0].action_id == "action-1"
+        assert links[0].last_fingerprint == "fingerprint-1"
+        assert links[0].last_payload["price"] == "3,000"
+        assert links[0].last_notified_at is not None
+    finally:
+        store.close()

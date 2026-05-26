@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from decimal import Decimal
 from pathlib import Path
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from models import WatchData
 
@@ -35,6 +35,19 @@ class ActionRecord:
     updated_at: Optional[str] = None
     submitted_at: Optional[str] = None
     last_error: Optional[str] = None
+
+
+@dataclass
+class OfferLinkRecord:
+    """Stored MUV offer-link polling state."""
+
+    url: str
+    action_id: Optional[str]
+    last_fingerprint: Optional[str]
+    last_payload: Dict[str, Any]
+    created_at: Optional[str] = None
+    updated_at: Optional[str] = None
+    last_notified_at: Optional[str] = None
 
 
 class ActionStore:
@@ -67,6 +80,17 @@ class ActionStore:
                     updated_at TEXT NOT NULL,
                     submitted_at TEXT,
                     last_error TEXT
+                )
+                """)
+            self._conn.execute("""
+                CREATE TABLE IF NOT EXISTS muv_offer_links (
+                    url TEXT PRIMARY KEY,
+                    action_id TEXT,
+                    last_fingerprint TEXT,
+                    last_payload_json TEXT,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    last_notified_at TEXT
                 )
                 """)
             self._conn.commit()
@@ -179,6 +203,73 @@ class ActionStore:
                 )
             self._conn.commit()
 
+    def save_offer_link(self, url: str, action_id: Optional[str] = None):
+        """Track a MUV offer URL for polling without duplicating rows."""
+        if not url:
+            return
+
+        now = _utcnow()
+        with self._lock:
+            self._conn.execute(
+                """
+                INSERT INTO muv_offer_links (
+                    url, action_id, last_payload_json, created_at, updated_at
+                )
+                VALUES (?, ?, '{}', ?, ?)
+                ON CONFLICT(url) DO UPDATE SET
+                    action_id=COALESCE(excluded.action_id, muv_offer_links.action_id),
+                    updated_at=excluded.updated_at
+                """,
+                (url, action_id, now, now),
+            )
+            self._conn.commit()
+
+    def list_offer_links(self) -> List[OfferLinkRecord]:
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT * FROM muv_offer_links ORDER BY created_at ASC"
+            ).fetchall()
+
+        return [self._row_to_offer_link(row) for row in rows]
+
+    def update_offer_link_state(
+        self,
+        url: str,
+        fingerprint: str,
+        payload: Dict[str, Any],
+        *,
+        notified: bool,
+    ):
+        now = _utcnow()
+        last_notified_at = now if notified else None
+        payload_json = json.dumps(payload or {}, ensure_ascii=False)
+
+        with self._lock:
+            if notified:
+                self._conn.execute(
+                    """
+                    UPDATE muv_offer_links
+                    SET last_fingerprint=?,
+                        last_payload_json=?,
+                        updated_at=?,
+                        last_notified_at=?
+                    WHERE url=?
+                    """,
+                    (fingerprint, payload_json, now, last_notified_at, url),
+                )
+            else:
+                self._conn.execute(
+                    """
+                    UPDATE muv_offer_links
+                    SET last_fingerprint=?,
+                        last_payload_json=?,
+                        updated_at=?
+                    WHERE url=?
+                    """,
+                    (fingerprint, payload_json, now, url),
+                )
+            self._conn.commit()
+
     @staticmethod
     def action_id_for_watch(watch: WatchData) -> str:
         source = f"{watch.site_key}|{watch.composite_id}|{watch.url}"
@@ -253,4 +344,16 @@ class ActionStore:
             updated_at=row["updated_at"],
             submitted_at=row["submitted_at"],
             last_error=row["last_error"],
+        )
+
+    @staticmethod
+    def _row_to_offer_link(row: sqlite3.Row) -> OfferLinkRecord:
+        return OfferLinkRecord(
+            url=row["url"],
+            action_id=row["action_id"],
+            last_fingerprint=row["last_fingerprint"],
+            last_payload=json.loads(row["last_payload_json"] or "{}"),
+            created_at=row["created_at"],
+            updated_at=row["updated_at"],
+            last_notified_at=row["last_notified_at"],
         )
