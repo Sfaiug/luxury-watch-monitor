@@ -71,6 +71,27 @@ def _offer_page_html(*, price=None, reviewed=True):
     return f'<!--Blazor:{{"parameterValues":"{encoded}"}}-->'
 
 
+def test_validate_for_submit_accepts_full_image_gallery(mock_logger):
+    service = MUVActionService(None, None, mock_logger)
+    listing = {
+        "image_urls": [
+            "https://example.com/watch-1.jpg",
+            "https://example.com/watch-2.jpg",
+            "https://example.com/watch-3.jpg",
+        ]
+    }
+
+    with patch("muv_service.APP_CONFIG") as mock_config:
+        _configure_muv(mock_config, auto_submit=True)
+        mock_config.muv_seller_email = "seller@example.com"
+        mock_config.muv_seller_first_name = "Ada"
+        mock_config.muv_seller_last_name = "Lovelace"
+        mock_config.muv_accept_terms = True
+        mock_config.muv_confirm_eu_seller = True
+
+        assert service._validate_for_submit(listing) == []
+
+
 @pytest.mark.asyncio
 async def test_match_listing_exact_model(mock_logger):
     service = MUVActionService(None, None, mock_logger)

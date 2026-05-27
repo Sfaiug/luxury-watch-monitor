@@ -439,7 +439,7 @@ class MUVActionService:
                 page = await browser.new_page()
                 try:
                     await page.goto(
-                        base_url + "/", wait_until="networkidle", timeout=60000
+                        base_url + "/", wait_until="domcontentloaded", timeout=60000
                     )
                     await page.evaluate(
                         "(item) => localStorage.setItem('searchResultModel', JSON.stringify(item))",
@@ -452,7 +452,12 @@ class MUVActionService:
                         },
                     )
                     await page.goto(
-                        base_url + "/sell", wait_until="networkidle", timeout=60000
+                        base_url + "/sell",
+                        wait_until="domcontentloaded",
+                        timeout=60000,
+                    )
+                    await page.locator('input[type="file"]').first.wait_for(
+                        timeout=60000
                     )
 
                     await page.get_by_role("combobox").nth(2).select_option(
@@ -974,6 +979,9 @@ class MUVActionService:
             "has_box",
             "has_papers",
             "image_url",
+            "image_urls",
+            "case_material",
+            "diameter",
         ]
         return {key: listing.get(key) for key in keys}
 

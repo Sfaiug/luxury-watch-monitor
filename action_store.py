@@ -307,6 +307,10 @@ class ActionStore:
                 return value.isoformat()
             return value
 
+        image_urls = [url for url in getattr(watch, "image_urls", []) if url]
+        if watch.image_url and watch.image_url not in image_urls:
+            image_urls.insert(0, watch.image_url)
+
         return {
             "title": watch.title,
             "url": watch.url,
@@ -320,7 +324,7 @@ class ActionStore:
             "currency": watch.currency,
             "price_display": watch.price_display,
             "image_url": watch.image_url,
-            "image_urls": [watch.image_url] if watch.image_url else [],
+            "image_urls": image_urls,
             "condition": watch.condition,
             "has_papers": watch.has_papers,
             "has_box": watch.has_box,

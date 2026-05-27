@@ -19,6 +19,11 @@ def test_save_watch_and_get_record(temp_dir):
             reference="116500LN",
             price=Decimal("25000"),
             image_url="https://example.com/watch.jpg",
+            image_urls=[
+                "https://example.com/watch.jpg",
+                "https://example.com/watch-2.jpg",
+                "https://example.com/watch-3.jpg",
+            ],
         )
 
         action_id = store.save_watch(watch)
@@ -28,7 +33,11 @@ def test_save_watch_and_get_record(temp_dir):
         assert record.status == "not_requested"
         assert record.listing["title"] == "Rolex Daytona 116500LN"
         assert record.listing["price"] == "25000"
-        assert record.listing["image_urls"] == ["https://example.com/watch.jpg"]
+        assert record.listing["image_urls"] == [
+            "https://example.com/watch.jpg",
+            "https://example.com/watch-2.jpg",
+            "https://example.com/watch-3.jpg",
+        ]
     finally:
         store.close()
 
