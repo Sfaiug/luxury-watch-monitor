@@ -13,9 +13,10 @@ from difflib import SequenceMatcher
 from html import unescape
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
-from urllib.parse import urlparse
+from urllib.parse import urljoin, urlparse
 
 import aiohttp
+from bs4 import BeautifulSoup
 
 from action_store import ActionRecord, ActionStore
 from config import APP_CONFIG
@@ -188,7 +189,7 @@ class MUVActionService:
         return self.parse_offer_page(html, url)
 
     async def _prepare_or_submit(self, record: ActionRecord) -> MUVResult:
-        listing = record.listing
+        listing = await self._listing_with_submission_images(record.listing)
         match = await self.match_listing(listing)
         if not match:
             return MUVResult(
@@ -400,6 +401,191 @@ class MUVActionService:
             )
         return errors
 
+    async def _listing_with_submission_images(
+        self, listing: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        enriched = dict(listing)
+        image_urls = self._listing_image_urls(enriched)
+
+        if len(image_urls) < APP_CONFIG.muv_min_picture_count:
+            source_url = enriched.get("url")
+            parsed = urlparse(source_url or "")
+            if self.session and parsed.scheme in {"http", "https"}:
+                html = await fetch_page(self.session, source_url, self.logger)
+                if html:
+                    image_urls = self._merge_image_urls(
+                        image_urls,
+                        self._extract_listing_image_urls(html, source_url),
+                    )
+
+        enriched["image_urls"] = image_urls
+        enriched["image_url"] = (
+            enriched.get("image_url")
+            if enriched.get("image_url") in image_urls
+            else self._first_image_url(enriched)
+        )
+        return enriched
+
+    @classmethod
+    def _listing_image_urls(cls, listing: Dict[str, Any]) -> List[str]:
+        urls: List[str] = []
+        if listing.get("image_url"):
+            urls.append(listing["image_url"])
+
+        image_urls = listing.get("image_urls") or []
+        if isinstance(image_urls, str):
+            urls.append(image_urls)
+        elif isinstance(image_urls, list):
+            urls.extend(image_urls)
+
+        return cls._merge_image_urls(
+            [url for url in urls if cls._looks_like_submission_image(str(url))]
+        )
+
+    @classmethod
+    def _extract_listing_image_urls(cls, html: str, page_url: str) -> List[str]:
+        soup = BeautifulSoup(html, "html.parser")
+        urls: List[str] = []
+
+        def add(value: Any):
+            if isinstance(value, list):
+                for item in value:
+                    add(item)
+                return
+            if not value:
+                return
+            url = cls._normalize_listing_image_url(str(value), page_url)
+            if url:
+                urls.append(url)
+
+        for script in soup.find_all("script", type=re.compile("ld\\+json", re.I)):
+            text = script.string or script.get_text(strip=True)
+            if not text:
+                continue
+            try:
+                cls._collect_json_images(json.loads(text), add)
+            except json.JSONDecodeError:
+                continue
+
+        for meta in soup.find_all("meta"):
+            key = " ".join(
+                str(meta.get(attr) or "") for attr in ("property", "name", "itemprop")
+            ).casefold()
+            if "image" in key or "thumbnail" in key:
+                add(meta.get("content"))
+
+        for tag in soup.find_all(["img", "source"]):
+            for attr in (
+                "src",
+                "data-src",
+                "data-original",
+                "data-lazy-src",
+                "data-zoom-image",
+                "data-large_image",
+            ):
+                add(tag.get(attr))
+            for attr in ("srcset", "data-srcset"):
+                for url in cls._srcset_urls(tag.get(attr)):
+                    add(url)
+
+        for tag in soup.find_all("a", href=True):
+            add(tag.get("href"))
+
+        return cls._merge_image_urls(urls)
+
+    @classmethod
+    def _collect_json_images(cls, value: Any, add):
+        if isinstance(value, dict):
+            for key in ("image", "thumbnailUrl", "contentUrl"):
+                if key in value:
+                    cls._collect_json_images(value[key], add)
+            for key in ("url", "contentUrl"):
+                add(value.get(key))
+            for item in value.values():
+                if isinstance(item, (dict, list)):
+                    cls._collect_json_images(item, add)
+        elif isinstance(value, list):
+            for item in value:
+                cls._collect_json_images(item, add)
+        elif isinstance(value, str):
+            add(value)
+
+    @staticmethod
+    def _srcset_urls(value: Optional[str]) -> List[str]:
+        if not value:
+            return []
+        return [
+            part.strip().split()[0] for part in value.split(",") if part.strip().split()
+        ]
+
+    @classmethod
+    def _normalize_listing_image_url(cls, value: str, page_url: str) -> Optional[str]:
+        value = unescape(value).strip().strip("'\"")
+        if not value or value.startswith("data:"):
+            return None
+
+        url = urljoin(page_url, value)
+        parsed = urlparse(url)
+        if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+            return None
+
+        normalized = parsed._replace(fragment="").geturl()
+        return normalized if cls._looks_like_submission_image(normalized) else None
+
+    @staticmethod
+    def _looks_like_submission_image(url: str) -> bool:
+        lowered = url.casefold()
+        if re.search(r"\.(?:svg|gif|ico)(?:$|[?#])", lowered):
+            return False
+        if any(
+            token in lowered
+            for token in (
+                "avatar",
+                "blank",
+                "favicon",
+                "icon",
+                "logo",
+                "placeholder",
+                "sprite",
+                "coming-soon",
+                "foto-in-bearbeitung",
+            )
+        ):
+            return False
+        host = urlparse(url).netloc.casefold()
+        if host.endswith("cloudfront.net") or host.startswith("cdn."):
+            return True
+        if re.search(r"\.(?:jpe?g|png|webp|heic|heif)(?:$|[?#])", lowered):
+            return True
+        return any(
+            token in lowered
+            for token in (
+                "/cdn/",
+                "/file/",
+                "/files/",
+                "/gallery/",
+                "/image",
+                "/img/",
+                "/media/",
+                "/photo",
+                "/upload",
+                "image=",
+            )
+        )
+
+    @classmethod
+    def _merge_image_urls(cls, *groups: List[str]) -> List[str]:
+        seen = set()
+        urls = []
+        for group in groups:
+            for url in group or []:
+                normalized = str(url).strip()
+                if not normalized or normalized in seen:
+                    continue
+                seen.add(normalized)
+                urls.append(normalized)
+        return urls[:12]
+
     async def _submit_payload(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         if APP_CONFIG.muv_submission_mode == "browser":
             return await self._submit_with_browser(payload)
@@ -501,7 +687,16 @@ class MUVActionService:
                     await page.get_by_role(
                         "button", name=re.compile("Submit Request", re.I)
                     ).click()
-                    await page.wait_for_timeout(5000)
+                    try:
+                        await page.wait_for_url(
+                            re.compile(
+                                r".*/Sell/[0-9a-f-]{36}\?mt=.+",
+                                re.I,
+                            ),
+                            timeout=30000,
+                        )
+                    except Exception:
+                        await page.wait_for_timeout(5000)
 
                     body_text = await page.locator("body").inner_text(timeout=10000)
                     if "Please review your information" in body_text:
@@ -509,6 +704,13 @@ class MUVActionService:
                             "ok": False,
                             "error": body_text[-1500:],
                             "page_url": page.url,
+                        }
+                    if not self._is_unique_muv_sell_url(page.url):
+                        return {
+                            "ok": False,
+                            "error": "MUV did not return a unique Sell offer URL after submission.",
+                            "page_url": page.url,
+                            "body_excerpt": body_text[-1500:],
                         }
                     return {
                         "ok": True,
@@ -526,6 +728,20 @@ class MUVActionService:
                 except OSError:
                     pass
 
+    @staticmethod
+    def _is_unique_muv_sell_url(url: str) -> bool:
+        parsed = urlparse(url or "")
+        if parsed.scheme not in {"http", "https"}:
+            return False
+        return bool(
+            re.search(
+                r"/sell/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+                parsed.path,
+                re.I,
+            )
+            and "mt=" in parsed.query
+        )
+
     async def _download_images(self, image_urls: List[str]) -> List[str]:
         paths = []
         for image_url in [url for url in image_urls if url][:12]:
@@ -535,12 +751,22 @@ class MUVActionService:
             os.close(fd)
             try:
                 timeout = aiohttp.ClientTimeout(total=30)
-                async with self.session.get(image_url, timeout=timeout) as response:
+                headers = {
+                    "User-Agent": APP_CONFIG.user_agent,
+                    "Accept": "image/avif,image/webp,image/apng,image/*,*/*;q=0.8",
+                }
+                async with self.session.get(
+                    image_url, headers=headers, timeout=timeout
+                ) as response:
                     if response.status != 200:
                         os.unlink(path)
                         continue
+                    content = await response.read()
+                    if not self._looks_like_image_bytes(content):
+                        os.unlink(path)
+                        continue
                     with open(path, "wb") as f:
-                        f.write(await response.read())
+                        f.write(content)
                 paths.append(path)
             except Exception:
                 try:
@@ -549,39 +775,127 @@ class MUVActionService:
                     pass
         return paths
 
+    @staticmethod
+    def _looks_like_image_bytes(content: bytes) -> bool:
+        return bool(
+            content.startswith(b"\xff\xd8\xff")
+            or content.startswith(b"\x89PNG\r\n\x1a\n")
+            or (content.startswith(b"RIFF") and content[8:12] == b"WEBP")
+            or content.startswith(b"GIF8")
+            or content[4:12] in {b"ftypheic", b"ftypheix", b"ftyphevc", b"ftypmif1"}
+        )
+
     async def _send_result_webhook(
         self, record: Optional[ActionRecord], result: MUVResult
     ):
         webhook_url = APP_CONFIG.muv_result_webhook_url
-        if not webhook_url:
-            self.logger.info(
-                "No MUV_RESULT_WEBHOOK_URL configured; result not posted to Discord"
-            )
-            return
-
         embed = self._build_result_embed(record, result)
         payload = {"embeds": [embed]}
         timeout = aiohttp.ClientTimeout(total=15)
 
+        if webhook_url:
+            try:
+                async with self.session.post(
+                    webhook_url, json=payload, timeout=timeout
+                ) as response:
+                    if response.status not in (200, 204):
+                        text = (await response.text())[:500]
+                        self.logger.error(
+                            "MUV result webhook failed: %s %s", response.status, text
+                        )
+            except Exception as exc:
+                self.logger.error("Error sending MUV result webhook: %s", exc)
+        else:
+            self.logger.info(
+                "No MUV_RESULT_WEBHOOK_URL configured; result not posted to Discord"
+            )
+
+        await self._send_result_dm(record, result, embed)
+
+    async def _send_result_dm(
+        self,
+        record: Optional[ActionRecord],
+        result: MUVResult,
+        embed: Dict[str, Any],
+    ):
+        if not self._should_dm_result(record, result):
+            return
+
+        timeout = aiohttp.ClientTimeout(total=15)
+        payload = {"embeds": [embed]}
+        headers = {
+            "Authorization": f"Bot {APP_CONFIG.discord_bot_token}",
+            "Content-Type": "application/json",
+            "User-Agent": "DiscordBot (https://atlas.hopcomp.com, 1.0)",
+        }
+        api_base = APP_CONFIG.discord_api_base_url.rstrip("/")
+
         try:
             async with self.session.post(
-                webhook_url, json=payload, timeout=timeout
+                f"{api_base}/users/@me/channels",
+                json={"recipient_id": record.requested_by},
+                headers=headers,
+                timeout=timeout,
             ) as response:
-                if response.status not in (200, 204):
+                if response.status not in (200, 201):
                     text = (await response.text())[:500]
                     self.logger.error(
-                        "MUV result webhook failed: %s %s", response.status, text
+                        "MUV result DM channel failed for requester %s: %s %s",
+                        record.requested_by,
+                        response.status,
+                        text,
+                    )
+                    return
+                channel = await response.json()
+
+            channel_id = channel.get("id")
+            if not channel_id:
+                self.logger.error(
+                    "MUV result DM channel response missing id for requester %s",
+                    record.requested_by,
+                )
+                return
+
+            async with self.session.post(
+                f"{api_base}/channels/{channel_id}/messages",
+                json=payload,
+                headers=headers,
+                timeout=timeout,
+            ) as response:
+                if response.status not in (200, 201):
+                    text = (await response.text())[:500]
+                    self.logger.error(
+                        "MUV result DM send failed for requester %s: %s %s",
+                        record.requested_by,
+                        response.status,
+                        text,
                     )
         except Exception as exc:
-            self.logger.error("Error sending MUV result webhook: %s", exc)
+            self.logger.error(
+                "Error sending MUV result DM to requester %s: %s",
+                getattr(record, "requested_by", None),
+                exc,
+            )
+
+    @staticmethod
+    def _should_dm_result(
+        record: Optional[ActionRecord],
+        result: MUVResult,
+    ) -> bool:
+        return bool(
+            APP_CONFIG.muv_dm_results_to_requester
+            and APP_CONFIG.discord_bot_token
+            and record
+            and record.requested_by
+            and result.data.get("muv_offer")
+        )
 
     def _build_result_embed(
         self, record: Optional[ActionRecord], result: MUVResult
     ) -> Dict[str, Any]:
         listing = (
-            record.listing
-            if record
-            else result.data.get("listing")
+            result.data.get("listing")
+            or (record.listing if record else None)
             or self._listing_from_offer(result.data.get("muv_offer") or {})
         )
         color = {
@@ -917,6 +1231,12 @@ class MUVActionService:
                 aliases.append("annual calendar")
             if "ewigekalender" in combined or "ewiger kalender" in combined:
                 aliases.append("perpetual calendar")
+
+        if "chronoswiss" in brand_candidates and "regulator" in combined:
+            if "flying" in combined:
+                aliases.append("flying regulator")
+            elif "grand" in combined:
+                aliases.append("grand regulateur")
 
         if "audemars piguet" in brand_candidates and (
             "offshore" in combined or "off shore" in combined

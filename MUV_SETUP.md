@@ -99,6 +99,7 @@ MUV_SELLER_FIRST_NAME=...
 MUV_SELLER_LAST_NAME=...
 MUV_ACCEPT_TERMS=true
 MUV_CONFIRM_EU_SELLER=true
+MUV_DM_RESULTS_TO_REQUESTER=true
 ```
 
 Then install Chromium for Playwright on the VM:
@@ -107,8 +108,14 @@ Then install Chromium for Playwright on the VM:
 python -m playwright install chromium
 ```
 
-MUV currently requires at least 3 images. The monitor will not attempt submission
-unless the stored listing has enough image URLs according to `MUV_MIN_PICTURE_COUNT`.
+MUV currently requires at least 3 images. Before submitting, the monitor re-checks
+the original listing page for gallery images when the stored alert has too few.
+It will still refuse submission unless it has enough image URLs according to
+`MUV_MIN_PICTURE_COUNT`, and it only treats a browser submission as successful
+when MUV returns a unique `/Sell/{request_id}?mt=...` URL.
+
+When `MUV_DM_RESULTS_TO_REQUESTER=true`, completed MUV offer results for linked
+button actions are also sent as a Discord DM to the user who clicked the button.
 
 ## Offer Webhook
 

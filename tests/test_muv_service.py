@@ -27,6 +27,9 @@ def _configure_muv(mock_config, *, auto_submit=False):
     mock_config.muv_result_webhook_url = ""
     mock_config.muv_offer_link_urls = ""
     mock_config.muv_offer_link_poll_seconds = 900
+    mock_config.muv_dm_results_to_requester = False
+    mock_config.discord_bot_token = ""
+    mock_config.discord_api_base_url = "https://discord.com/api/v10"
 
 
 def _offer_page_html(*, price=None, reviewed=True):
@@ -90,6 +93,88 @@ def test_validate_for_submit_accepts_full_image_gallery(mock_logger):
         mock_config.muv_confirm_eu_seller = True
 
         assert service._validate_for_submit(listing) == []
+
+
+@pytest.mark.asyncio
+async def test_listing_with_submission_images_collects_detail_gallery(
+    mock_logger, monkeypatch
+):
+    detail_html = """
+    <html>
+      <head>
+        <meta property="og:image" content="/media/watch-og.jpg">
+        <script type="application/ld+json">
+          {"@type":"Product","image":["/gallery/watch-2.webp",{"url":"/files/watch-3.jpg"}]}
+        </script>
+      </head>
+      <body>
+        <img src="/assets/logo.svg">
+        <img data-src="/uploads/watch-4.jpg">
+        <source srcset="/img/watch-5.jpg 1x, /img/watch-5@2x.jpg 2x">
+      </body>
+    </html>
+    """
+
+    async def fake_fetch_page(_session, url, _logger):
+        assert url == "https://dealer.test/watch"
+        return detail_html
+
+    service = MUVActionService(object(), None, mock_logger)
+    monkeypatch.setattr("muv_service.fetch_page", fake_fetch_page)
+
+    with patch("muv_service.APP_CONFIG") as mock_config:
+        _configure_muv(mock_config)
+
+        listing = await service._listing_with_submission_images(
+            {
+                "url": "https://dealer.test/watch",
+                "image_url": "https://dealer.test/media/watch-1.jpg",
+            }
+        )
+
+    assert listing["image_url"] == "https://dealer.test/media/watch-1.jpg"
+    assert listing["image_urls"][:4] == [
+        "https://dealer.test/media/watch-1.jpg",
+        "https://dealer.test/gallery/watch-2.webp",
+        "https://dealer.test/files/watch-3.jpg",
+        "https://dealer.test/media/watch-og.jpg",
+    ]
+    assert "https://dealer.test/assets/logo.svg" not in listing["image_urls"]
+
+
+def test_unique_muv_sell_url_detection_uses_request_and_model_tokens():
+    assert MUVActionService._is_unique_muv_sell_url(
+        "https://www.meineuhrverkaufen.de/Sell/3de83199-b7d9-475c-a3e8-72c86693ecff?mt=b79bee79-7444-4ebb-e0d7-08de01b936c3"
+    )
+    assert MUVActionService._is_unique_muv_sell_url(
+        "https://www.meineuhrverkaufen.de/Sell/0248613e-93ee-4b74-a8b3-28eab647c5c2?mt=e9dc6193-ddd3-45d8-5744-08de29bd80d2"
+    )
+    assert not MUVActionService._is_unique_muv_sell_url(
+        "https://www.meineuhrverkaufen.de/sell"
+    )
+    assert not MUVActionService._is_unique_muv_sell_url(
+        "https://www.meineuhrverkaufen.de/Sell/3de83199-b7d9-475c-a3e8-72c86693ecff"
+    )
+
+
+def test_image_byte_detection_rejects_html_uploads():
+    assert MUVActionService._looks_like_image_bytes(b"\xff\xd8\xff\xe0jpeg")
+    assert MUVActionService._looks_like_image_bytes(b"\x89PNG\r\n\x1a\npng")
+    assert MUVActionService._looks_like_image_bytes(
+        b"\xff\xd8\xff\xe0application-octet-stream-jpeg"
+    )
+    assert not MUVActionService._looks_like_image_bytes(b"<html>not an image</html>")
+
+
+def test_submission_image_url_filter_handles_cdn_and_placeholders():
+    assert MUVActionService._looks_like_submission_image(
+        "https://d29ueykkv8fpnq.cloudfront.net/ml18yhav6jc1n6jfbtqjhborunoe"
+    )
+    assert not MUVActionService._listing_image_urls(
+        {
+            "image_url": "https://dealer.test/typo3temp/csm_Foto-in-Bearbeitung_340x255.jpg"
+        }
+    )
 
 
 @pytest.mark.asyncio
@@ -227,6 +312,13 @@ async def test_match_listing_handles_production_brand_aliases(mock_logger):
             "ModelId": 475,
             "RefMP": 1,
         },
+        {
+            "BrandName": "Chronoswiss",
+            "BrandId": 16,
+            "ModelName": "Flying Regulator",
+            "ModelId": 323,
+            "RefMP": 1,
+        },
     ]
 
     cases = [
@@ -264,6 +356,14 @@ async def test_match_listing_handles_production_brand_aliases(mock_logger):
                 "title": "Glashütte Original Senator Chronometer",
             },
             ("Glashütte", "Senator"),
+        ),
+        (
+            {
+                "brand": "Chronoswiss",
+                "model": "Flying Grand Regulator",
+                "title": "Chronoswiss Flying Grand Regulator",
+            },
+            ("Chronoswiss", "Flying Regulator"),
         ),
     ]
 
@@ -560,6 +660,46 @@ def test_result_embed_reuses_original_listing_with_muv_fields(mock_logger, temp_
         store.close()
 
 
+def test_result_embed_prefers_enriched_result_listing_image(mock_logger, temp_dir):
+    store = ActionStore(str(temp_dir / "actions.sqlite3"))
+    try:
+        action_id = store.save_watch(
+            WatchData(
+                title="Rolex Daytona",
+                url="https://example.com/daytona",
+                site_name="Example",
+                site_key="example",
+                brand="Rolex",
+                model="Daytona",
+                price=Decimal("25000"),
+            )
+        )
+        record = store.get(action_id)
+        service = MUVActionService(None, store, mock_logger)
+        result_listing = dict(record.listing)
+        result_listing["image_url"] = "https://example.com/enriched-watch.jpg"
+        result = MUVResult(
+            status="completed",
+            title="MUV offer received",
+            description="MUV returned an offer for the original listing.",
+            data={
+                "listing": result_listing,
+                "muv_offer": {
+                    "price": "23000",
+                    "currency": "EUR",
+                    "muv_url": "https://www.meineuhrverkaufen.de/Sell/request",
+                },
+                "muv_sell_url": "https://www.meineuhrverkaufen.de/Sell/request",
+            },
+        )
+
+        embed = service._build_result_embed(record, result)
+
+        assert embed["image"]["url"] == "https://example.com/enriched-watch.jpg"
+    finally:
+        store.close()
+
+
 def test_offer_link_embed_uses_muv_watch_picture_when_no_listing(mock_logger):
     payload = MUVActionService.parse_offer_page(
         _offer_page_html(price=3000),
@@ -580,6 +720,123 @@ def test_offer_link_embed_uses_muv_watch_picture_when_no_listing(mock_logger):
     )
     assert fields["💰 Price:"] == "**❓**"
     assert any("Chrono24 Search" in field["name"] for field in embed["fields"])
+
+
+@pytest.mark.asyncio
+async def test_result_webhook_dms_requesting_user_for_muv_offer(mock_logger, temp_dir):
+    class FakeResponse:
+        def __init__(self, status, payload=None):
+            self.status = status
+            self.payload = payload or {}
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return None
+
+        async def json(self):
+            return self.payload
+
+        async def text(self):
+            return json.dumps(self.payload)
+
+    class FakeSession:
+        def __init__(self):
+            self.calls = []
+
+        def post(self, url, **kwargs):
+            self.calls.append((url, kwargs))
+            if url.endswith("/users/@me/channels"):
+                return FakeResponse(200, {"id": "dm-channel-1"})
+            if url.endswith("/messages"):
+                return FakeResponse(201, {"id": "message-1"})
+            return FakeResponse(204)
+
+    store = ActionStore(str(temp_dir / "actions.sqlite3"))
+    try:
+        action_id = store.save_watch(
+            WatchData(
+                title="Rolex Daytona",
+                url="https://example.com/daytona",
+                site_name="Example",
+                site_key="example",
+                brand="Rolex",
+                model="Daytona",
+                price=Decimal("25000"),
+            )
+        )
+        store.queue_action(action_id, "user-1", "tester", "interaction-1")
+        record = store.get(action_id)
+        result = MUVResult(
+            status="completed",
+            title="MUV offer received",
+            description="MUV returned an offer.",
+            data={
+                "listing": record.listing,
+                "muv_offer": {
+                    "price": "23000",
+                    "currency": "EUR",
+                    "muv_url": "https://www.meineuhrverkaufen.de/Sell/request",
+                },
+                "muv_sell_url": "https://www.meineuhrverkaufen.de/Sell/request",
+            },
+        )
+        session = FakeSession()
+        service = MUVActionService(session, store, mock_logger)
+
+        with patch("muv_service.APP_CONFIG") as mock_config:
+            _configure_muv(mock_config)
+            mock_config.muv_result_webhook_url = "https://discord.test/webhook"
+            mock_config.muv_dm_results_to_requester = True
+            mock_config.discord_bot_token = "bot-token"
+            mock_config.discord_api_base_url = "https://discord.test/api"
+
+            await service._send_result_webhook(record, result)
+
+        urls = [url for url, _kwargs in session.calls]
+        assert urls == [
+            "https://discord.test/webhook",
+            "https://discord.test/api/users/@me/channels",
+            "https://discord.test/api/channels/dm-channel-1/messages",
+        ]
+        assert session.calls[1][1]["json"] == {"recipient_id": "user-1"}
+        assert session.calls[2][1]["json"]["embeds"][0]["title"] == "Rolex Daytona"
+    finally:
+        store.close()
+
+
+@pytest.mark.asyncio
+async def test_result_webhook_does_not_dm_prepared_result(mock_logger, temp_dir):
+    store = ActionStore(str(temp_dir / "actions.sqlite3"))
+    try:
+        action_id = store.save_watch(
+            WatchData(
+                title="Rolex Daytona",
+                url="https://example.com/daytona",
+                site_name="Example",
+                site_key="example",
+                brand="Rolex",
+                model="Daytona",
+            )
+        )
+        store.queue_action(action_id, "user-1", "tester", "interaction-1")
+        record = store.get(action_id)
+        result = MUVResult(
+            status="prepared",
+            title="MUV request prepared",
+            description="Prepared only.",
+            data={"listing": record.listing},
+        )
+
+        with patch("muv_service.APP_CONFIG") as mock_config:
+            _configure_muv(mock_config)
+            mock_config.muv_dm_results_to_requester = True
+            mock_config.discord_bot_token = "bot-token"
+
+            assert MUVActionService._should_dm_result(record, result) is False
+    finally:
+        store.close()
 
 
 @pytest.mark.asyncio

@@ -153,6 +153,7 @@ class AppConfig:
         os.getenv("MUV_OFFER_LINK_POLL_SECONDS", "900")
     )
     muv_result_webhook_url: str = os.getenv("MUV_RESULT_WEBHOOK_URL", "")
+    muv_dm_results_to_requester: bool = _env_bool("MUV_DM_RESULTS_TO_REQUESTER", "true")
     muv_base_url: str = os.getenv("MUV_BASE_URL", "https://www.meineuhrverkaufen.de")
     muv_submission_mode: str = os.getenv("MUV_SUBMISSION_MODE", "prepare")
     muv_action_label: str = os.getenv("MUV_ACTION_LABEL", "Send to MUV")
