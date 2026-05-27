@@ -1,9 +1,15 @@
 """Tests for the guarded MUV Discord batch runner."""
 
+import asyncio
 from decimal import Decimal
 
 from action_store import ActionStore
 from scripts import muv_batch_submit as batch
+
+
+class NeverSubmitService:
+    async def handle_action(self, action_id):
+        raise AssertionError(f"unexpected MUV submit for {action_id}")
 
 
 def _message(*, custom_id="muv:action-1"):
@@ -130,3 +136,53 @@ def test_submission_config_errors_accept_requester_profile(mocker):
     mocker.patch.object(batch.APP_CONFIG, "muv_confirm_eu_seller", True)
 
     assert batch.submission_config_errors("user-1") == []
+
+
+def test_submit_ready_skips_failed_record_with_existing_muv_url(temp_dir, mocker):
+    mocker.patch.object(batch.APP_CONFIG, "muv_submission_mode", "browser")
+    mocker.patch.object(batch.APP_CONFIG, "muv_auto_submit", True)
+    mocker.patch.object(batch.APP_CONFIG, "muv_seller_email", "seller@example.com")
+    mocker.patch.object(batch.APP_CONFIG, "muv_seller_first_name", "Ada")
+    mocker.patch.object(batch.APP_CONFIG, "muv_seller_last_name", "Lovelace")
+    mocker.patch.object(batch.APP_CONFIG, "muv_seller_profiles_json", "")
+    mocker.patch.object(batch.APP_CONFIG, "muv_allowed_requester_ids", "")
+    mocker.patch.object(batch.APP_CONFIG, "muv_accept_terms", True)
+    mocker.patch.object(batch.APP_CONFIG, "muv_confirm_eu_seller", True)
+
+    store = ActionStore(str(temp_dir / "actions.sqlite3"))
+    muv_url = (
+        "https://www.meineuhrverkaufen.de/Sell/c7db9d61-a30c-42c4-a693-49f50bf3d71d"
+    )
+    row = {
+        "ready": True,
+        "action_id": "action-1",
+        "message_id": "msg-1",
+        "title": "Rolex Datejust | 126334",
+    }
+    try:
+        store.save_listing("action-1", {"title": row["title"]})
+        store.update_status(
+            "action-1",
+            "failed",
+            result={"muv_sell_url": muv_url},
+            last_error="old false failure",
+        )
+
+        result = asyncio.run(
+            batch.submit_ready_items(
+                store,
+                NeverSubmitService(),
+                [row],
+                requester_id="user-1",
+                requester_name="Ada",
+                max_submit=None,
+            )
+        )
+
+        assert result["attempted"] == 0
+        assert result["submitted"] == 0
+        assert result["skipped"][0]["skip_reason"] == "already has MUV Sell link"
+        assert result["skipped"][0]["muv_sell_url"] == muv_url
+        assert store.list_offer_links()[0].url == muv_url
+    finally:
+        store.close()

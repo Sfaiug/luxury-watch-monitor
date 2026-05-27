@@ -31,6 +31,21 @@ from logging_config import setup_logging  # noqa: E402
 from models import WatchData  # noqa: E402
 from muv_service import MUVActionService  # noqa: E402
 
+
+def existing_unique_muv_url(record) -> Optional[str]:
+    if not record:
+        return None
+
+    result = record.result or {}
+    url = result.get("muv_sell_url")
+    if not url and isinstance(result.get("submit_response"), dict):
+        url = result["submit_response"].get("page_url")
+
+    if url and MUVActionService._is_unique_muv_sell_url(url):
+        return url
+    return None
+
+
 EXTRA_CHANNEL_ENVS = {
     "bachmann_scher": "BACHMANN_SCHER_CHANNEL_ID",
 }
@@ -415,8 +430,28 @@ async def submit_ready_items(
 
     for row in ready_rows:
         record = store.get(row["action_id"])
+        existing_muv_url = existing_unique_muv_url(record)
+        if existing_muv_url:
+            store.save_offer_link(existing_muv_url, row["action_id"])
+
         if record and record.status in {"submitted", "completed"}:
-            skipped.append({**row, "skip_reason": f"already {record.status}"})
+            skipped.append(
+                {
+                    **row,
+                    "skip_reason": f"already {record.status}",
+                    "muv_sell_url": existing_muv_url,
+                }
+            )
+            continue
+
+        if existing_muv_url:
+            skipped.append(
+                {
+                    **row,
+                    "skip_reason": "already has MUV Sell link",
+                    "muv_sell_url": existing_muv_url,
+                }
+            )
             continue
 
         store.queue_action(
