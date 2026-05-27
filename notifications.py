@@ -132,9 +132,16 @@ class NotificationManager:
             try:
                 timeout = aiohttp.ClientTimeout(total=15)
                 if bot_channel_id and self._can_send_with_bot(bot_channel_id):
-                    return await self._post_bot_message(
+                    if await self._post_bot_message(
                         bot_channel_id, payload, site_name, watch_title, timeout
-                    )
+                    ):
+                        return True
+
+                    if webhook_url:
+                        self.logger.warning(
+                            f"Bot notification failed for {site_name}; falling back to webhook"
+                        )
+                        payload = self._webhook_fallback_payload(embed, components)
 
                 if not webhook_url:
                     self.logger.error(f"No webhook URL available for {site_name}")
@@ -286,6 +293,7 @@ class NotificationManager:
         headers = {
             "Authorization": f"Bot {APP_CONFIG.discord_bot_token}",
             "Content-Type": "application/json",
+            "User-Agent": "DiscordBot (https://atlas.hopcomp.com, 1.0)",
         }
 
         async with self.session.post(
@@ -329,6 +337,43 @@ class NotificationManager:
                 f"Status {response.status}, Response: {error_text}"
             )
             return False
+
+    @staticmethod
+    def _webhook_fallback_payload(
+        embed: Dict[str, Any], components: Optional[List[Dict[str, Any]]]
+    ) -> Dict[str, Any]:
+        payload = {"embeds": [embed]}
+        fallback_components = NotificationManager._webhook_fallback_components(
+            components
+        )
+        if fallback_components:
+            payload["components"] = fallback_components
+        return payload
+
+    @staticmethod
+    def _webhook_fallback_components(
+        components: Optional[List[Dict[str, Any]]],
+    ) -> Optional[List[Dict[str, Any]]]:
+        if not components:
+            return None
+
+        fallback = []
+        for row in components:
+            copied_row = dict(row)
+            copied_buttons = []
+            for button in row.get("components") or []:
+                copied_button = dict(button)
+                custom_id = copied_button.get("custom_id")
+                if custom_id and copied_button.get("type") == 2:
+                    action_url = NotificationManager._build_muv_action_url(custom_id)
+                    if action_url:
+                        copied_button.pop("custom_id", None)
+                        copied_button["style"] = 5
+                        copied_button["url"] = action_url
+                copied_buttons.append(copied_button)
+            copied_row["components"] = copied_buttons
+            fallback.append(copied_row)
+        return fallback
 
     @staticmethod
     def _build_muv_action_url(custom_id: str) -> Optional[str]:

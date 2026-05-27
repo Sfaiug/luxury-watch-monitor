@@ -358,11 +358,98 @@ class TestNotificationManager:
                 "https://discord.com/api/v10/channels/123456789/messages"
             )
             assert call_args.kwargs["headers"]["Authorization"] == "Bot bot-token"
+            assert call_args.kwargs["headers"]["User-Agent"].startswith("DiscordBot ")
             assert "params" not in call_args.kwargs
+            assert call_args.kwargs["json"]["embeds"][0]["image"]["url"] == (
+                sample_watch_data.image_url
+            )
             button = call_args.kwargs["json"]["components"][0]["components"][0]
             assert button["style"] == 1
             assert button["custom_id"].startswith("muv:")
             assert "url" not in button
+        finally:
+            store.close()
+
+    @pytest.mark.asyncio
+    async def test_send_notification_falls_back_to_webhook_when_bot_blocked(
+        self,
+        mock_aiohttp_session,
+        mock_logger,
+        sample_watch_data,
+        test_site_config,
+        temp_dir,
+    ):
+        """Bot send can be blocked by Discord; webhook fallback keeps the listing visible."""
+        store = ActionStore(str(temp_dir / "actions.sqlite3"))
+        try:
+            bot_response = AsyncMock()
+            bot_response.status = 403
+            bot_response.text.return_value = (
+                '{"message":"internal network error","code":40333}'
+            )
+            webhook_response = AsyncMock()
+            webhook_response.status = 204
+            mock_aiohttp_session.post.return_value.__aenter__.side_effect = [
+                bot_response,
+                webhook_response,
+            ]
+
+            with patch.dict(
+                "os.environ",
+                {
+                    "TEST_CHANNEL_ID": "123456789",
+                    test_site_config.webhook_env_var: "https://discord.com/api/webhooks/test/token",
+                },
+                clear=False,
+            ):
+                with patch("notifications.APP_CONFIG") as mock_config:
+                    mock_config.enable_notifications = True
+                    mock_config.enable_muv_actions = True
+                    mock_config.muv_action_label = "Send to MUV"
+                    mock_config.action_token_secret = "shared-secret"
+                    mock_config.muv_http_actions_enabled = True
+                    mock_config.muv_action_base_url = "https://atlas.hopcomp.com"
+                    mock_config.muv_action_web_path = "/muv/actions"
+                    mock_config.discord_bot_token = "bot-token"
+                    mock_config.discord_api_base_url = "https://discord.com/api/v10"
+                    mock_config.discord_alert_channel_id = ""
+                    mock_config.emoji_config = {
+                        "question": "?",
+                        "price": "Price",
+                        "reference": "Ref",
+                        "search": "Search",
+                        "year": "Year",
+                        "condition": "Condition",
+                        "box": "Box",
+                        "papers": "Papers",
+                        "material": "Material",
+                        "diameter": "Diameter",
+                        "check": "yes",
+                        "cross": "no",
+                    }
+
+                    manager = NotificationManager(
+                        mock_aiohttp_session, mock_logger, store
+                    )
+                    result = await manager.send_notifications(
+                        [sample_watch_data], test_site_config
+                    )
+
+            assert result == 1
+            assert mock_aiohttp_session.post.call_count == 2
+            bot_call, webhook_call = mock_aiohttp_session.post.call_args_list
+            assert bot_call.args[0] == (
+                "https://discord.com/api/v10/channels/123456789/messages"
+            )
+            assert webhook_call.args[0] == "https://discord.com/api/webhooks/test/token"
+            assert webhook_call.kwargs["params"] == {"with_components": "true"}
+            assert webhook_call.kwargs["json"]["embeds"][0]["image"]["url"] == (
+                sample_watch_data.image_url
+            )
+            button = webhook_call.kwargs["json"]["components"][0]["components"][0]
+            assert button["style"] == 5
+            assert button["url"].startswith("https://atlas.hopcomp.com/muv/actions/")
+            assert "custom_id" not in button
         finally:
             store.close()
 
