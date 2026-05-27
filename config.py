@@ -168,6 +168,7 @@ class AppConfig:
     muv_seller_first_name: str = os.getenv("MUV_SELLER_FIRST_NAME", "")
     muv_seller_last_name: str = os.getenv("MUV_SELLER_LAST_NAME", "")
     muv_seller_profiles_json: str = os.getenv("MUV_SELLER_PROFILES_JSON", "")
+    muv_allowed_requester_ids: str = os.getenv("MUV_ALLOWED_REQUESTER_IDS", "")
     muv_accept_terms: bool = _env_bool("MUV_ACCEPT_TERMS", "false")
     muv_confirm_eu_seller: bool = _env_bool("MUV_CONFIRM_EU_SELLER", "false")
 

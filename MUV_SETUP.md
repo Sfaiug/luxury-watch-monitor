@@ -125,6 +125,15 @@ refuses submission instead of falling back to the wrong seller:
 MUV_SELLER_PROFILES_JSON={"256519153278517248":{"email":"seller@example.com","firstName":"Dillon","lastName":"Hoppe"}}
 ```
 
+For a restricted test phase, allow only specific Discord users to submit:
+
+```env
+MUV_ALLOWED_REQUESTER_IDS=256519153278517248
+```
+
+Other users can still see the watch alerts, but their button click will not
+submit to MUV while the allowlist is active.
+
 You can keep MUV results out of shared Discord channels for linked button
 actions while still DMing the requester:
 

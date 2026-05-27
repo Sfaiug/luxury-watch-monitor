@@ -377,6 +377,9 @@ def submission_config_errors(requester_id: Optional[str] = None) -> List[str]:
         errors.append("MUV_SUBMISSION_MODE must be browser")
     if not APP_CONFIG.muv_auto_submit:
         errors.append("MUV_AUTO_SUBMIT must be true")
+    requester_error = MUVActionService._requester_permission_error(seller_record)
+    if requester_error:
+        errors.append(requester_error)
     if not seller.get("email"):
         errors.append("MUV_SELLER_EMAIL is missing")
     if not seller.get("firstName"):

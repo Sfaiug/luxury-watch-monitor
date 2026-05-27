@@ -30,6 +30,7 @@ def _configure_muv(mock_config, *, auto_submit=False):
     mock_config.muv_dm_results_to_requester = False
     mock_config.muv_result_delivery_mode = "channel_and_dm"
     mock_config.muv_seller_profiles_json = ""
+    mock_config.muv_allowed_requester_ids = ""
     mock_config.discord_bot_token = ""
     mock_config.discord_api_base_url = "https://discord.com/api/v10"
 
@@ -95,6 +96,79 @@ def test_validate_for_submit_accepts_full_image_gallery(mock_logger):
         mock_config.muv_confirm_eu_seller = True
 
         assert service._validate_for_submit(listing) == []
+
+
+def test_scope_and_condition_use_muv_option_values(mock_logger):
+    service = MUVActionService(None, None, mock_logger)
+    match = MUVMatch(
+        brand_name="Rolex",
+        brand_id=1,
+        model_name="Datejust",
+        model_id=2,
+        ref_mp=3,
+        confidence=1.0,
+    )
+    listing = {
+        "condition": "Fine",
+        "has_box": True,
+        "has_papers": True,
+        "image_urls": [
+            "https://example.com/watch-1.jpg",
+            "https://example.com/watch-2.jpg",
+            "https://example.com/watch-3.jpg",
+        ],
+    }
+
+    with patch("muv_service.APP_CONFIG") as mock_config:
+        _configure_muv(mock_config, auto_submit=True)
+
+        payload = service._build_request_payload(listing, match)
+
+    assert payload["condition"] == "Fine"
+    assert payload["scopeOfDelivery"] == "WatchWithBoxAndPapers"
+    assert MUVActionService._map_scope(False, False) == "WatchOnly"
+    assert MUVActionService._map_scope(True, False) == "WatchWithBox"
+    assert MUVActionService._map_scope(False, True) == "WatchWithPapers"
+
+
+def test_unique_muv_sell_url_accepts_submitted_and_review_links():
+    assert MUVActionService._is_unique_muv_sell_url(
+        "https://www.meineuhrverkaufen.de/Sell/c7db9d61-a30c-42c4-a693-49f50bf3d71d"
+    )
+    assert MUVActionService._is_unique_muv_sell_url(
+        "https://www.meineuhrverkaufen.de/Sell/3de83199-b7d9-475c-a3e8-72c86693ecff?mt=b79bee79-7444-4ebb-e0d7-08de01b936c3"
+    )
+    assert not MUVActionService._is_unique_muv_sell_url(
+        "https://www.meineuhrverkaufen.de/sell"
+    )
+
+
+def test_allowed_requester_ids_block_other_discord_users(mock_logger):
+    service = MUVActionService(None, None, mock_logger)
+    listing = {
+        "image_urls": [
+            "https://example.com/watch-1.jpg",
+            "https://example.com/watch-2.jpg",
+            "https://example.com/watch-3.jpg",
+        ],
+    }
+    allowed = type("Record", (), {"requested_by": "user-1"})()
+    blocked = type("Record", (), {"requested_by": "user-2"})()
+
+    with patch("muv_service.APP_CONFIG") as mock_config:
+        _configure_muv(mock_config, auto_submit=True)
+        mock_config.muv_seller_email = "seller@example.com"
+        mock_config.muv_seller_first_name = "Ada"
+        mock_config.muv_seller_last_name = "Lovelace"
+        mock_config.muv_accept_terms = True
+        mock_config.muv_confirm_eu_seller = True
+        mock_config.muv_allowed_requester_ids = "user-1"
+
+        assert service._validate_for_submit(listing, allowed) == []
+        assert (
+            "Discord user is not allowed to submit to MUV"
+            in service._validate_for_submit(listing, blocked)
+        )
 
 
 def test_build_request_payload_uses_requester_seller_profile(mock_logger):
@@ -234,7 +308,7 @@ async def test_listing_with_submission_images_collects_detail_gallery(
     assert "https://dealer.test/assets/logo.svg" not in listing["image_urls"]
 
 
-def test_unique_muv_sell_url_detection_uses_request_and_model_tokens():
+def test_unique_muv_sell_url_detection_accepts_submission_and_review_urls():
     assert MUVActionService._is_unique_muv_sell_url(
         "https://www.meineuhrverkaufen.de/Sell/3de83199-b7d9-475c-a3e8-72c86693ecff?mt=b79bee79-7444-4ebb-e0d7-08de01b936c3"
     )
@@ -244,7 +318,7 @@ def test_unique_muv_sell_url_detection_uses_request_and_model_tokens():
     assert not MUVActionService._is_unique_muv_sell_url(
         "https://www.meineuhrverkaufen.de/sell"
     )
-    assert not MUVActionService._is_unique_muv_sell_url(
+    assert MUVActionService._is_unique_muv_sell_url(
         "https://www.meineuhrverkaufen.de/Sell/3de83199-b7d9-475c-a3e8-72c86693ecff"
     )
 

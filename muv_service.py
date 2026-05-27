@@ -390,6 +390,9 @@ class MUVActionService:
         seller = self._seller_for_record(record)
         if not APP_CONFIG.muv_auto_submit:
             errors.append("MUV_AUTO_SUBMIT is false")
+        requester_error = self._requester_permission_error(record)
+        if requester_error:
+            errors.append(requester_error)
         if not seller.get("email"):
             errors.append("MUV_SELLER_EMAIL is missing")
         if not seller.get("firstName"):
@@ -409,6 +412,25 @@ class MUVActionService:
                 f"At least {APP_CONFIG.muv_min_picture_count} image URLs are required"
             )
         return errors
+
+    @classmethod
+    def _requester_permission_error(
+        cls, record: Optional[ActionRecord] = None
+    ) -> Optional[str]:
+        allowed = cls._allowed_requester_ids()
+        if not allowed:
+            return None
+        requester_id = str(getattr(record, "requested_by", "") or "")
+        if not requester_id:
+            return "MUV requester is missing"
+        if requester_id not in allowed:
+            return "Discord user is not allowed to submit to MUV"
+        return None
+
+    @staticmethod
+    def _allowed_requester_ids() -> set:
+        raw = APP_CONFIG.muv_allowed_requester_ids or ""
+        return {part.strip() for part in raw.split(",") if part.strip()}
 
     @classmethod
     def _seller_for_record(
@@ -707,10 +729,10 @@ class MUVActionService:
                     )
 
                     await page.get_by_role("combobox").nth(2).select_option(
-                        index=max(payload["condition"] - 1, 0)
+                        value=payload["condition"]
                     )
                     await page.get_by_role("combobox").nth(3).select_option(
-                        index=max(payload["scopeOfDelivery"] - 1, 0)
+                        value=payload["scopeOfDelivery"]
                     )
 
                     if payload.get("referenceNumber"):
@@ -750,7 +772,7 @@ class MUVActionService:
                     try:
                         await page.wait_for_url(
                             re.compile(
-                                r".*/Sell/[0-9a-f-]{36}\?mt=.+",
+                                r".*/Sell/[0-9a-f-]{36}(?:\?mt=.+)?$",
                                 re.I,
                             ),
                             timeout=30000,
@@ -799,7 +821,7 @@ class MUVActionService:
                 parsed.path,
                 re.I,
             )
-            and "mt=" in parsed.query
+            and (not parsed.query or "mt=" in parsed.query)
         )
 
     async def _download_images(self, image_urls: List[str]) -> List[str]:
@@ -1321,29 +1343,44 @@ class MUVActionService:
         return aliases
 
     @staticmethod
-    def _map_condition(condition: Optional[str]) -> int:
+    def _map_condition(condition: Optional[str]) -> str:
         if not condition:
-            return APP_CONFIG.muv_default_condition
+            return MUVActionService._condition_value(APP_CONFIG.muv_default_condition)
         text = condition.casefold()
         if "unworn" in text or "neu" in text:
-            return 1
+            return "Unworn"
         if "mint" in text or "★★★★★" in condition:
-            return 2
+            return "Mint"
         if "fair" in text or "★★★" in condition:
-            return 4
+            return "Fair"
         if "poor" in text or "★" == condition.strip():
-            return 5
-        return APP_CONFIG.muv_default_condition
+            return "Poor"
+        return MUVActionService._condition_value(APP_CONFIG.muv_default_condition)
 
     @staticmethod
-    def _map_scope(has_box: Optional[bool], has_papers: Optional[bool]) -> int:
+    def _condition_value(value: Any) -> str:
+        mapping = {
+            1: "Unworn",
+            2: "Mint",
+            3: "Fine",
+            4: "Fair",
+            5: "Poor",
+            6: "Scrap",
+        }
+        try:
+            return mapping.get(int(value), "Fine")
+        except (TypeError, ValueError):
+            return "Fine"
+
+    @staticmethod
+    def _map_scope(has_box: Optional[bool], has_papers: Optional[bool]) -> str:
         if has_box and has_papers:
-            return 4
+            return "WatchWithBoxAndPapers"
         if has_papers:
-            return 3
+            return "WatchWithPapers"
         if has_box:
-            return 2
-        return 1
+            return "WatchWithBox"
+        return "WatchOnly"
 
     @staticmethod
     def _int_or_none(value: Any) -> Optional[int]:
