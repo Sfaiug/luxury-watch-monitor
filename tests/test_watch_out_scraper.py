@@ -417,6 +417,29 @@ class TestWatchOutScraper:
         assert tudor_watch.reference == "79030N"
         assert tudor_watch.price == Decimal("3200.00")
 
+    def test_parse_product_json_ignores_generic_vendor(self, watch_out_scraper):
+        """Watch Out sometimes sets its own shop name as vendor."""
+        watch = watch_out_scraper._parse_product_json(
+            {
+                "handle": "audemars-piguet-royal-oak-14486",
+                "title": "Audemars Piguet Royal Oak 14486",
+                "vendor": "Watch Out",
+                "variants": [
+                    {
+                        "available": True,
+                        "price": "26500.00",
+                        "sku": "KA57OB",
+                    }
+                ],
+                "images": [{"src": "https://example.com/ap.jpg"}],
+            }
+        )
+
+        assert watch is not None
+        assert watch.brand == "Audemars Piguet"
+        assert watch.model == "Royal Oak 14486"
+        assert watch.reference == "KA57OB"
+
     @pytest.mark.asyncio
     async def test_extract_watches_fallback_to_visual_elements(self, watch_out_scraper):
         """Test fallback to visual elements when analytics data is missing."""

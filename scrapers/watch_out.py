@@ -88,6 +88,11 @@ class WatchOutScraper(BaseScraper):
         model = title
         if brand and title.lower().startswith(brand.lower()):
             model = title[len(brand) :].strip() or None
+        if self._is_generic_vendor(brand):
+            parsed_brand, parsed_model = self._extract_brand_model(title)
+            if parsed_brand:
+                brand = parsed_brand
+                model = parsed_model or model
 
         price = None
         raw_price = variant.get("price")
@@ -112,6 +117,14 @@ class WatchOutScraper(BaseScraper):
             currency="EUR",
             image_url=image_url,
         )
+
+    def _is_generic_vendor(self, brand: Optional[str]) -> bool:
+        return (brand or "").strip().casefold() in {
+            "",
+            "watch out",
+            "watch-out",
+            "watchout",
+        }
 
     async def _extract_watches(self, soup: BeautifulSoup) -> List[WatchData]:
         """Extract watches from Watch Out listing page."""
