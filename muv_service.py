@@ -166,6 +166,15 @@ class MUVActionService:
             if fingerprint == link.last_fingerprint:
                 continue
 
+            if not self._should_notify_offer_payload(offer_payload):
+                self.store.update_offer_link_state(
+                    link.url,
+                    fingerprint,
+                    offer_payload,
+                    notified=False,
+                )
+                continue
+
             if link.action_id:
                 result = await self.publish_offer(link.action_id, offer_payload)
             else:
@@ -181,6 +190,10 @@ class MUVActionService:
             sent += 1
 
         return sent
+
+    @staticmethod
+    def _should_notify_offer_payload(offer_payload: Dict[str, Any]) -> bool:
+        return offer_payload.get("status") in {"offered", "rejected", "canceled"}
 
     async def fetch_offer_link(self, url: str) -> Optional[Dict[str, Any]]:
         html = await fetch_page(self.session, url, self.logger)

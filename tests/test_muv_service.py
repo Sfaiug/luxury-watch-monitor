@@ -1152,3 +1152,35 @@ async def test_monitor_offer_links_notifies_only_changed_state(
         ]
     finally:
         store.close()
+
+
+@pytest.mark.asyncio
+async def test_monitor_offer_links_stores_pending_without_notifying(
+    mock_logger, temp_dir, monkeypatch
+):
+    store = ActionStore(str(temp_dir / "actions.sqlite3"))
+    try:
+        url = "https://www.meineuhrverkaufen.de/Sell/request-1?mt=token"
+        store.save_offer_link(url)
+
+        async def fake_fetch_page(_session, _url, _logger):
+            return _offer_page_html(price=None, reviewed=False)
+
+        sent = []
+
+        async def fake_send_result_webhook(record, result):
+            sent.append((record, result))
+
+        service = MUVActionService(None, store, mock_logger)
+        monkeypatch.setattr("muv_service.fetch_page", fake_fetch_page)
+        monkeypatch.setattr(service, "_send_result_webhook", fake_send_result_webhook)
+
+        assert await service.monitor_offer_links() == 0
+
+        link = store.list_offer_links()[0]
+        assert link.last_fingerprint
+        assert link.last_payload["status"] == "pending"
+        assert link.last_notified_at is None
+        assert sent == []
+    finally:
+        store.close()
