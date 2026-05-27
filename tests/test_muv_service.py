@@ -533,6 +533,13 @@ async def test_match_listing_handles_production_brand_aliases(mock_logger):
             "ModelId": 323,
             "RefMP": 1,
         },
+        {
+            "BrandName": "Vacheron & Constantin",
+            "BrandId": 15,
+            "ModelName": "Ultra Thin",
+            "ModelId": 733,
+            "RefMP": 1,
+        },
     ]
 
     cases = [
@@ -579,6 +586,15 @@ async def test_match_listing_handles_production_brand_aliases(mock_logger):
             },
             ("Chronoswiss", "Flying Regulator"),
         ),
+        (
+            {
+                "brand": "Vacheron Constantin",
+                "model": "Extra Plat",
+                "reference": "6414",
+                "title": "Vacheron Constantin Extra Plat | 6414",
+            },
+            ("Vacheron & Constantin", "Ultra Thin"),
+        ),
     ]
 
     with patch("muv_service.APP_CONFIG") as mock_config:
@@ -619,6 +635,44 @@ async def test_match_listing_infers_brand_when_vendor_is_site_name(mock_logger):
     assert match is not None
     assert match.brand_name == "Audemars Piguet"
     assert match.model_name == "Royal Oak"
+
+
+@pytest.mark.asyncio
+async def test_match_listing_uses_source_url_for_clear_brand_correction(mock_logger):
+    service = MUVActionService(None, None, mock_logger)
+    service._whitelist = [
+        {
+            "BrandName": "Rolex",
+            "BrandId": 1,
+            "ModelName": "Oyster",
+            "ModelId": 2,
+            "RefMP": 1,
+        },
+        {
+            "BrandName": "Omega",
+            "BrandId": 4,
+            "ModelName": "Speedmaster",
+            "ModelId": 5,
+            "RefMP": 1,
+        },
+    ]
+
+    with patch("muv_service.APP_CONFIG") as mock_config:
+        _configure_muv(mock_config)
+
+        match = await service.match_listing(
+            {
+                "brand": "Rolex",
+                "model": "Speedmaster",
+                "reference": "105.003",
+                "title": "Rolex Speedmaster | 105.003",
+                "url": "https://tropicalwatch.com/watches/1965-omega-speedmaster-105-003",
+            }
+        )
+
+    assert match is not None
+    assert match.brand_name == "Omega"
+    assert match.model_name == "Speedmaster"
 
 
 @pytest.mark.asyncio

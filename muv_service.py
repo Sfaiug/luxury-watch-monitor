@@ -292,6 +292,13 @@ class MUVActionService:
                 brand = inferred_brand
                 brand_candidates = self._brand_candidates(brand)
 
+        brand_override = self._brand_override_from_listing_text(
+            listing, whitelist_brands
+        )
+        if brand_override and brand_override not in brand_candidates:
+            brand = brand_override
+            brand_candidates = self._brand_candidates(brand)
+
         model_aliases = self._model_aliases(brand_candidates, model, title, listing)
         search_text = " ".join(
             part for part in [brand, model, title, *model_aliases] if part
@@ -1294,6 +1301,28 @@ class MUVActionService:
         return None
 
     @classmethod
+    def _brand_override_from_listing_text(
+        cls, listing: Dict[str, Any], whitelist_brands: set[str]
+    ) -> Optional[str]:
+        text = cls._normalize(
+            " ".join(
+                str(part or "")
+                for part in [
+                    listing.get("model"),
+                    listing.get("title"),
+                    listing.get("url"),
+                ]
+            )
+        )
+        overrides = {
+            "omega speedmaster": "omega",
+        }
+        for marker, brand in overrides.items():
+            if marker in text and brand in whitelist_brands:
+                return brand
+        return None
+
+    @classmethod
     def _model_aliases(
         cls,
         brand_candidates: set[str],
@@ -1345,6 +1374,9 @@ class MUVActionService:
                 aliases.append("flying regulator")
             elif "grand" in combined:
                 aliases.append("grand regulateur")
+
+        if "vacheron constantin" in brand_candidates and "extra plat" in combined:
+            aliases.append("ultra thin")
 
         if "audemars piguet" in brand_candidates and (
             "offshore" in combined or "off shore" in combined
