@@ -113,3 +113,20 @@ def test_submission_config_errors_include_missing_required_contact(mocker):
     assert "MUV_AUTO_SUBMIT must be true" in errors
     assert "MUV_SELLER_EMAIL is missing" in errors
     assert "MUV_ACCEPT_TERMS must be true" not in errors
+
+
+def test_submission_config_errors_accept_requester_profile(mocker):
+    mocker.patch.object(batch.APP_CONFIG, "muv_submission_mode", "browser")
+    mocker.patch.object(batch.APP_CONFIG, "muv_auto_submit", True)
+    mocker.patch.object(batch.APP_CONFIG, "muv_seller_email", "")
+    mocker.patch.object(batch.APP_CONFIG, "muv_seller_first_name", "")
+    mocker.patch.object(batch.APP_CONFIG, "muv_seller_last_name", "")
+    mocker.patch.object(
+        batch.APP_CONFIG,
+        "muv_seller_profiles_json",
+        '{"user-1":{"email":"user@example.com","firstName":"Ada","lastName":"Lovelace"}}',
+    )
+    mocker.patch.object(batch.APP_CONFIG, "muv_accept_terms", True)
+    mocker.patch.object(batch.APP_CONFIG, "muv_confirm_eu_seller", True)
+
+    assert batch.submission_config_errors("user-1") == []

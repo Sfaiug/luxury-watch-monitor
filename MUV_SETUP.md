@@ -117,6 +117,24 @@ when MUV returns a unique `/Sell/{request_id}?mt=...` URL.
 When `MUV_DM_RESULTS_TO_REQUESTER=true`, completed MUV offer results for linked
 button actions are also sent as a Discord DM to the user who clicked the button.
 
+For personalized button submissions, configure seller profiles by Discord user
+id. When profiles are configured and a requester has no matching profile, the VM
+refuses submission instead of falling back to the wrong seller:
+
+```env
+MUV_SELLER_PROFILES_JSON={"256519153278517248":{"email":"seller@example.com","firstName":"Dillon","lastName":"Hoppe"}}
+```
+
+You can keep MUV results out of shared Discord channels for linked button
+actions while still DMing the requester:
+
+```env
+MUV_RESULT_DELIVERY_MODE=dm_only_for_requested
+```
+
+Without that setting, `MUV_RESULT_WEBHOOK_URL` still receives the result and the
+requester also receives a DM when `MUV_DM_RESULTS_TO_REQUESTER=true`.
+
 ## Latest Notification Batch Runner
 
 Use the guarded batch runner to re-audit recent Discord watch alerts before a

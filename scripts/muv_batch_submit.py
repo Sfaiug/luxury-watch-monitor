@@ -366,17 +366,22 @@ async def _audit_item(
     }
 
 
-def submission_config_errors() -> List[str]:
+def submission_config_errors(requester_id: Optional[str] = None) -> List[str]:
     errors = []
+    seller_record = None
+    if requester_id:
+        seller_record = type("SellerRecord", (), {"requested_by": requester_id})()
+    seller = MUVActionService._seller_for_record(seller_record)
+
     if APP_CONFIG.muv_submission_mode != "browser":
         errors.append("MUV_SUBMISSION_MODE must be browser")
     if not APP_CONFIG.muv_auto_submit:
         errors.append("MUV_AUTO_SUBMIT must be true")
-    if not APP_CONFIG.muv_seller_email:
+    if not seller.get("email"):
         errors.append("MUV_SELLER_EMAIL is missing")
-    if not APP_CONFIG.muv_seller_first_name:
+    if not seller.get("firstName"):
         errors.append("MUV_SELLER_FIRST_NAME is missing")
-    if not APP_CONFIG.muv_seller_last_name:
+    if not seller.get("lastName"):
         errors.append("MUV_SELLER_LAST_NAME is missing")
     if not APP_CONFIG.muv_accept_terms:
         errors.append("MUV_ACCEPT_TERMS must be true")
@@ -394,7 +399,7 @@ async def submit_ready_items(
     requester_name: str,
     max_submit: Optional[int],
 ) -> Dict[str, Any]:
-    config_errors = submission_config_errors()
+    config_errors = submission_config_errors(requester_id)
     if config_errors:
         raise RuntimeError("; ".join(config_errors))
 
@@ -447,7 +452,7 @@ async def submit_ready_items(
 
 async def run(args: argparse.Namespace) -> int:
     if args.submit_ready:
-        config_errors = submission_config_errors()
+        config_errors = submission_config_errors(args.requester_id)
         if config_errors:
             raise RuntimeError("; ".join(config_errors))
 
@@ -482,7 +487,7 @@ async def run(args: argparse.Namespace) -> int:
                     "ready": sum(1 for row in rows if row["ready"]),
                     "failed": sum(1 for row in rows if not row["ready"]),
                 },
-                "submission_config_errors": submission_config_errors(),
+                "submission_config_errors": submission_config_errors(args.requester_id),
                 "rows": rows,
             }
 

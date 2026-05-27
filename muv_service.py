@@ -200,8 +200,8 @@ class MUVActionService:
                 error="No MUV model match above threshold",
             )
 
-        request_payload = self._build_request_payload(listing, match)
-        validation_errors = self._validate_for_submit(listing)
+        request_payload = self._build_request_payload(listing, match, record)
+        validation_errors = self._validate_for_submit(listing, record)
 
         data = {
             "listing": self._listing_summary(listing),
@@ -351,10 +351,14 @@ class MUVActionService:
         return self._whitelist
 
     def _build_request_payload(
-        self, listing: Dict[str, Any], match: MUVMatch
+        self,
+        listing: Dict[str, Any],
+        match: MUVMatch,
+        record: Optional[ActionRecord] = None,
     ) -> Dict[str, Any]:
         condition = self._map_condition(listing.get("condition"))
         scope = self._map_scope(listing.get("has_box"), listing.get("has_papers"))
+        seller = self._seller_for_record(record)
         return {
             "modelId": match.model_id,
             "brandId": match.brand_id,
@@ -367,9 +371,9 @@ class MUVActionService:
             "scopeOfDelivery": scope,
             "caseMaterial": listing.get("case_material"),
             "seller": {
-                "email": APP_CONFIG.muv_seller_email or None,
-                "firstName": APP_CONFIG.muv_seller_first_name or None,
-                "lastName": APP_CONFIG.muv_seller_last_name or None,
+                "email": seller.get("email") or None,
+                "firstName": seller.get("firstName") or None,
+                "lastName": seller.get("lastName") or None,
             },
             "comment": self._build_comment(listing),
             "imageUrls": listing.get("image_urls")
@@ -377,15 +381,20 @@ class MUVActionService:
             "sourceUrl": listing.get("url"),
         }
 
-    def _validate_for_submit(self, listing: Dict[str, Any]) -> List[str]:
+    def _validate_for_submit(
+        self,
+        listing: Dict[str, Any],
+        record: Optional[ActionRecord] = None,
+    ) -> List[str]:
         errors = []
+        seller = self._seller_for_record(record)
         if not APP_CONFIG.muv_auto_submit:
             errors.append("MUV_AUTO_SUBMIT is false")
-        if not APP_CONFIG.muv_seller_email:
+        if not seller.get("email"):
             errors.append("MUV_SELLER_EMAIL is missing")
-        if not APP_CONFIG.muv_seller_first_name:
+        if not seller.get("firstName"):
             errors.append("MUV_SELLER_FIRST_NAME is missing")
-        if not APP_CONFIG.muv_seller_last_name:
+        if not seller.get("lastName"):
             errors.append("MUV_SELLER_LAST_NAME is missing")
         if not APP_CONFIG.muv_accept_terms:
             errors.append("MUV_ACCEPT_TERMS must be true")
@@ -400,6 +409,57 @@ class MUVActionService:
                 f"At least {APP_CONFIG.muv_min_picture_count} image URLs are required"
             )
         return errors
+
+    @classmethod
+    def _seller_for_record(
+        cls, record: Optional[ActionRecord] = None
+    ) -> Dict[str, str]:
+        user_id = getattr(record, "requested_by", None)
+        profiles = cls._seller_profiles()
+        profile = cls._seller_profile_for_user(user_id, profiles)
+        if profile:
+            return profile
+        if user_id and profiles:
+            return {"email": "", "firstName": "", "lastName": ""}
+
+        return {
+            "email": APP_CONFIG.muv_seller_email,
+            "firstName": APP_CONFIG.muv_seller_first_name,
+            "lastName": APP_CONFIG.muv_seller_last_name,
+        }
+
+    @classmethod
+    def _seller_profile_for_user(
+        cls,
+        user_id: Optional[str],
+        profiles: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, str]:
+        profiles = profiles if profiles is not None else cls._seller_profiles()
+        raw_profile = profiles.get(str(user_id or "")) or {}
+        if not isinstance(raw_profile, dict):
+            return {}
+
+        profile = {
+            "email": str(raw_profile.get("email") or "").strip(),
+            "firstName": str(
+                raw_profile.get("firstName") or raw_profile.get("first_name") or ""
+            ).strip(),
+            "lastName": str(
+                raw_profile.get("lastName") or raw_profile.get("last_name") or ""
+            ).strip(),
+        }
+        return profile if any(profile.values()) else {}
+
+    @staticmethod
+    def _seller_profiles() -> Dict[str, Any]:
+        raw = APP_CONFIG.muv_seller_profiles_json or ""
+        if not raw.strip():
+            return {}
+        try:
+            data = json.loads(raw)
+        except json.JSONDecodeError:
+            return {}
+        return data if isinstance(data, dict) else {}
 
     async def _listing_with_submission_images(
         self, listing: Dict[str, Any]
@@ -793,7 +853,7 @@ class MUVActionService:
         payload = {"embeds": [embed]}
         timeout = aiohttp.ClientTimeout(total=15)
 
-        if webhook_url:
+        if webhook_url and self._should_send_result_webhook(record):
             try:
                 async with self.session.post(
                     webhook_url, json=payload, timeout=timeout
@@ -805,7 +865,7 @@ class MUVActionService:
                         )
             except Exception as exc:
                 self.logger.error("Error sending MUV result webhook: %s", exc)
-        else:
+        elif not webhook_url:
             self.logger.info(
                 "No MUV_RESULT_WEBHOOK_URL configured; result not posted to Discord"
             )
@@ -887,8 +947,20 @@ class MUVActionService:
             and APP_CONFIG.discord_bot_token
             and record
             and record.requested_by
-            and result.data.get("muv_offer")
+            and (
+                result.data.get("muv_offer") or result.status in {"submitted", "failed"}
+            )
         )
+
+    @staticmethod
+    def _should_send_result_webhook(record: Optional[ActionRecord]) -> bool:
+        mode = (APP_CONFIG.muv_result_delivery_mode or "channel_and_dm").casefold()
+        mode = mode.replace("-", "_")
+        if mode in {"dm_only", "dm"}:
+            return False
+        if mode in {"dm_only_for_requested", "requester_dm_only"}:
+            return not bool(record and record.requested_by)
+        return True
 
     def _build_result_embed(
         self, record: Optional[ActionRecord], result: MUVResult

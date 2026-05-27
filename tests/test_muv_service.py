@@ -9,7 +9,7 @@ import pytest
 
 from action_store import ActionStore
 from models import WatchData
-from muv_service import MUVActionService, MUVResult
+from muv_service import MUVActionService, MUVMatch, MUVResult
 
 
 def _configure_muv(mock_config, *, auto_submit=False):
@@ -28,6 +28,8 @@ def _configure_muv(mock_config, *, auto_submit=False):
     mock_config.muv_offer_link_urls = ""
     mock_config.muv_offer_link_poll_seconds = 900
     mock_config.muv_dm_results_to_requester = False
+    mock_config.muv_result_delivery_mode = "channel_and_dm"
+    mock_config.muv_seller_profiles_json = ""
     mock_config.discord_bot_token = ""
     mock_config.discord_api_base_url = "https://discord.com/api/v10"
 
@@ -93,6 +95,96 @@ def test_validate_for_submit_accepts_full_image_gallery(mock_logger):
         mock_config.muv_confirm_eu_seller = True
 
         assert service._validate_for_submit(listing) == []
+
+
+def test_build_request_payload_uses_requester_seller_profile(mock_logger):
+    service = MUVActionService(None, None, mock_logger)
+    record = type(
+        "Record",
+        (),
+        {"requested_by": "user-1"},
+    )()
+    match = MUVMatch(
+        brand_name="Rolex",
+        brand_id=1,
+        model_name="Daytona",
+        model_id=2,
+        ref_mp=3,
+        confidence=1.0,
+    )
+    listing = {
+        "reference": "116500LN",
+        "image_urls": [
+            "https://example.com/watch-1.jpg",
+            "https://example.com/watch-2.jpg",
+            "https://example.com/watch-3.jpg",
+        ],
+    }
+
+    with patch("muv_service.APP_CONFIG") as mock_config:
+        _configure_muv(mock_config, auto_submit=True)
+        mock_config.muv_accept_terms = True
+        mock_config.muv_confirm_eu_seller = True
+        mock_config.muv_seller_profiles_json = json.dumps(
+            {
+                "user-1": {
+                    "email": "buyer@example.com",
+                    "first_name": "Ada",
+                    "last_name": "Lovelace",
+                }
+            }
+        )
+
+        payload = service._build_request_payload(listing, match, record)
+        errors = service._validate_for_submit(listing, record)
+
+    assert payload["seller"] == {
+        "email": "buyer@example.com",
+        "firstName": "Ada",
+        "lastName": "Lovelace",
+    }
+    assert errors == []
+
+
+def test_validate_for_submit_blocks_unknown_requester_when_profiles_configured(
+    mock_logger,
+):
+    service = MUVActionService(None, None, mock_logger)
+    record = type(
+        "Record",
+        (),
+        {"requested_by": "user-without-profile"},
+    )()
+    listing = {
+        "image_urls": [
+            "https://example.com/watch-1.jpg",
+            "https://example.com/watch-2.jpg",
+            "https://example.com/watch-3.jpg",
+        ],
+    }
+
+    with patch("muv_service.APP_CONFIG") as mock_config:
+        _configure_muv(mock_config, auto_submit=True)
+        mock_config.muv_seller_email = "global@example.com"
+        mock_config.muv_seller_first_name = "Global"
+        mock_config.muv_seller_last_name = "Seller"
+        mock_config.muv_accept_terms = True
+        mock_config.muv_confirm_eu_seller = True
+        mock_config.muv_seller_profiles_json = json.dumps(
+            {
+                "other-user": {
+                    "email": "other@example.com",
+                    "firstName": "Other",
+                    "lastName": "Seller",
+                }
+            }
+        )
+
+        errors = service._validate_for_submit(listing, record)
+
+    assert "MUV_SELLER_EMAIL is missing" in errors
+    assert "MUV_SELLER_FIRST_NAME is missing" in errors
+    assert "MUV_SELLER_LAST_NAME is missing" in errors
 
 
 @pytest.mark.asyncio
@@ -802,6 +894,115 @@ async def test_result_webhook_dms_requesting_user_for_muv_offer(mock_logger, tem
         ]
         assert session.calls[1][1]["json"] == {"recipient_id": "user-1"}
         assert session.calls[2][1]["json"]["embeds"][0]["title"] == "Rolex Daytona"
+    finally:
+        store.close()
+
+
+@pytest.mark.asyncio
+async def test_result_webhook_can_skip_channel_for_requester_dm_only(
+    mock_logger, temp_dir
+):
+    class FakeResponse:
+        def __init__(self, status, payload=None):
+            self.status = status
+            self.payload = payload or {}
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return None
+
+        async def json(self):
+            return self.payload
+
+        async def text(self):
+            return json.dumps(self.payload)
+
+    class FakeSession:
+        def __init__(self):
+            self.calls = []
+
+        def post(self, url, **kwargs):
+            self.calls.append((url, kwargs))
+            if url.endswith("/users/@me/channels"):
+                return FakeResponse(200, {"id": "dm-channel-1"})
+            return FakeResponse(201, {"id": "message-1"})
+
+    store = ActionStore(str(temp_dir / "actions.sqlite3"))
+    try:
+        action_id = store.save_watch(
+            WatchData(
+                title="Rolex Daytona",
+                url="https://example.com/daytona",
+                site_name="Example",
+                site_key="example",
+                brand="Rolex",
+                model="Daytona",
+            )
+        )
+        store.queue_action(action_id, "user-1", "tester", "interaction-1")
+        record = store.get(action_id)
+        result = MUVResult(
+            status="completed",
+            title="MUV offer received",
+            description="MUV returned an offer.",
+            data={
+                "listing": record.listing,
+                "muv_offer": {"price": "23000", "currency": "EUR"},
+            },
+        )
+        session = FakeSession()
+        service = MUVActionService(session, store, mock_logger)
+
+        with patch("muv_service.APP_CONFIG") as mock_config:
+            _configure_muv(mock_config)
+            mock_config.muv_result_webhook_url = "https://discord.test/webhook"
+            mock_config.muv_dm_results_to_requester = True
+            mock_config.muv_result_delivery_mode = "dm_only_for_requested"
+            mock_config.discord_bot_token = "bot-token"
+            mock_config.discord_api_base_url = "https://discord.test/api"
+
+            await service._send_result_webhook(record, result)
+
+        urls = [url for url, _kwargs in session.calls]
+        assert urls == [
+            "https://discord.test/api/users/@me/channels",
+            "https://discord.test/api/channels/dm-channel-1/messages",
+        ]
+    finally:
+        store.close()
+
+
+def test_should_dm_submitted_result_to_requester(mock_logger, temp_dir):
+    store = ActionStore(str(temp_dir / "actions.sqlite3"))
+    try:
+        action_id = store.save_watch(
+            WatchData(
+                title="Rolex Daytona",
+                url="https://example.com/daytona",
+                site_name="Example",
+                site_key="example",
+                brand="Rolex",
+                model="Daytona",
+            )
+        )
+        store.queue_action(action_id, "user-1", "tester", "interaction-1")
+        record = store.get(action_id)
+        result = MUVResult(
+            status="submitted",
+            title="MUV request submitted",
+            description="Submitted.",
+            data={"listing": record.listing},
+            submitted=True,
+        )
+
+        with patch("muv_service.APP_CONFIG") as mock_config:
+            _configure_muv(mock_config)
+            mock_config.muv_dm_results_to_requester = True
+            mock_config.discord_bot_token = "bot-token"
+
+            assert MUVActionService._should_dm_result(record, result) is True
     finally:
         store.close()
 

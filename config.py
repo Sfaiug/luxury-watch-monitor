@@ -154,6 +154,9 @@ class AppConfig:
     )
     muv_result_webhook_url: str = os.getenv("MUV_RESULT_WEBHOOK_URL", "")
     muv_dm_results_to_requester: bool = _env_bool("MUV_DM_RESULTS_TO_REQUESTER", "true")
+    muv_result_delivery_mode: str = os.getenv(
+        "MUV_RESULT_DELIVERY_MODE", "channel_and_dm"
+    )
     muv_base_url: str = os.getenv("MUV_BASE_URL", "https://www.meineuhrverkaufen.de")
     muv_submission_mode: str = os.getenv("MUV_SUBMISSION_MODE", "prepare")
     muv_action_label: str = os.getenv("MUV_ACTION_LABEL", "Send to MUV")
@@ -164,6 +167,7 @@ class AppConfig:
     muv_seller_email: str = os.getenv("MUV_SELLER_EMAIL", "")
     muv_seller_first_name: str = os.getenv("MUV_SELLER_FIRST_NAME", "")
     muv_seller_last_name: str = os.getenv("MUV_SELLER_LAST_NAME", "")
+    muv_seller_profiles_json: str = os.getenv("MUV_SELLER_PROFILES_JSON", "")
     muv_accept_terms: bool = _env_bool("MUV_ACCEPT_TERMS", "false")
     muv_confirm_eu_seller: bool = _env_bool("MUV_CONFIRM_EU_SELLER", "false")
 
