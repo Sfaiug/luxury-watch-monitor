@@ -116,7 +116,7 @@ class MUVActionService:
         result = MUVResult(
             status="completed",
             title="MUV offer received",
-            description="MUV offer data was received on the VM and linked to the original listing.",
+            description="MUV returned an offer for this listing.",
             data=result_data,
             submitted=bool(record.submitted_at),
         )
@@ -567,45 +567,91 @@ class MUVActionService:
         }.get(result.status, 0x95A5A6)
 
         watch = self._watch_from_listing(listing)
-        embed = watch.to_discord_embed(color)
-        watch_title = embed.get("title") or listing.get("title") or "Unknown Watch"
-        embed["title"] = f"{result.title}: {watch_title}"[:256]
-        embed["description"] = result.description
-        if not embed.get("url"):
-            embed.pop("url", None)
+        watch_title = (
+            watch._build_embed_title() or listing.get("title") or "Unknown Watch"
+        )
+        embed = {
+            "title": f"{result.title}: {watch_title}"[:256],
+            "description": (result.description or "")[:500],
+            "color": color,
+            "fields": [],
+        }
+        if watch.url:
+            embed["url"] = watch.url
+        if watch.image_url:
+            embed["image"] = {"url": watch.image_url}
 
-        muv_fields = [
-            {
-                "name": "MUV Status:",
-                "value": f"**{result.status}**",
-                "inline": True,
-            },
-        ]
+        listing_price = self._listing_price_display(listing)
+        if listing_price:
+            embed["fields"].append(
+                {
+                    "name": f"{APP_CONFIG.emoji_config['price']} Listing Price:",
+                    "value": f"**{listing_price}**",
+                    "inline": True,
+                }
+            )
 
         offer = result.data.get("muv_offer")
         if offer:
             offer_price = self._offer_price_display(offer)
             if offer_price:
-                muv_fields.append(
+                embed["fields"].append(
                     {
                         "name": f"{APP_CONFIG.emoji_config['price']} MUV Offer:",
                         "value": f"**{offer_price}**",
                         "inline": True,
                     }
                 )
-            offer_text = self._format_offer(offer)
-            if offer_text:
-                muv_fields.append(
+
+            spread = self._spread_display(listing, offer)
+            if spread:
+                embed["fields"].append(
                     {
-                        "name": "MUV Offer Details:",
-                        "value": offer_text[:1000],
-                        "inline": False,
+                        "name": "Spread:",
+                        "value": f"**{spread}**",
+                        "inline": True,
                     }
                 )
 
+        muv_status = self._status_field_value(result, offer)
+        if muv_status:
+            embed["fields"].append(
+                {"name": "MUV Status:", "value": f"**{muv_status}**", "inline": True}
+            )
+
+        original_url = listing.get("url")
+        if original_url and not self._is_muv_url(original_url):
+            embed["fields"].append(
+                {
+                    "name": "Original Listing:",
+                    "value": f"[**Open listing**]({original_url})",
+                    "inline": False,
+                }
+            )
+
+        muv_url = result.data.get("muv_sell_url")
+        if muv_url:
+            embed["fields"].append(
+                {
+                    "name": "MUV Link:",
+                    "value": f"[**Open MUV flow**]({muv_url})",
+                    "inline": False,
+                }
+            )
+
+        details = self._watch_details_field(listing)
+        if details:
+            embed["fields"].append(
+                {
+                    "name": "Watch Details:",
+                    "value": details[:1000],
+                    "inline": False,
+                }
+            )
+
         muv = result.data.get("muv")
-        if muv:
-            muv_fields.append(
+        if muv and result.status != "completed":
+            embed["fields"].append(
                 {
                     "name": "MUV Match:",
                     "value": f"**{muv['brand_name']} {muv['model_name']}** ({muv['confidence']})",
@@ -613,18 +659,20 @@ class MUVActionService:
                 }
             )
 
-        if result.data.get("muv_sell_url"):
-            muv_fields.append(
+        validation_errors = result.data.get("validation_errors") or []
+        if validation_errors and result.status == "prepared":
+            embed["fields"].append(
                 {
-                    "name": "MUV Link:",
-                    "value": f"[**Open MUV flow**]({result.data['muv_sell_url']})",
+                    "name": "Submit Mode:",
+                    "value": (
+                        "**Prepared only**\n"
+                        "Auto-submit is disabled or required seller/image data is missing."
+                    ),
                     "inline": False,
                 }
             )
-
-        validation_errors = result.data.get("validation_errors") or []
-        if validation_errors:
-            muv_fields.append(
+        elif validation_errors and result.status == "failed":
+            embed["fields"].append(
                 {
                     "name": "Submit Requirements:",
                     "value": "\n".join(f"- {item}" for item in validation_errors)[
@@ -635,13 +683,10 @@ class MUVActionService:
             )
 
         if result.error:
-            muv_fields.append(
+            embed["fields"].append(
                 {"name": "Error:", "value": result.error[:1000], "inline": False}
             )
 
-        fields = embed.get("fields", [])
-        insert_at = 1 if fields else 0
-        embed["fields"] = fields[:insert_at] + muv_fields + fields[insert_at:]
         footer_bits = ["MUV"]
         if record:
             footer_bits.append(f"Action {record.action_id[:12]}")
@@ -903,66 +948,161 @@ class MUVActionService:
 
     @staticmethod
     def _decimal_or_none(value: Any) -> Optional[Decimal]:
-        if value in (None, ""):
-            return None
-        try:
-            return Decimal(str(value).replace(",", ""))
-        except (InvalidOperation, ValueError):
-            return None
+        return MUVActionService._money_amount(value)
 
     @classmethod
     def _offer_price_display(cls, offer: Dict[str, Any]) -> Optional[str]:
+        amount = cls._offer_amount(offer)
+        if amount is None:
+            return None
+        return cls._format_currency_amount(amount, offer.get("currency") or "EUR")
+
+    @classmethod
+    def _listing_price_display(cls, listing: Dict[str, Any]) -> Optional[str]:
+        display = listing.get("price_display")
+        if display:
+            return str(display)
+        amount = cls._listing_amount(listing)
+        if amount is None:
+            return None
+        return cls._format_currency_amount(amount, listing.get("currency") or "EUR")
+
+    @classmethod
+    def _spread_display(
+        cls, listing: Dict[str, Any], offer: Dict[str, Any]
+    ) -> Optional[str]:
+        listing_amount = cls._listing_amount(listing)
+        offer_amount = cls._offer_amount(offer)
+        if listing_amount is None or offer_amount is None or listing_amount == 0:
+            return None
+
+        spread = offer_amount - listing_amount
+        percent = (spread / listing_amount) * Decimal("100")
+        spread_text = cls._format_currency_amount(
+            abs(spread), offer.get("currency") or listing.get("currency") or "EUR"
+        )
+        sign = "+" if spread >= 0 else "-"
+        return f"{sign}{spread_text} / {sign}{percent.copy_abs():.1f}%"
+
+    @classmethod
+    def _listing_amount(cls, listing: Dict[str, Any]) -> Optional[Decimal]:
+        return cls._money_amount(listing.get("price")) or cls._money_amount(
+            listing.get("price_display")
+        )
+
+    @classmethod
+    def _offer_amount(cls, offer: Dict[str, Any]) -> Optional[Decimal]:
         price = (
             offer.get("price")
             or offer.get("purchase_price")
             or offer.get("offer")
             or offer.get("amount")
         )
-        if not price:
-            return None
-        currency = offer.get("currency") or "EUR"
-        if currency == "EUR":
-            return f"€{price}"
-        if currency == "USD":
-            return f"${price}"
-        return f"{price} {currency}"
+        if price is None:
+            watches = offer.get("watches") or []
+            for watch in watches:
+                price = watch.get("price") or watch.get("price_display")
+                if price is not None:
+                    break
+        return cls._money_amount(price)
 
     @staticmethod
-    def _format_offer(offer: Dict[str, Any]) -> str:
-        price = (
-            offer.get("price")
-            or offer.get("purchase_price")
-            or offer.get("offer")
-            or offer.get("amount")
-        )
-        currency = offer.get("currency") or "EUR"
-        parts = []
-        if offer.get("status"):
-            parts.append(f"Status: **{offer['status']}**")
-        if price:
-            parts.append(f"**{price} {currency}**")
-        for watch in offer.get("watches") or []:
-            label = " ".join(
-                part
-                for part in [
-                    watch.get("brand"),
-                    watch.get("model"),
-                    watch.get("reference"),
-                ]
-                if part
+    def _money_amount(value: Any) -> Optional[Decimal]:
+        if value in (None, ""):
+            return None
+        if isinstance(value, Decimal):
+            return value
+        text = str(value).strip()
+        text = re.sub(r"[^0-9,.\-]", "", text)
+        if not text or text in {"-", ".", ","}:
+            return None
+
+        if "," in text and "." in text:
+            comma_index = text.rfind(",")
+            dot_index = text.rfind(".")
+            decimal_sep = "," if comma_index > dot_index else "."
+            thousands_sep = "." if decimal_sep == "," else ","
+            text = text.replace(thousands_sep, "")
+            text = text.replace(decimal_sep, ".")
+        elif "," in text:
+            whole, _, fraction = text.rpartition(",")
+            text = (
+                whole + "." + fraction if len(fraction) <= 2 else text.replace(",", "")
             )
-            watch_line = label or "MUV watch"
-            if watch.get("price_display"):
-                watch_line += f" - {watch['price_display']} {currency}"
-            elif watch.get("status"):
-                watch_line += f" - {watch['status']}"
-            parts.append(watch_line)
-        if offer.get("offer_expiry_date_utc"):
-            parts.append(f"Valid until: {offer['offer_expiry_date_utc']}")
-        if offer.get("message"):
-            parts.append(str(offer["message"]))
-        if offer.get("muv_url"):
-            parts.append(f"[Open MUV offer]({offer['muv_url']})")
+        elif "." in text:
+            whole, _, fraction = text.rpartition(".")
+            text = (
+                whole + "." + fraction if len(fraction) <= 2 else text.replace(".", "")
+            )
+
+        try:
+            return Decimal(text)
+        except (InvalidOperation, ValueError):
+            return None
+
+    @staticmethod
+    def _format_currency_amount(amount: Decimal, currency: str) -> str:
+        formatted = f"{amount:,.0f}".replace(",", ".")
+        if currency == "EUR":
+            return f"€{formatted}"
+        if currency == "USD":
+            return f"${formatted}"
+        return f"{formatted} {currency}"
+
+    @staticmethod
+    def _status_field_value(
+        result: MUVResult, offer: Optional[Dict[str, Any]]
+    ) -> Optional[str]:
+        if offer:
+            status = offer.get("status")
+            if status and status not in {"offered", "completed"}:
+                return str(status)
+            if not MUVActionService._offer_amount(offer):
+                return str(status or result.status)
+            return ""
+        if result.status == "completed":
+            return ""
+        return result.status
+
+    @staticmethod
+    def _is_muv_url(url: str) -> bool:
+        try:
+            return "meineuhrverkaufen.de" in urlparse(url).netloc.casefold()
+        except Exception:
+            return False
+
+    @staticmethod
+    def _watch_details_field(listing: Dict[str, Any]) -> str:
+        parts = []
+        identity = " | ".join(
+            str(listing.get(key))
+            for key in ("brand", "model", "reference")
+            if listing.get(key)
+        )
+        if identity:
+            parts.append(identity)
+
+        for label, key in [
+            ("Year", "year"),
+            ("Condition", "condition"),
+            ("Case", "case_material"),
+            ("Diameter", "diameter"),
+        ]:
+            if listing.get(key):
+                parts.append(f"{label}: {listing[key]}")
+
+        scope = []
+        if listing.get("has_box") is not None:
+            scope.append(
+                f"Box: {APP_CONFIG.emoji_config['check'] if listing.get('has_box') else APP_CONFIG.emoji_config['cross']}"
+            )
+        if listing.get("has_papers") is not None:
+            scope.append(
+                f"Papers: {APP_CONFIG.emoji_config['check'] if listing.get('has_papers') else APP_CONFIG.emoji_config['cross']}"
+            )
+        if scope:
+            parts.append(" | ".join(scope))
+
         return "\n".join(parts)
 
     @staticmethod
