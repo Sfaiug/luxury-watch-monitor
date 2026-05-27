@@ -184,8 +184,14 @@ async def test_muv_button_to_prepared_result_and_offer_webhook_e2e(
             assert record.status == "prepared"
             assert record.result["muv"]["model_id"] == 66
             assert len(received["results"]) == 1
-            prepared_title = received["results"][0]["embeds"][0]["title"]
-            assert prepared_title == "MUV request prepared"
+            prepared_embed = received["results"][0]["embeds"][0]
+            assert prepared_embed["title"].startswith(
+                "MUV request prepared: Rolex Daytona"
+            )
+            assert prepared_embed["image"]["url"] == f"{fake_base_url}/image.jpg"
+            assert any(
+                "Chrono24 Search" in field["name"] for field in prepared_embed["fields"]
+            )
 
             offer_response = await session.post(
                 f"http://127.0.0.1:{port}/muv/offers",
@@ -202,8 +208,9 @@ async def test_muv_button_to_prepared_result_and_offer_webhook_e2e(
             assert record.status == "completed"
             assert record.result["muv_offer"]["price"] == "23000"
             assert len(received["results"]) == 2
-            offer_title = received["results"][1]["embeds"][0]["title"]
-            assert offer_title == "MUV offer received"
+            offer_embed = received["results"][1]["embeds"][0]
+            assert offer_embed["title"].startswith("MUV offer received: Rolex Daytona")
+            assert any("MUV Offer" in field["name"] for field in offer_embed["fields"])
     finally:
         if discord_server:
             await discord_server.stop()

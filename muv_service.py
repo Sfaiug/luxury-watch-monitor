@@ -8,6 +8,7 @@ import re
 import tempfile
 import unicodedata
 from dataclasses import dataclass
+from decimal import Decimal, InvalidOperation
 from difflib import SequenceMatcher
 from html import unescape
 from pathlib import Path
@@ -18,6 +19,7 @@ import aiohttp
 
 from action_store import ActionRecord, ActionStore
 from config import APP_CONFIG
+from models import WatchData
 from utils import fetch_page
 
 
@@ -551,7 +553,12 @@ class MUVActionService:
     def _build_result_embed(
         self, record: Optional[ActionRecord], result: MUVResult
     ) -> Dict[str, Any]:
-        listing = record.listing if record else result.data.get("listing", {})
+        listing = (
+            record.listing
+            if record
+            else result.data.get("listing")
+            or self._listing_from_offer(result.data.get("muv_offer") or {})
+        )
         color = {
             "submitted": 0x2ECC71,
             "prepared": 0xF1C40F,
@@ -559,60 +566,87 @@ class MUVActionService:
             "completed": 0x2ECC71,
         }.get(result.status, 0x95A5A6)
 
-        fields = [
-            {"name": "Status", "value": f"**{result.status}**", "inline": True},
+        watch = self._watch_from_listing(listing)
+        embed = watch.to_discord_embed(color)
+        watch_title = embed.get("title") or listing.get("title") or "Unknown Watch"
+        embed["title"] = f"{result.title}: {watch_title}"[:256]
+        embed["description"] = result.description
+        if not embed.get("url"):
+            embed.pop("url", None)
+
+        muv_fields = [
             {
-                "name": "Listing Price",
-                "value": f"**{listing.get('price_display') or listing.get('price') or '?'}**",
+                "name": "MUV Status:",
+                "value": f"**{result.status}**",
                 "inline": True,
             },
         ]
 
+        offer = result.data.get("muv_offer")
+        if offer:
+            offer_price = self._offer_price_display(offer)
+            if offer_price:
+                muv_fields.append(
+                    {
+                        "name": f"{APP_CONFIG.emoji_config['price']} MUV Offer:",
+                        "value": f"**{offer_price}**",
+                        "inline": True,
+                    }
+                )
+            offer_text = self._format_offer(offer)
+            if offer_text:
+                muv_fields.append(
+                    {
+                        "name": "MUV Offer Details:",
+                        "value": offer_text[:1000],
+                        "inline": False,
+                    }
+                )
+
         muv = result.data.get("muv")
         if muv:
-            fields.append(
+            muv_fields.append(
                 {
-                    "name": "MUV Match",
+                    "name": "MUV Match:",
                     "value": f"**{muv['brand_name']} {muv['model_name']}** ({muv['confidence']})",
                     "inline": False,
                 }
             )
 
-        if result.error:
-            fields.append(
-                {"name": "Error", "value": result.error[:1000], "inline": False}
-            )
-
         if result.data.get("muv_sell_url"):
-            fields.append(
+            muv_fields.append(
                 {
-                    "name": "MUV",
-                    "value": f"[Open MUV sell flow]({result.data['muv_sell_url']})",
+                    "name": "MUV Link:",
+                    "value": f"[**Open MUV flow**]({result.data['muv_sell_url']})",
                     "inline": False,
                 }
             )
 
-        offer = result.data.get("muv_offer")
-        if offer:
-            offer_text = self._format_offer(offer)
-            if offer_text:
-                fields.append(
-                    {"name": "MUV Offer", "value": offer_text[:1000], "inline": False}
-                )
+        validation_errors = result.data.get("validation_errors") or []
+        if validation_errors:
+            muv_fields.append(
+                {
+                    "name": "Submit Requirements:",
+                    "value": "\n".join(f"- {item}" for item in validation_errors)[
+                        :1000
+                    ],
+                    "inline": False,
+                }
+            )
 
-        embed = {
-            "title": result.title,
-            "description": result.description,
-            "url": listing.get("url"),
-            "color": color,
-            "fields": fields,
-            "footer": {
-                "text": f"MUV action {record.action_id if record else ''}".strip()
-            },
-        }
+        if result.error:
+            muv_fields.append(
+                {"name": "Error:", "value": result.error[:1000], "inline": False}
+            )
 
-        if listing.get("image_url"):
-            embed["thumbnail"] = {"url": listing["image_url"]}
+        fields = embed.get("fields", [])
+        insert_at = 1 if fields else 0
+        embed["fields"] = fields[:insert_at] + muv_fields + fields[insert_at:]
+        footer_bits = ["MUV"]
+        if record:
+            footer_bits.append(f"Action {record.action_id[:12]}")
+        footer_bits.append(f"Updated: {watch.scraped_at.strftime('%Y-%m-%d %H:%M:%S')}")
+        embed["footer"] = {"text": " - ".join(footer_bits)}
         return embed
 
     @classmethod
@@ -810,6 +844,88 @@ class MUVActionService:
             "image_url",
         ]
         return {key: listing.get(key) for key in keys}
+
+    @classmethod
+    def _watch_from_listing(cls, listing: Dict[str, Any]) -> WatchData:
+        price = cls._decimal_or_none(listing.get("price"))
+        return WatchData(
+            title=listing.get("title") or "Unknown Watch",
+            url=listing.get("url") or listing.get("muv_url") or "",
+            site_name=listing.get("site_name") or "MUV",
+            site_key=listing.get("site_key") or "muv",
+            brand=listing.get("brand"),
+            model=listing.get("model"),
+            reference=listing.get("reference"),
+            year=listing.get("year"),
+            price=price,
+            currency=listing.get("currency") or "EUR",
+            price_display=listing.get("price_display"),
+            image_url=listing.get("image_url") or cls._first_image_url(listing),
+            condition=listing.get("condition"),
+            has_box=listing.get("has_box"),
+            has_papers=listing.get("has_papers"),
+            case_material=listing.get("case_material"),
+            diameter=listing.get("diameter"),
+        )
+
+    @staticmethod
+    def _listing_from_offer(offer: Dict[str, Any]) -> Dict[str, Any]:
+        watches = offer.get("watches") or []
+        primary = watches[0] if watches else {}
+        title = " ".join(
+            part
+            for part in [
+                primary.get("brand"),
+                primary.get("model"),
+                primary.get("reference"),
+            ]
+            if part
+        )
+        return {
+            "title": title or "MUV offer",
+            "url": offer.get("source_url") or offer.get("muv_url") or "",
+            "site_name": "MUV",
+            "site_key": "muv",
+            "brand": primary.get("brand"),
+            "model": primary.get("model"),
+            "reference": primary.get("reference"),
+            "condition": primary.get("condition"),
+            "image_url": primary.get("picture_url"),
+            "currency": offer.get("currency") or "EUR",
+        }
+
+    @staticmethod
+    def _first_image_url(listing: Dict[str, Any]) -> Optional[str]:
+        image_urls = listing.get("image_urls") or []
+        if isinstance(image_urls, list):
+            return next((url for url in image_urls if url), None)
+        return None
+
+    @staticmethod
+    def _decimal_or_none(value: Any) -> Optional[Decimal]:
+        if value in (None, ""):
+            return None
+        try:
+            return Decimal(str(value).replace(",", ""))
+        except (InvalidOperation, ValueError):
+            return None
+
+    @classmethod
+    def _offer_price_display(cls, offer: Dict[str, Any]) -> Optional[str]:
+        price = (
+            offer.get("price")
+            or offer.get("purchase_price")
+            or offer.get("offer")
+            or offer.get("amount")
+        )
+        if not price:
+            return None
+        currency = offer.get("currency") or "EUR"
+        if currency == "EUR":
+            return f"€{price}"
+        if currency == "USD":
+            return f"${price}"
+        return f"{price} {currency}"
 
     @staticmethod
     def _format_offer(offer: Dict[str, Any]) -> str:

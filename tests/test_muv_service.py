@@ -9,7 +9,7 @@ import pytest
 
 from action_store import ActionStore
 from models import WatchData
-from muv_service import MUVActionService
+from muv_service import MUVActionService, MUVResult
 
 
 def _configure_muv(mock_config, *, auto_submit=False):
@@ -242,6 +242,78 @@ def test_parse_offer_page_extracts_rejection():
     assert "price" not in payload
     assert payload["watches"][0]["model"] == "Cockpit"
     assert payload["watches"][0]["status"] == "rejected"
+
+
+def test_result_embed_uses_watch_style_with_full_listing_context(mock_logger, temp_dir):
+    store = ActionStore(str(temp_dir / "actions.sqlite3"))
+    try:
+        action_id = store.save_watch(
+            WatchData(
+                title="Rolex Daytona 116500LN",
+                url="https://example.com/daytona",
+                site_name="Example",
+                site_key="example",
+                brand="Rolex",
+                model="Daytona",
+                reference="116500LN",
+                price=Decimal("25000"),
+                currency="EUR",
+                image_url="https://example.com/watch.jpg",
+                condition="Fine",
+                has_box=True,
+                has_papers=True,
+                case_material="Steel",
+                diameter="40mm",
+            )
+        )
+        record = store.get(action_id)
+        service = MUVActionService(None, store, mock_logger)
+        result = MUVResult(
+            status="completed",
+            title="MUV offer received",
+            description="MUV returned an offer for the original listing.",
+            data={
+                "listing": record.listing,
+                "muv_offer": {
+                    "price": "23000",
+                    "currency": "EUR",
+                    "muv_url": "https://www.meineuhrverkaufen.de/Sell/request",
+                    "message": "Accepted for direct purchase.",
+                },
+                "muv_sell_url": "https://www.meineuhrverkaufen.de/Sell/request",
+            },
+        )
+
+        embed = service._build_result_embed(record, result)
+
+        assert embed["title"].startswith("MUV offer received: Rolex Daytona")
+        assert embed["url"] == "https://example.com/daytona"
+        assert embed["image"]["url"] == "https://example.com/watch.jpg"
+        assert "thumbnail" not in embed
+        field_names = [field["name"] for field in embed["fields"]]
+        assert any("Price" in name for name in field_names)
+        assert any("MUV Offer" in name for name in field_names)
+        assert "116500LN" in embed["title"]
+        assert any("Chrono24 Search" in name for name in field_names)
+        assert any("MUV Link" in name for name in field_names)
+    finally:
+        store.close()
+
+
+def test_offer_link_embed_uses_muv_watch_picture_when_no_listing(mock_logger):
+    payload = MUVActionService.parse_offer_page(
+        _offer_page_html(price=3000),
+        "https://www.meineuhrverkaufen.de/Sell/request-1?mt=token",
+    )
+    service = MUVActionService(None, None, mock_logger)
+    result = service._result_for_offer_payload(payload)
+
+    embed = service._build_result_embed(None, result)
+
+    assert embed["title"].startswith("MUV offer received: Breitling Navitimer")
+    assert embed["image"]["url"] == "https://example.com/watch.jpg"
+    assert embed["url"] == "https://www.meineuhrverkaufen.de/Sell/request-1?mt=token"
+    assert any("MUV Offer" in field["name"] for field in embed["fields"])
 
 
 @pytest.mark.asyncio
