@@ -54,10 +54,12 @@ class NotificationManager:
             return 0
 
         webhook_url = site_config.webhook_url
-        if not webhook_url:
+        bot_channel_id = self._bot_channel_id(site_config)
+        use_bot = self._can_send_with_bot(bot_channel_id)
+        if not webhook_url and not use_bot:
             self.logger.warning(
-                f"No webhook URL configured for {site_config.name}. "
-                f"Set environment variable: {site_config.webhook_env_var}"
+                f"No Discord destination configured for {site_config.name}. "
+                f"Set {site_config.webhook_env_var} or a Discord channel id."
             )
             return 0
 
@@ -69,7 +71,9 @@ class NotificationManager:
                 # Convert watch to Discord embed
                 embed = watch.to_discord_embed(site_config.color)
 
-                components = self._build_muv_components(watch)
+                components = self._build_muv_components(
+                    watch, use_link_button=not use_bot
+                )
 
                 # Send notification
                 success = await self._send_single_notification(
@@ -78,6 +82,7 @@ class NotificationManager:
                     site_config.name,
                     watch.title,
                     components=components,
+                    bot_channel_id=bot_channel_id if use_bot else None,
                 )
 
                 if success:
@@ -98,11 +103,12 @@ class NotificationManager:
 
     async def _send_single_notification(
         self,
-        webhook_url: str,
+        webhook_url: Optional[str],
         embed: Dict[str, Any],
         site_name: str,
         watch_title: str,
         components: Optional[List[Dict[str, Any]]] = None,
+        bot_channel_id: Optional[str] = None,
     ) -> bool:
         """
         Send a single Discord notification.
@@ -125,6 +131,14 @@ class NotificationManager:
         ):
             try:
                 timeout = aiohttp.ClientTimeout(total=15)
+                if bot_channel_id and self._can_send_with_bot(bot_channel_id):
+                    return await self._post_bot_message(
+                        bot_channel_id, payload, site_name, watch_title, timeout
+                    )
+
+                if not webhook_url:
+                    self.logger.error(f"No webhook URL available for {site_name}")
+                    return False
 
                 async with self.session.post(
                     webhook_url,
@@ -214,7 +228,9 @@ class NotificationManager:
             webhook_url, test_embed, "Test", "Test Notification"
         )
 
-    def _build_muv_components(self, watch: WatchData) -> List[Dict[str, Any]] | None:
+    def _build_muv_components(
+        self, watch: WatchData, *, use_link_button: bool = True
+    ) -> List[Dict[str, Any]] | None:
         """Create the MUV action button for Discord interaction webhooks."""
         if not APP_CONFIG.enable_muv_actions or not self.action_store:
             return None
@@ -222,7 +238,7 @@ class NotificationManager:
         action_id = self.action_store.save_watch(watch)
         custom_id = ActionStore.custom_id(action_id, APP_CONFIG.action_token_secret)
         action_url = self._build_muv_action_url(custom_id)
-        if action_url:
+        if action_url and use_link_button:
             button = {
                 "type": 2,
                 "style": 5,
@@ -243,6 +259,76 @@ class NotificationManager:
                 "components": [button],
             }
         ]
+
+    def _bot_channel_id(self, site_config: SiteConfig) -> Optional[str]:
+        channel_id = site_config.discord_channel_id or getattr(
+            APP_CONFIG, "discord_alert_channel_id", ""
+        )
+        return channel_id.strip() if isinstance(channel_id, str) else None
+
+    @staticmethod
+    def _can_send_with_bot(channel_id: Optional[str]) -> bool:
+        token = getattr(APP_CONFIG, "discord_bot_token", "")
+        return bool(token and channel_id)
+
+    async def _post_bot_message(
+        self,
+        channel_id: str,
+        payload: Dict[str, Any],
+        site_name: str,
+        watch_title: str,
+        timeout: aiohttp.ClientTimeout,
+    ) -> bool:
+        api_base = getattr(
+            APP_CONFIG, "discord_api_base_url", "https://discord.com/api/v10"
+        ).rstrip("/")
+        url = f"{api_base}/channels/{channel_id}/messages"
+        headers = {
+            "Authorization": f"Bot {APP_CONFIG.discord_bot_token}",
+            "Content-Type": "application/json",
+        }
+
+        async with self.session.post(
+            url,
+            json=payload,
+            headers=headers,
+            timeout=timeout,
+        ) as response:
+            if response.status in (200, 201):
+                self.logger.debug(
+                    f"Successfully sent bot notification for '{watch_title}'"
+                )
+                return True
+
+            if response.status == 429:
+                retry_after = int(response.headers.get("X-RateLimit-Reset-After", 5))
+                self.logger.warning(
+                    f"Discord bot rate limit hit. Waiting {retry_after}s before retry"
+                )
+                await asyncio.sleep(retry_after)
+                async with self.session.post(
+                    url,
+                    json=payload,
+                    headers=headers,
+                    timeout=timeout,
+                ) as retry_response:
+                    if retry_response.status in (200, 201):
+                        return True
+                    error_text = await retry_response.text()
+                    error_text = error_text[:500] if error_text else "No error message"
+                    self.logger.error(
+                        f"Discord bot error for {site_name}: "
+                        f"Status {retry_response.status}, Response: {error_text}"
+                    )
+                    return False
+
+            error_text = await response.text()
+            error_text = error_text[:500] if error_text else "No error message"
+            self.logger.error(
+                f"Discord bot error for {site_name}: "
+                f"Status {response.status}, Response: {error_text}"
+            )
+            return False
 
     @staticmethod
     def _build_muv_action_url(custom_id: str) -> Optional[str]:

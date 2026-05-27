@@ -20,6 +20,7 @@ class SiteConfig:
     webhook_env_var: str
     color: int
     base_url: str
+    channel_env_var: Optional[str] = None
 
     # Selectors for scraping (to be customized per site)
     watch_container_selector: str = ""
@@ -37,6 +38,16 @@ class SiteConfig:
     def webhook_url(self) -> Optional[str]:
         """Get webhook URL from environment variable."""
         return os.environ.get(self.webhook_env_var)
+
+    @property
+    def discord_channel_id(self) -> Optional[str]:
+        """Get the bot target channel for this site when bot delivery is enabled."""
+        env_var = self.channel_env_var
+        if env_var and os.environ.get(env_var):
+            return os.environ.get(env_var)
+
+        inferred = self.webhook_env_var.replace("_WEBHOOK_URL", "_CHANNEL_ID")
+        return os.environ.get(inferred)
 
 
 @dataclass
@@ -127,6 +138,11 @@ class AppConfig:
         "DISCORD_INTERACTIONS_PATH", "/discord/interactions"
     )
     discord_public_key: str = os.getenv("DISCORD_PUBLIC_KEY", "")
+    discord_bot_token: str = os.getenv("DISCORD_BOT_TOKEN", "")
+    discord_api_base_url: str = os.getenv(
+        "DISCORD_API_BASE_URL", "https://discord.com/api/v10"
+    )
+    discord_alert_channel_id: str = os.getenv("DISCORD_ALERT_CHANNEL_ID", "")
     action_token_secret: str = os.getenv("ACTION_TOKEN_SECRET", "")
     muv_http_actions_enabled: bool = _env_bool("MUV_HTTP_ACTIONS_ENABLED", "false")
     muv_action_base_url: str = os.getenv("MUV_ACTION_BASE_URL", "")

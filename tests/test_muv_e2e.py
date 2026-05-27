@@ -185,22 +185,16 @@ async def test_muv_button_to_prepared_result_and_offer_webhook_e2e(
             assert record.result["muv"]["model_id"] == 66
             assert len(received["results"]) == 1
             prepared_embed = received["results"][0]["embeds"][0]
-            assert prepared_embed["title"].startswith(
-                "MUV request prepared: Rolex Daytona"
-            )
+            assert prepared_embed["title"] == "Rolex Daytona | 116500LN"
             assert prepared_embed["image"]["url"] == f"{fake_base_url}/image.jpg"
             prepared_fields = {
                 field["name"]: field["value"] for field in prepared_embed["fields"]
             }
-            assert prepared_fields["💰 Listing Price:"] == "**€25.000**"
-            assert prepared_fields["Original Listing:"] == (
-                f"[**Open listing**]({fake_base_url}/listing/daytona)"
-            )
+            assert prepared_fields["💰 Price:"] == "**€25.000**"
             assert "MUV Match:" in prepared_fields
             assert "Submit Mode:" in prepared_fields
-            assert all(
-                "Chrono24 Search" not in field["name"]
-                for field in prepared_embed["fields"]
+            assert any(
+                "Chrono24 Search" in field["name"] for field in prepared_embed["fields"]
             )
 
             offer_response = await session.post(
@@ -219,16 +213,18 @@ async def test_muv_button_to_prepared_result_and_offer_webhook_e2e(
             assert record.result["muv_offer"]["price"] == "23000"
             assert len(received["results"]) == 2
             offer_embed = received["results"][1]["embeds"][0]
-            assert offer_embed["title"].startswith("MUV offer received: Rolex Daytona")
+            assert offer_embed["title"] == "Rolex Daytona | 116500LN"
             offer_fields = {
                 field["name"]: field["value"] for field in offer_embed["fields"]
             }
+            assert offer_fields["💰 Price:"] == "**€25.000**"
             assert offer_fields["💰 MUV Offer:"] == "**€23.000**"
             assert offer_fields["Spread:"] == "**-€2.000 / -8.0%**"
+            assert offer_embed["image"]["url"] == f"{fake_base_url}/image.jpg"
             offer_text = "\n".join(
                 f"{field['name']}\n{field['value']}" for field in offer_embed["fields"]
             )
-            assert "Chrono24 Search" not in offer_text
+            assert "Chrono24 Search" in offer_text
             assert "Submit Requirements" not in offer_text
             assert "MUV_AUTO_SUBMIT" not in offer_text
     finally:

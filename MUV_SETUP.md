@@ -23,11 +23,41 @@ and expects a reverse proxy or tunnel to terminate HTTPS.
 ENABLE_MUV_ACTIONS=true
 DISCORD_INTERACTIONS_ENABLED=true
 DISCORD_PUBLIC_KEY=...
+DISCORD_BOT_TOKEN=...
 ACTION_TOKEN_SECRET=long-random-secret
 MUV_RESULT_WEBHOOK_URL=https://discord.com/api/webhooks/...
 ```
 
 `ACTION_TOKEN_SECRET` signs button custom IDs so stale or forged IDs are rejected.
+
+## In-Discord Buttons
+
+To make `Send to MUV` run inside Discord without opening a browser tab, watch
+alerts must be sent by the Discord application bot instead of a normal incoming
+webhook. The monitor can do this directly through Discord's Create Message API.
+
+```env
+DISCORD_BOT_TOKEN=...
+DISCORD_ALERT_CHANNEL_ID=123456789012345678
+```
+
+You can route each monitored site to its own channel by setting site-specific
+channel ids:
+
+```env
+WORLDOFTIME_CHANNEL_ID=...
+GRIMMEISSEN_CHANNEL_ID=...
+TROPICALWATCH_CHANNEL_ID=...
+JUWELIER_EXCHANGE_CHANNEL_ID=...
+WATCH_OUT_CHANNEL_ID=...
+RUESCHENBECK_CHANNEL_ID=...
+BACHMANN_SCHER_CHANNEL_ID=...
+```
+
+When `DISCORD_BOT_TOKEN` and a channel id are configured, the monitor sends the
+watch alert with a `custom_id` button. Discord posts the click to
+`DISCORD_INTERACTIONS_PATH`, and the user stays in Discord with an ephemeral
+confirmation.
 
 ## Signed Link Button Fallback
 
@@ -56,8 +86,8 @@ MUV_AUTO_SUBMIT=false
 ```
 
 In this mode a click maps the listing to MUV's model whitelist, stores the request
-payload, and sends a result webhook with the original listing link, MUV sell link,
-listing price, model match, and any missing submit requirements.
+payload, and sends a result webhook based on the original watch alert with MUV
+fields inserted.
 
 VM-side browser submission is opt-in:
 
@@ -83,7 +113,9 @@ unless the stored listing has enough image URLs according to `MUV_MIN_PICTURE_CO
 ## Offer Webhook
 
 When an external process receives a MUV offer, it can notify the monitor and make
-the monitor post the Discord result overview:
+the monitor post the Discord result overview. For linked actions, the result
+uses the original watch alert embed, including the original image, with MUV offer
+fields inserted:
 
 ```http
 POST /muv/offers

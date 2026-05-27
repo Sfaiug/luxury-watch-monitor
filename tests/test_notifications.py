@@ -297,6 +297,76 @@ class TestNotificationManager:
             store.close()
 
     @pytest.mark.asyncio
+    async def test_send_notification_uses_bot_custom_id_button_when_channel_configured(
+        self,
+        mock_aiohttp_session,
+        mock_logger,
+        sample_watch_data,
+        test_site_config,
+        temp_dir,
+    ):
+        """Test bot delivery uses in-Discord custom_id buttons instead of link buttons."""
+        store = ActionStore(str(temp_dir / "actions.sqlite3"))
+        try:
+            mock_response = AsyncMock()
+            mock_response.status = 200
+            mock_aiohttp_session.post.return_value.__aenter__.return_value = (
+                mock_response
+            )
+
+            with patch.dict(
+                "os.environ",
+                {"TEST_CHANNEL_ID": "123456789"},
+                clear=False,
+            ):
+                with patch("notifications.APP_CONFIG") as mock_config:
+                    mock_config.enable_notifications = True
+                    mock_config.enable_muv_actions = True
+                    mock_config.muv_action_label = "Send to MUV"
+                    mock_config.action_token_secret = "shared-secret"
+                    mock_config.muv_http_actions_enabled = True
+                    mock_config.muv_action_base_url = "https://atlas.hopcomp.com"
+                    mock_config.muv_action_web_path = "/muv/actions"
+                    mock_config.discord_bot_token = "bot-token"
+                    mock_config.discord_api_base_url = "https://discord.com/api/v10"
+                    mock_config.discord_alert_channel_id = ""
+                    mock_config.emoji_config = {
+                        "question": "?",
+                        "price": "Price",
+                        "reference": "Ref",
+                        "search": "Search",
+                        "year": "Year",
+                        "condition": "Condition",
+                        "box": "Box",
+                        "papers": "Papers",
+                        "material": "Material",
+                        "diameter": "Diameter",
+                        "check": "yes",
+                        "cross": "no",
+                    }
+
+                    manager = NotificationManager(
+                        mock_aiohttp_session, mock_logger, store
+                    )
+                    result = await manager.send_notifications(
+                        [sample_watch_data], test_site_config
+                    )
+
+            assert result == 1
+            call_args = mock_aiohttp_session.post.call_args
+            assert call_args.args[0] == (
+                "https://discord.com/api/v10/channels/123456789/messages"
+            )
+            assert call_args.kwargs["headers"]["Authorization"] == "Bot bot-token"
+            assert "params" not in call_args.kwargs
+            button = call_args.kwargs["json"]["components"][0]["components"][0]
+            assert button["style"] == 1
+            assert button["custom_id"].startswith("muv:")
+            assert "url" not in button
+        finally:
+            store.close()
+
+    @pytest.mark.asyncio
     async def test_send_single_notification_rate_limit(
         self, mock_aiohttp_session, mock_logger
     ):

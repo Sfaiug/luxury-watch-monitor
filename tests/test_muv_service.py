@@ -244,7 +244,7 @@ def test_parse_offer_page_extracts_rejection():
     assert payload["watches"][0]["status"] == "rejected"
 
 
-def test_result_embed_is_compact_with_full_listing_context(mock_logger, temp_dir):
+def test_result_embed_reuses_original_listing_with_muv_fields(mock_logger, temp_dir):
     store = ActionStore(str(temp_dir / "actions.sqlite3"))
     try:
         action_id = store.save_watch(
@@ -290,28 +290,25 @@ def test_result_embed_is_compact_with_full_listing_context(mock_logger, temp_dir
 
         embed = service._build_result_embed(record, result)
 
-        assert embed["title"].startswith("MUV offer received: Rolex Daytona")
+        assert embed["title"] == "Rolex Daytona | 116500LN"
         assert embed["url"] == "https://example.com/daytona"
         assert embed["image"]["url"] == "https://example.com/watch.jpg"
         assert "thumbnail" not in embed
+        assert embed["footer"]["text"].startswith("Example - Detected:")
         fields = {field["name"]: field["value"] for field in embed["fields"]}
-        assert fields["💰 Listing Price:"] == "**€25.000**"
+        assert fields["💰 Price:"] == "**€25.000**"
         assert fields["💰 MUV Offer:"] == "**€23.000**"
         assert fields["Spread:"] == "**-€2.000 / -8.0%**"
-        assert (
-            fields["Original Listing:"]
-            == "[**Open listing**](https://example.com/daytona)"
-        )
         assert fields["MUV Link:"] == (
             "[**Open MUV flow**](https://www.meineuhrverkaufen.de/Sell/request)"
         )
-        assert "Rolex | Daytona | 116500LN" in fields["Watch Details:"]
-        assert "Box: ✅ | Papers: ✅" in fields["Watch Details:"]
+        assert "Search similar" in fields["🔍 Chrono24 Search:"]
+        assert fields["📦 Box:"] == "**✅**"
+        assert fields["📄 Papers:"] == "**✅**"
         assert "116500LN" in embed["title"]
         field_text = "\n".join(
             f"{field['name']}\n{field['value']}" for field in embed["fields"]
         )
-        assert "Chrono24 Search" not in field_text
         assert "Submit Requirements" not in field_text
         assert "MUV Offer Details" not in field_text
         assert "MUV_AUTO_SUBMIT" not in field_text
@@ -329,7 +326,7 @@ def test_offer_link_embed_uses_muv_watch_picture_when_no_listing(mock_logger):
 
     embed = service._build_result_embed(None, result)
 
-    assert embed["title"].startswith("MUV offer received: Breitling Navitimer")
+    assert embed["title"] == "Breitling Navitimer | A26322"
     assert embed["image"]["url"] == "https://example.com/watch.jpg"
     assert embed["url"] == "https://www.meineuhrverkaufen.de/Sell/request-1?mt=token"
     fields = {field["name"]: field["value"] for field in embed["fields"]}
@@ -337,8 +334,8 @@ def test_offer_link_embed_uses_muv_watch_picture_when_no_listing(mock_logger):
     assert fields["MUV Link:"] == (
         "[**Open MUV flow**](https://www.meineuhrverkaufen.de/Sell/request-1?mt=token)"
     )
-    assert "Breitling | Navitimer | A26322" in fields["Watch Details:"]
-    assert all("Chrono24 Search" not in field["name"] for field in embed["fields"])
+    assert fields["💰 Price:"] == "**❓**"
+    assert any("Chrono24 Search" in field["name"] for field in embed["fields"])
 
 
 @pytest.mark.asyncio
