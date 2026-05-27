@@ -117,6 +117,30 @@ when MUV returns a unique `/Sell/{request_id}?mt=...` URL.
 When `MUV_DM_RESULTS_TO_REQUESTER=true`, completed MUV offer results for linked
 button actions are also sent as a Discord DM to the user who clicked the button.
 
+## Latest Notification Batch Runner
+
+Use the guarded batch runner to re-audit recent Discord watch alerts before a
+controlled batch submission:
+
+```bash
+python scripts/muv_batch_submit.py --limit 100 --audit-output /tmp/muv_batch_audit.json
+```
+
+The runner fetches the configured site channels with the bot token, extracts the
+same MUV button `action_id`, stores missing action rows, maps each listing to
+MUV, and reports which listings are safe to submit. It rate-limits detail-page
+enrichment per host so slow sites do not get hammered.
+
+Real submission is deliberately gated:
+
+```bash
+python scripts/muv_batch_submit.py --limit 100 --submit-ready --require-submitted 85
+```
+
+`--submit-ready` fails before any network work unless browser mode, seller
+contact fields, and the two MUV consent flags are all configured. Each successful
+submission must return a unique `/Sell/{request_id}?mt=...` URL.
+
 ## Offer Webhook
 
 When an external process receives a MUV offer, it can notify the monitor and make

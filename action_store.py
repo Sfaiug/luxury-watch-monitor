@@ -98,9 +98,14 @@ class ActionStore:
     def save_watch(self, watch: WatchData) -> str:
         """Persist a notified listing and return its stable action id."""
         action_id = self.action_id_for_watch(watch)
-        now = _utcnow()
-        listing = self._watch_to_dict(watch)
+        return self.save_listing(action_id, self._watch_to_dict(watch))
 
+    def save_listing(self, action_id: str, listing: Dict[str, Any]) -> str:
+        """Persist a listing under a known action id without resetting its status."""
+        if not action_id:
+            raise ValueError("action_id is required")
+
+        now = _utcnow()
         with self._lock:
             self._conn.execute(
                 """
