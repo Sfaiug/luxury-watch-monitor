@@ -246,7 +246,11 @@ def watch_from_embed(
     detected_at = _parse_detected_at(footer) or _parse_message_time(
         message.get("timestamp")
     )
-    reference = fields.get("reference") or title_reference
+    reference = (
+        fields.get("reference")
+        or title_reference
+        or MUVActionService._reference_from_url(url)
+    )
 
     image_url = _embed_image_url(embed)
     return WatchData(

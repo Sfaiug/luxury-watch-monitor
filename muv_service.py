@@ -13,7 +13,7 @@ from difflib import SequenceMatcher
 from html import unescape
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
-from urllib.parse import urljoin, urlparse
+from urllib.parse import unquote, urljoin, urlparse
 
 import aiohttp
 from bs4 import BeautifulSoup
@@ -372,13 +372,14 @@ class MUVActionService:
         condition = self._map_condition(listing.get("condition"))
         scope = self._map_scope(listing.get("has_box"), listing.get("has_papers"))
         seller = self._seller_for_record(record)
+        reference = self._listing_reference(listing)
         return {
             "modelId": match.model_id,
             "brandId": match.brand_id,
             "refMp": match.ref_mp,
             "brandName": match.brand_name,
             "modelName": match.model_name,
-            "referenceNumber": listing.get("reference"),
+            "referenceNumber": reference,
             "yearOfProduction": self._int_or_none(listing.get("year")),
             "condition": condition,
             "scopeOfDelivery": scope,
@@ -797,7 +798,7 @@ class MUVActionService:
                     if "Please review your information" in body_text:
                         return {
                             "ok": False,
-                            "error": body_text[-1500:],
+                            "error": self._extract_muv_form_error(body_text),
                             "page_url": page.url,
                         }
                     if not self._is_unique_muv_sell_url(page.url):
@@ -1394,6 +1395,91 @@ class MUVActionService:
         if has_box:
             return "WatchWithBox"
         return "WatchOnly"
+
+    @classmethod
+    def _listing_reference(cls, listing: Dict[str, Any]) -> Optional[str]:
+        reference = str(listing.get("reference") or "").strip()
+        if reference:
+            return reference
+        return cls._reference_from_url(str(listing.get("url") or ""))
+
+    @staticmethod
+    def _reference_from_url(url: str) -> Optional[str]:
+        path = unquote(urlparse(url or "").path)
+        match = re.search(r"(?:^|[-_/])ref[-_]?(.+?)(?:\.html)?$", path, re.I)
+        if not match:
+            return None
+
+        stop_words = {
+            "18k",
+            "box",
+            "bronze",
+            "carbon",
+            "ceramic",
+            "description",
+            "describtion",
+            "diamond",
+            "gold",
+            "like",
+            "limited",
+            "new",
+            "papers",
+            "platinum",
+            "rare",
+            "rose",
+            "service",
+            "silver",
+            "stainless",
+            "steel",
+            "titanium",
+            "unworn",
+            "white",
+            "yellow",
+        }
+        parts = re.split(r"[-_/]+", match.group(1).strip("/"))
+        reference_parts = []
+        for part in parts:
+            cleaned = re.sub(r"[^A-Za-z0-9.]+", "", part)
+            if not cleaned:
+                continue
+            if cleaned.casefold() in stop_words or cleaned.casefold().startswith("bj"):
+                break
+            reference_parts.append(cleaned)
+
+        if not reference_parts:
+            return None
+        return "-".join(reference_parts).upper()
+
+    @staticmethod
+    def _extract_muv_form_error(body_text: str) -> str:
+        lines = [line.strip() for line in body_text.splitlines() if line.strip()]
+        start = next(
+            (
+                index
+                for index, line in enumerate(lines)
+                if "Please review your information" in line
+            ),
+            None,
+        )
+        if start is None:
+            return "MUV form validation failed."
+
+        stop_markers = (
+            "Do you have questions",
+            "General Purchase Terms",
+            "Privacy Policy",
+            "Legal Disclosure",
+            "© ",
+        )
+        messages = []
+        for line in lines[start:]:
+            if messages and any(marker in line for marker in stop_markers):
+                break
+            messages.append(line)
+            if len(messages) >= 4:
+                break
+
+        return " ".join(messages)[:1000] or "MUV form validation failed."
 
     @staticmethod
     def _int_or_none(value: Any) -> Optional[int]:

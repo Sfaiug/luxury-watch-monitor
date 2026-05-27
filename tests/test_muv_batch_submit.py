@@ -63,6 +63,22 @@ def test_watch_from_embed_parses_listing_fields():
     assert watch.image_url == "https://example.com/daytona.jpg"
 
 
+def test_watch_from_embed_extracts_bachmann_reference_from_url():
+    message = _message()
+    embed = message["embeds"][0]
+    embed["title"] = "Jaeger-LeCoultre Reverso Tribute Monoface"
+    embed["url"] = (
+        "https://www.bachmann-scher.de/gebrauchte-luxusuhren-kaufen/"
+        "jaeger-lecoultre-reverso-tribute-monoface-ref-q7168420-stainless-steel-"
+        "box-papers-bj-2025-new-like-17624.html"
+    )
+    embed["footer"] = "Bachmann & Scher - Detected: 2026-05-27 16:38:37"
+
+    watch = batch.watch_from_embed(message, embed)
+
+    assert watch.reference == "Q7168420"
+
+
 def test_latest_items_uses_signed_button_action_id(mocker):
     mocker.patch.object(batch.APP_CONFIG, "action_token_secret", "secret")
     custom_id = ActionStore.custom_id("signed-action", "secret")

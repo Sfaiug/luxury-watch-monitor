@@ -131,6 +131,54 @@ def test_scope_and_condition_use_muv_option_values(mock_logger):
     assert MUVActionService._map_scope(False, True) == "WatchWithPapers"
 
 
+def test_request_payload_falls_back_to_reference_from_url(mock_logger):
+    service = MUVActionService(None, None, mock_logger)
+    match = MUVMatch(
+        brand_name="Jaeger LeCoultre",
+        brand_id=1,
+        model_name="Reverso",
+        model_id=2,
+        ref_mp=3,
+        confidence=0.995,
+    )
+    listing = {
+        "url": (
+            "https://www.bachmann-scher.de/gebrauchte-luxusuhren-kaufen/"
+            "jaeger-lecoultre-reverso-tribute-monoface-ref-q7168420-stainless-steel-"
+            "box-papers-bj-2025-new-like-17624.html"
+        ),
+        "image_urls": [
+            "https://example.com/watch-1.jpg",
+            "https://example.com/watch-2.jpg",
+            "https://example.com/watch-3.jpg",
+        ],
+    }
+
+    with patch("muv_service.APP_CONFIG") as mock_config:
+        _configure_muv(mock_config, auto_submit=True)
+
+        payload = service._build_request_payload(listing, match)
+
+    assert payload["referenceNumber"] == "Q7168420"
+
+
+def test_muv_form_error_extracts_validation_message():
+    body = """
+    Brand *
+    Reverso
+    Submit Request
+    Please review your information and try again.
+    The reference number is missing for watch 1 (Jaeger LeCoultre Reverso)
+    Do you have questions or need help?
+    General Purchase Terms
+    """
+
+    assert MUVActionService._extract_muv_form_error(body) == (
+        "Please review your information and try again. "
+        "The reference number is missing for watch 1 (Jaeger LeCoultre Reverso)"
+    )
+
+
 def test_unique_muv_sell_url_accepts_submitted_and_review_links():
     assert MUVActionService._is_unique_muv_sell_url(
         "https://www.meineuhrverkaufen.de/Sell/c7db9d61-a30c-42c4-a693-49f50bf3d71d"
