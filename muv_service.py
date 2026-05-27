@@ -263,14 +263,32 @@ class MUVActionService:
         brand = self._normalize_brand(listing.get("brand") or "")
         model = self._normalize(listing.get("model") or "")
         title = self._normalize(listing.get("title") or "")
-        search_text = " ".join(part for part in [brand, model, title] if part)
+        whitelist_brands = {
+            self._normalize_brand(item.get("BrandName") or "") for item in whitelist
+        }
+        brand_candidates = self._brand_candidates(brand)
+        if brand and not brand_candidates.intersection(whitelist_brands):
+            inferred_brand = self._infer_brand_from_listing_text(listing, whitelist)
+            if inferred_brand:
+                brand = inferred_brand
+                brand_candidates = self._brand_candidates(brand)
+        elif not brand:
+            inferred_brand = self._infer_brand_from_listing_text(listing, whitelist)
+            if inferred_brand:
+                brand = inferred_brand
+                brand_candidates = self._brand_candidates(brand)
+
+        model_aliases = self._model_aliases(brand_candidates, model, title, listing)
+        search_text = " ".join(
+            part for part in [brand, model, title, *model_aliases] if part
+        )
 
         best: Optional[Tuple[float, int, Dict[str, Any]]] = None
         for item in whitelist:
             item_brand = self._normalize_brand(item.get("BrandName") or "")
             item_model = self._normalize(item.get("ModelName") or "")
             item_full = f"{item_brand} {item_model}".strip()
-            if brand and item_brand != brand:
+            if brand_candidates and item_brand not in brand_candidates:
                 continue
 
             score = SequenceMatcher(None, search_text, item_full).ratio()
@@ -279,6 +297,8 @@ class MUVActionService:
             if item_full and item_full in search_text:
                 score = max(score, min(0.995, 0.94 + len(item_full) / 200))
             if model and item_model and item_model == model:
+                score = max(score, 1.0)
+            if item_model and item_model in model_aliases:
                 score = max(score, 1.0)
 
             specificity = len(item_model)
@@ -799,6 +819,109 @@ class MUVActionService:
             "glashutte": "glashutte",
         }
         return aliases.get(normalized, normalized)
+
+    @classmethod
+    def _brand_candidates(cls, normalized_brand: str) -> set[str]:
+        if not normalized_brand:
+            return set()
+
+        compatible = {
+            "heuer": {"heuer", "tag heuer"},
+            "tag heuer": {"tag heuer", "heuer"},
+            "glashutte original": {"glashutte"},
+        }
+        return compatible.get(normalized_brand, {normalized_brand})
+
+    @classmethod
+    def _infer_brand_from_listing_text(
+        cls, listing: Dict[str, Any], whitelist: List[Dict[str, Any]]
+    ) -> Optional[str]:
+        text = cls._normalize(
+            " ".join(
+                part
+                for part in [listing.get("model") or "", listing.get("title") or ""]
+                if part
+            )
+        )
+        if not text:
+            return None
+
+        brands = sorted(
+            {
+                item.get("BrandName") or ""
+                for item in whitelist
+                if item.get("BrandName")
+            },
+            key=lambda value: len(cls._normalize(value)),
+            reverse=True,
+        )
+        padded_text = f" {text} "
+        for brand_name in brands:
+            normalized = cls._normalize(brand_name)
+            if not normalized:
+                continue
+            if text == normalized or text.startswith(f"{normalized} "):
+                return cls._normalize_brand(brand_name)
+            if f" {normalized} " in padded_text:
+                return cls._normalize_brand(brand_name)
+        return None
+
+    @classmethod
+    def _model_aliases(
+        cls,
+        brand_candidates: set[str],
+        model: str,
+        title: str,
+        listing: Dict[str, Any],
+    ) -> List[str]:
+        combined = cls._normalize(
+            " ".join(
+                part
+                for part in [
+                    model,
+                    title,
+                    str(listing.get("reference") or ""),
+                ]
+                if part
+            )
+        )
+        reference = cls._normalize(str(listing.get("reference") or ""))
+        aliases: List[str] = []
+
+        if "rolex" in brand_candidates and "gmt" in combined:
+            gmt_ii_refs = (
+                "116710",
+                "116713",
+                "116718",
+                "116719",
+                "126710",
+                "126711",
+                "126713",
+                "126715",
+                "126719",
+                "126720",
+                "16710",
+            )
+            if reference.startswith(gmt_ii_refs):
+                aliases.append("gmt master ii")
+            elif reference.startswith("16700"):
+                aliases.append("gmt master")
+
+        if "patek philippe" in brand_candidates:
+            if "jahreskalender" in combined:
+                aliases.append("annual calendar")
+            if "ewigekalender" in combined or "ewiger kalender" in combined:
+                aliases.append("perpetual calendar")
+
+        if "audemars piguet" in brand_candidates and (
+            "offshore" in combined or "off shore" in combined
+        ):
+            aliases.append("royal oak")
+
+        if "a lange sohne" in brand_candidates and "taschenuhr" in combined:
+            aliases.append("als taschenuhr")
+
+        return aliases
 
     @staticmethod
     def _map_condition(condition: Optional[str]) -> int:

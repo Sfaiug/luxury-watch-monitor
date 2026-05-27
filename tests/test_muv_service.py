@@ -101,6 +101,229 @@ async def test_match_listing_exact_model(mock_logger):
 
 
 @pytest.mark.asyncio
+async def test_match_listing_maps_vintage_heuer_carrera_to_tag_heuer(mock_logger):
+    service = MUVActionService(None, None, mock_logger)
+    service._whitelist = [
+        {
+            "BrandName": "Heuer",
+            "BrandId": 27,
+            "ModelName": "Skipper",
+            "ModelId": 490,
+            "RefMP": 1,
+        },
+        {
+            "BrandName": "Tag Heuer",
+            "BrandId": 43,
+            "ModelName": "Carrera",
+            "ModelId": 814,
+            "RefMP": 1,
+        },
+    ]
+
+    with patch("muv_service.APP_CONFIG") as mock_config:
+        _configure_muv(mock_config)
+
+        match = await service.match_listing(
+            {
+                "brand": "Heuer",
+                "model": "Carrera",
+                "reference": "1153",
+                "title": "Heuer Carrera | 1153",
+            }
+        )
+
+    assert match is not None
+    assert match.brand_name == "Tag Heuer"
+    assert match.model_name == "Carrera"
+
+
+@pytest.mark.asyncio
+async def test_match_listing_keeps_true_heuer_models(mock_logger):
+    service = MUVActionService(None, None, mock_logger)
+    service._whitelist = [
+        {
+            "BrandName": "Heuer",
+            "BrandId": 27,
+            "ModelName": "Skipper",
+            "ModelId": 490,
+            "RefMP": 1,
+        },
+        {
+            "BrandName": "Tag Heuer",
+            "BrandId": 43,
+            "ModelName": "Carrera",
+            "ModelId": 814,
+            "RefMP": 1,
+        },
+    ]
+
+    with patch("muv_service.APP_CONFIG") as mock_config:
+        _configure_muv(mock_config)
+
+        match = await service.match_listing(
+            {
+                "brand": "Heuer",
+                "model": "Skipper",
+                "reference": "73463",
+                "title": "Heuer Skipper | 73463",
+            }
+        )
+
+    assert match is not None
+    assert match.brand_name == "Heuer"
+    assert match.model_name == "Skipper"
+
+
+@pytest.mark.asyncio
+async def test_match_listing_handles_production_brand_aliases(mock_logger):
+    service = MUVActionService(None, None, mock_logger)
+    service._whitelist = [
+        {
+            "BrandName": "Rolex",
+            "BrandId": 1,
+            "ModelName": "GMT-Master II",
+            "ModelId": 68,
+            "RefMP": 1,
+        },
+        {
+            "BrandName": "Patek Philippe",
+            "BrandId": 5,
+            "ModelName": "Annual Calendar",
+            "ModelId": 54,
+            "RefMP": 1,
+        },
+        {
+            "BrandName": "Audemars Piguet",
+            "BrandId": 3,
+            "ModelName": "Royal Oak",
+            "ModelId": 13,
+            "RefMP": 1,
+        },
+        {
+            "BrandName": "Glashütte",
+            "BrandId": 25,
+            "ModelName": "Senator",
+            "ModelId": 475,
+            "RefMP": 1,
+        },
+    ]
+
+    cases = [
+        (
+            {
+                "brand": "Rolex",
+                "model": "GMT",
+                "reference": "116710BLNR",
+                "title": "Rolex GMT | 116710BLNR",
+            },
+            ("Rolex", "GMT-Master II"),
+        ),
+        (
+            {
+                "brand": "Patek Philippe",
+                "model": "Jahreskalender",
+                "reference": "5205R-011",
+                "title": "Patek Philippe Jahreskalender | 5205R-011",
+            },
+            ("Patek Philippe", "Annual Calendar"),
+        ),
+        (
+            {
+                "brand": "Audemars Piguet",
+                "model": "Off Shore Chrono",
+                "reference": "25721ST/O/1000ST/01",
+                "title": "Audemars Piguet Off Shore Chrono | 25721ST/O/1000ST/01",
+            },
+            ("Audemars Piguet", "Royal Oak"),
+        ),
+        (
+            {
+                "brand": "Glashütte Original",
+                "model": "Senator Chronometer",
+                "title": "Glashütte Original Senator Chronometer",
+            },
+            ("Glashütte", "Senator"),
+        ),
+    ]
+
+    with patch("muv_service.APP_CONFIG") as mock_config:
+        _configure_muv(mock_config)
+
+        for listing, expected in cases:
+            match = await service.match_listing(listing)
+            assert match is not None
+            assert (match.brand_name, match.model_name) == expected
+
+
+@pytest.mark.asyncio
+async def test_match_listing_infers_brand_when_vendor_is_site_name(mock_logger):
+    service = MUVActionService(None, None, mock_logger)
+    service._whitelist = [
+        {
+            "BrandName": "Audemars Piguet",
+            "BrandId": 3,
+            "ModelName": "Royal Oak",
+            "ModelId": 13,
+            "RefMP": 1,
+        }
+    ]
+
+    with patch("muv_service.APP_CONFIG") as mock_config:
+        _configure_muv(mock_config)
+
+        match = await service.match_listing(
+            {
+                "brand": "Watch Out",
+                "site_name": "Watch Out",
+                "model": "Audemars Piguet Royal Oak 14486",
+                "reference": "KA57OB",
+                "title": "Audemars Piguet Royal Oak 14486",
+            }
+        )
+
+    assert match is not None
+    assert match.brand_name == "Audemars Piguet"
+    assert match.model_name == "Royal Oak"
+
+
+@pytest.mark.asyncio
+async def test_match_listing_does_not_force_unsupported_rolex_land_dweller(
+    mock_logger,
+):
+    service = MUVActionService(None, None, mock_logger)
+    service._whitelist = [
+        {
+            "BrandName": "Rolex",
+            "BrandId": 1,
+            "ModelName": "Sea-Dweller",
+            "ModelId": 3,
+            "RefMP": 1,
+        },
+        {
+            "BrandName": "Rolex",
+            "BrandId": 1,
+            "ModelName": "Sky-Dweller",
+            "ModelId": 73,
+            "RefMP": 1,
+        },
+    ]
+
+    with patch("muv_service.APP_CONFIG") as mock_config:
+        _configure_muv(mock_config)
+
+        match = await service.match_listing(
+            {
+                "brand": "Rolex",
+                "model": "Land Dweller 36",
+                "reference": "127234",
+                "title": "Rolex Land Dweller 36 | 127234",
+            }
+        )
+
+    assert match is None
+
+
+@pytest.mark.asyncio
 async def test_handle_action_prepares_request_when_auto_submit_disabled(
     mock_logger, temp_dir
 ):
