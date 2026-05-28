@@ -1401,7 +1401,7 @@ class MUVActionService:
             return MUVActionService._condition_value(APP_CONFIG.muv_default_condition)
         text = condition.casefold()
         filled_stars = condition.count("★")
-        if filled_stars:
+        if filled_stars or "☆" in condition:
             if filled_stars >= 5:
                 return "Mint"
             if filled_stars == 4:
@@ -1410,7 +1410,7 @@ class MUVActionService:
                 return "Fair"
             return "Poor"
         if "unworn" in text or "neu" in text:
-            return "Unworn"
+            return "Mint"
         if "mint" in text:
             return "Mint"
         if "fair" in text:

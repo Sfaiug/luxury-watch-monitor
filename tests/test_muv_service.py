@@ -133,12 +133,15 @@ def test_scope_and_condition_use_muv_option_values(mock_logger):
     assert MUVActionService._map_scope(False, True) == "WatchWithPapers"
 
 
-def test_condition_star_rating_maps_by_filled_star_count(mock_logger):
+def test_condition_star_rating_maps_one_muv_step_lower_with_poor_floor(mock_logger):
     assert MUVActionService._map_condition("★★★★★") == "Mint"
     assert MUVActionService._map_condition("★★★★☆") == "Fine"
     assert MUVActionService._map_condition("★★★☆☆") == "Fair"
     assert MUVActionService._map_condition("★★☆☆☆") == "Poor"
     assert MUVActionService._map_condition("★☆☆☆☆") == "Poor"
+    assert MUVActionService._map_condition("☆☆☆☆☆") == "Poor"
+    assert MUVActionService._map_condition("Unworn") == "Mint"
+    assert MUVActionService._map_condition("Neu") == "Mint"
 
 
 def test_case_material_maps_to_muv_option_values(mock_logger):
