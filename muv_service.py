@@ -378,6 +378,9 @@ class MUVActionService:
     ) -> Dict[str, Any]:
         condition = self._map_condition(listing.get("condition"))
         scope = self._map_scope(listing.get("has_box"), listing.get("has_papers"))
+        case_material = self._map_case_material(
+            listing.get("case_material"), listing.get("title")
+        )
         seller = self._seller_for_record(record)
         reference = self._listing_reference(listing)
         return {
@@ -390,7 +393,7 @@ class MUVActionService:
             "yearOfProduction": self._int_or_none(listing.get("year")),
             "condition": condition,
             "scopeOfDelivery": scope,
-            "caseMaterial": listing.get("case_material"),
+            "caseMaterial": case_material,
             "seller": {
                 "email": seller.get("email") or None,
                 "firstName": seller.get("firstName") or None,
@@ -755,6 +758,10 @@ class MUVActionService:
                     await page.get_by_role("combobox").nth(3).select_option(
                         value=payload["scopeOfDelivery"]
                     )
+                    if payload.get("caseMaterial"):
+                        await page.get_by_role("combobox").nth(5).select_option(
+                            value=payload["caseMaterial"]
+                        )
 
                     if payload.get("referenceNumber"):
                         await page.get_by_placeholder(
@@ -1393,13 +1400,22 @@ class MUVActionService:
         if not condition:
             return MUVActionService._condition_value(APP_CONFIG.muv_default_condition)
         text = condition.casefold()
+        filled_stars = condition.count("★")
+        if filled_stars:
+            if filled_stars >= 5:
+                return "Mint"
+            if filled_stars == 4:
+                return "Fine"
+            if filled_stars == 3:
+                return "Fair"
+            return "Poor"
         if "unworn" in text or "neu" in text:
             return "Unworn"
-        if "mint" in text or "★★★★★" in condition:
+        if "mint" in text:
             return "Mint"
-        if "fair" in text or "★★★" in condition:
+        if "fair" in text:
             return "Fair"
-        if "poor" in text or "★" == condition.strip():
+        if "poor" in text:
             return "Poor"
         return MUVActionService._condition_value(APP_CONFIG.muv_default_condition)
 
@@ -1427,6 +1443,84 @@ class MUVActionService:
         if has_box:
             return "WatchWithBox"
         return "WatchOnly"
+
+    @staticmethod
+    def _map_case_material(
+        case_material: Optional[str], title: Optional[str] = None
+    ) -> Optional[str]:
+        material_text = str(case_material or "").strip().casefold()
+        title_text = str(title or "").strip().casefold()
+        if not material_text:
+            return None
+
+        text = material_text
+        if "gold" in text and not any(
+            marker in text
+            for marker in (
+                "stahl/gold",
+                "gold/stahl",
+                "steel/gold",
+                "gold/steel",
+                "yellow gold",
+                "gelbgold",
+                "white gold",
+                "weissgold",
+                "weißgold",
+                "rose gold",
+                "rosegold",
+                "roségold",
+                "pink gold",
+                "rotgold",
+                "everose",
+            )
+        ):
+            text = " ".join(part for part in [material_text, title_text] if part)
+
+        if any(
+            marker in text
+            for marker in (
+                "stahl/gold",
+                "gold/stahl",
+                "steel/gold",
+                "gold/steel",
+                "steel and gold",
+                "gold and steel",
+                "bicolor",
+                "bi-color",
+                "bicolour",
+                "two tone",
+                "two-tone",
+                "rolesor",
+            )
+        ):
+            return "GoldAndSteel"
+        if re.search(r"\b(yg|yellow gold|gelbgold)\b", text):
+            return "YellowGold"
+        if re.search(r"\b(wg|white gold|weissgold|weißgold)\b", text):
+            return "WhiteGold"
+        if re.search(
+            r"\b(rg|rose gold|rosegold|roségold|pink gold|rotgold|everose)\b", text
+        ):
+            return "PinkGold"
+        if any(marker in text for marker in ("edelstahl", "stainless steel", "steel")):
+            return "Steel"
+        if re.search(r"\bstahl\b", text):
+            return "Steel"
+        if any(marker in text for marker in ("titanium", "titan")):
+            return "Titanium"
+        if "bronze" in text:
+            return "Bronze"
+        if any(marker in text for marker in ("ceramic", "keramik")):
+            return "Ceramic"
+        if any(marker in text for marker in ("platinum", "platin")):
+            return "Platinum"
+        if any(marker in text for marker in ("silver", "silber", "925")):
+            return "Silver"
+        if "carbon" in text:
+            return "Carbon"
+        if "gold" in text:
+            return "Other"
+        return "Other"
 
     @classmethod
     def _listing_reference(cls, listing: Dict[str, Any]) -> Optional[str]:

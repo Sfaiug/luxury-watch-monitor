@@ -112,6 +112,7 @@ def test_scope_and_condition_use_muv_option_values(mock_logger):
         "condition": "Fine",
         "has_box": True,
         "has_papers": True,
+        "case_material": "Edelstahl",
         "image_urls": [
             "https://example.com/watch-1.jpg",
             "https://example.com/watch-2.jpg",
@@ -126,9 +127,37 @@ def test_scope_and_condition_use_muv_option_values(mock_logger):
 
     assert payload["condition"] == "Fine"
     assert payload["scopeOfDelivery"] == "WatchWithBoxAndPapers"
+    assert payload["caseMaterial"] == "Steel"
     assert MUVActionService._map_scope(False, False) == "WatchOnly"
     assert MUVActionService._map_scope(True, False) == "WatchWithBox"
     assert MUVActionService._map_scope(False, True) == "WatchWithPapers"
+
+
+def test_condition_star_rating_maps_by_filled_star_count(mock_logger):
+    assert MUVActionService._map_condition("★★★★★") == "Mint"
+    assert MUVActionService._map_condition("★★★★☆") == "Fine"
+    assert MUVActionService._map_condition("★★★☆☆") == "Fair"
+    assert MUVActionService._map_condition("★★☆☆☆") == "Poor"
+    assert MUVActionService._map_condition("★☆☆☆☆") == "Poor"
+
+
+def test_case_material_maps_to_muv_option_values(mock_logger):
+    assert MUVActionService._map_case_material("904L Edelstahl") == "Steel"
+    assert MUVActionService._map_case_material("Stahl/Gold") == "GoldAndSteel"
+    assert MUVActionService._map_case_material("750 Weißgold") == "WhiteGold"
+    assert MUVActionService._map_case_material("Everose Gold") == "PinkGold"
+    assert MUVActionService._map_case_material("Titan") == "Titanium"
+    assert MUVActionService._map_case_material("Keramik") == "Ceramic"
+    assert MUVActionService._map_case_material("925er Silber") == "Silver"
+    assert MUVActionService._map_case_material("Gold") == "Other"
+    assert (
+        MUVActionService._map_case_material("Gold", "Rolex Day-Date 18K YG")
+        == "YellowGold"
+    )
+    assert (
+        MUVActionService._map_case_material("Steel", "with white gold dial") == "Steel"
+    )
+    assert MUVActionService._map_case_material(None, "Reference 925") is None
 
 
 def test_request_payload_falls_back_to_reference_from_url(mock_logger):
