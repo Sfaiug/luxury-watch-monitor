@@ -35,7 +35,13 @@ def _configure_muv(mock_config, *, auto_submit=False):
     mock_config.discord_api_base_url = "https://discord.com/api/v10"
 
 
-def _offer_page_html(*, price=None, reviewed=True):
+def _offer_page_html(
+    *,
+    price=None,
+    reviewed=True,
+    expired=True,
+    picture_url="https://example.com/watch.jpg",
+):
     watch = {
         "watchDetails": {
             "brand": "Breitling",
@@ -43,7 +49,7 @@ def _offer_page_html(*, price=None, reviewed=True):
             "referenceNumber": "A26322" if price else None,
             "conditionStringValue": "Fine",
             "scopeOfDeliveryStringValue": "WatchOnly",
-            "pictureUrl": "https://example.com/watch.jpg",
+            "pictureUrl": picture_url,
             "offeredWatchId": "watch-1",
         },
         "isReviewed": reviewed,
@@ -68,7 +74,7 @@ def _offer_page_html(*, price=None, reviewed=True):
                     "isReviewed": reviewed,
                     "watches": [watch],
                     "offerExpiryDateUTC": "2025-08-18T00:00:00",
-                    "isOfferExpired": True,
+                    "isOfferExpired": expired,
                 },
             }
         },
@@ -1284,6 +1290,81 @@ async def test_monitor_offer_links_notifies_only_changed_state(
             "3,000",
             "3,200",
         ]
+    finally:
+        store.close()
+
+
+@pytest.mark.asyncio
+async def test_monitor_offer_links_ignores_volatile_page_changes(
+    mock_logger, temp_dir, monkeypatch
+):
+    """Expiry flips and rotated image URLs must never re-send an old answer."""
+    store = ActionStore(str(temp_dir / "actions.sqlite3"))
+    try:
+        url = "https://www.meineuhrverkaufen.de/Sell/request-1?mt=token"
+        store.save_offer_link(url)
+        html_by_round = [
+            _offer_page_html(price=3000, expired=False),
+            _offer_page_html(
+                price=3000,
+                expired=True,
+                picture_url="https://example.com/watch.jpg?sig=rotated",
+            ),
+        ]
+        round_index = {"value": 0}
+
+        async def fake_fetch_page(_session, _url, _logger):
+            return html_by_round[round_index["value"]]
+
+        sent = []
+
+        async def fake_send_result_webhook(record, result):
+            sent.append((record, result))
+
+        service = MUVActionService(None, store, mock_logger)
+        monkeypatch.setattr("muv_service.fetch_page", fake_fetch_page)
+        monkeypatch.setattr(service, "_send_result_webhook", fake_send_result_webhook)
+
+        assert await service.monitor_offer_links() == 1
+        round_index["value"] = 1
+        assert await service.monitor_offer_links() == 0
+        assert len(sent) == 1
+    finally:
+        store.close()
+
+
+@pytest.mark.asyncio
+async def test_monitor_offer_links_survives_fingerprint_schema_change(
+    mock_logger, temp_dir, monkeypatch
+):
+    """A stored legacy fingerprint must not look like a state change."""
+    store = ActionStore(str(temp_dir / "actions.sqlite3"))
+    try:
+        url = "https://www.meineuhrverkaufen.de/Sell/request-1?mt=token"
+        store.save_offer_link(url)
+
+        async def fake_fetch_page(_session, _url, _logger):
+            return _offer_page_html(price=3000)
+
+        sent = []
+
+        async def fake_send_result_webhook(record, result):
+            sent.append((record, result))
+
+        service = MUVActionService(None, store, mock_logger)
+        monkeypatch.setattr("muv_service.fetch_page", fake_fetch_page)
+        monkeypatch.setattr(service, "_send_result_webhook", fake_send_result_webhook)
+
+        assert await service.monitor_offer_links() == 1
+
+        # Simulate an old deploy: same payload, fingerprint hashed differently.
+        link = store.list_offer_links()[0]
+        store.update_offer_link_state(
+            url, "legacy-fingerprint", link.last_payload, notified=True
+        )
+
+        assert await service.monitor_offer_links() == 0
+        assert len(sent) == 1
     finally:
         store.close()
 

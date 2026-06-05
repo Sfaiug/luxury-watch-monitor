@@ -162,9 +162,14 @@ class MUVActionService:
             if not offer_payload:
                 continue
 
-            fingerprint = self._offer_fingerprint(offer_payload)
-            if fingerprint == link.last_fingerprint:
+            # Compare answers, not stored hashes: volatile page fields (offer
+            # expiry flips, image URLs) and fingerprint algorithm changes must
+            # never look like a new answer and re-send every historical DM.
+            answer = self._offer_answer(offer_payload)
+            if link.last_payload and answer == self._offer_answer(link.last_payload):
                 continue
+
+            fingerprint = self._offer_fingerprint(offer_payload)
 
             if not self._should_notify_offer_payload(offer_payload):
                 self.store.update_offer_link_state(
@@ -360,8 +365,6 @@ class MUVActionService:
             return self._whitelist
 
         try:
-            from urllib.parse import unquote
-
             decoded = base64.b64decode(match.group(1)).decode("utf-8")
             self._whitelist = json.loads(unquote(decoded))
         except Exception as exc:
@@ -1203,17 +1206,33 @@ class MUVActionService:
             "is_ready_to_proceed": bool(item.get("isReadyToProceed")),
         }
 
-    @staticmethod
-    def _offer_fingerprint(offer: Dict[str, Any]) -> str:
-        relevant = {
+    @classmethod
+    def _offer_answer(cls, offer: Dict[str, Any]) -> Dict[str, Any]:
+        """The answer-defining state of an offer page.
+
+        Only status and money may trigger a notification. Volatile page fields
+        (expiry flags, picture URLs, negotiation flags) once made every old
+        answer re-send when MUV flipped isOfferExpired on all offers overnight.
+        """
+        watches = sorted(
+            [
+                str(watch.get("status") or ""),
+                str(cls._money_amount(watch.get("price")) or ""),
+            ]
+            for watch in (offer.get("watches") or [])
+        )
+        return {
             "status": offer.get("status"),
-            "price": offer.get("price"),
+            "price": str(cls._money_amount(offer.get("price")) or ""),
             "currency": offer.get("currency"),
-            "reviewed": offer.get("reviewed"),
-            "is_offer_expired": offer.get("is_offer_expired"),
-            "watches": offer.get("watches"),
+            "watches": watches,
         }
-        encoded = json.dumps(relevant, sort_keys=True, ensure_ascii=False)
+
+    @classmethod
+    def _offer_fingerprint(cls, offer: Dict[str, Any]) -> str:
+        encoded = json.dumps(
+            cls._offer_answer(offer), sort_keys=True, ensure_ascii=False
+        )
         return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
 
     @staticmethod
