@@ -647,14 +647,14 @@ class TestWorldOfTimeScraper:
             assert watch is not None
             assert watch.year == expected_year, f"Failed for description: {description}"
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason="'vintage 1970s' gives no year: the four digits must end the word",
-    )
-    def test_year_extraction_from_a_decade(self, worldoftime_scraper):
-        """A decade such as "1970s" gives its first year."""
+    def test_a_decade_gives_no_year(self, worldoftime_scraper):
+        """A decade such as "1970s" is no year of the watch: shops name decades
+        mostly for the model's history ("Seit der Vorstellung in den 1950er
+        Jahren ist die Submariner...")."""
         test_cases = [
-            ("vintage 1970s", "1970"),
+            ("vintage 1970s", None),
+            ("Seit der Vorstellung in den 1950er Jahren ist die Submariner Teil der Geschichte", None),
+            ("Cartier Vendôme, 1977, Paris Dial. In the 1970s Cartier looked back at its history", "1977"),
         ]
         
         for description, expected_year in test_cases:
