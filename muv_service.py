@@ -20,6 +20,7 @@ from bs4 import BeautifulSoup
 
 from action_store import ActionRecord, ActionStore
 from config import APP_CONFIG
+from discord_api import DiscordApi
 from models import WatchData
 from utils import fetch_page
 
@@ -934,32 +935,20 @@ class MUVActionService:
         if not self._should_dm_result(record, result):
             return
 
-        timeout = aiohttp.ClientTimeout(total=15)
-        payload = {"embeds": [embed]}
-        headers = {
-            "Authorization": f"Bot {APP_CONFIG.discord_bot_token}",
-            "Content-Type": "application/json",
-            "User-Agent": "DiscordBot (https://atlas.hopcomp.com, 1.0)",
-        }
-        api_base = APP_CONFIG.discord_api_base_url.rstrip("/")
+        discord = DiscordApi(self.session, APP_CONFIG)
 
         try:
-            async with self.session.post(
-                f"{api_base}/users/@me/channels",
-                json={"recipient_id": record.requested_by},
-                headers=headers,
-                timeout=timeout,
-            ) as response:
-                if response.status not in (200, 201):
-                    text = (await response.text())[:500]
-                    self.logger.error(
-                        "MUV result DM channel failed for requester %s: %s %s",
-                        record.requested_by,
-                        response.status,
-                        text,
-                    )
-                    return
-                channel = await response.json()
+            status, channel = await discord.call(
+                "POST", "/users/@me/channels", {"recipient_id": record.requested_by}
+            )
+            if status not in (200, 201):
+                self.logger.error(
+                    "MUV result DM channel failed for requester %s: %s %s",
+                    record.requested_by,
+                    status,
+                    channel,
+                )
+                return
 
             channel_id = channel.get("id")
             if not channel_id:
@@ -969,20 +958,16 @@ class MUVActionService:
                 )
                 return
 
-            async with self.session.post(
-                f"{api_base}/channels/{channel_id}/messages",
-                json=payload,
-                headers=headers,
-                timeout=timeout,
-            ) as response:
-                if response.status not in (200, 201):
-                    text = (await response.text())[:500]
-                    self.logger.error(
-                        "MUV result DM send failed for requester %s: %s %s",
-                        record.requested_by,
-                        response.status,
-                        text,
-                    )
+            status, answer = await discord.call(
+                "POST", f"/channels/{channel_id}/messages", {"embeds": [embed]}
+            )
+            if status not in (200, 201):
+                self.logger.error(
+                    "MUV result DM send failed for requester %s: %s %s",
+                    record.requested_by,
+                    status,
+                    answer,
+                )
         except Exception as exc:
             self.logger.error(
                 "Error sending MUV result DM to requester %s: %s",
