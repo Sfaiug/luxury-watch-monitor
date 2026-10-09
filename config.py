@@ -21,6 +21,8 @@ class SiteConfig:
     color: int
     base_url: str
     channel_env_var: Optional[str] = None
+    # A member's filter: its matches go to the channel made for it
+    channel_id: Optional[str] = None
 
     # Selectors for scraping (to be customized per site)
     watch_container_selector: str = ""
@@ -42,6 +44,9 @@ class SiteConfig:
     @property
     def discord_channel_id(self) -> Optional[str]:
         """Get the bot target channel for this site when bot delivery is enabled."""
+        if self.channel_id:
+            return self.channel_id
+
         env_var = self.channel_env_var
         if env_var and os.environ.get(env_var):
             return os.environ.get(env_var)
@@ -60,6 +65,7 @@ class AppConfig:
         "SESSION_HISTORY_FILE", "session_history.json"
     )
     proxies_file: str = os.getenv("PROXIES_FILE", "proxies.txt")
+    filters_file: str = os.getenv("FILTERS_FILE", "filters.json")
 
     # Monitoring - PRODUCTION SAFE DEFAULTS
     check_interval_seconds: int = int(
