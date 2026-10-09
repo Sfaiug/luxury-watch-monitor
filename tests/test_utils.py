@@ -1,6 +1,7 @@
 """Tests for utility functions."""
 
 import pytest
+import time
 import asyncio
 import json
 import aiohttp
@@ -366,6 +367,13 @@ class TestBoxPapersParsing:
             ("Box: No * Papers: yes", (True, False)),
             ("Papiere: keine (verloren)", (False, None)),
             ("Papers: none - watch only", (False, None)),
+            ("Papiere: keine Original-Box: ja", (False, True)),
+            ("Papiere: leider nicht vorhanden", (False, None)),
+            # A "none" that ends another field says nothing of the next one
+            ("Kratzer: keine\nBox: ja\nPapiere: ja", (True, True)),
+            ("Polished: no\nBox: yes\nPapers: yes", (True, True)),
+            ("Service: no\nPapers: yes", (True, None)),
+            ("Box: keine Original-Papiere: ja", (True, False)),
             # A value that says "none" of something else
             ("Box: ohne Umkarton", (None, True)),
             ("Box: ohne Kratzer", (None, True)),
@@ -397,6 +405,22 @@ class TestBoxPapersParsing:
     def test_parse_what_the_listing_says(self, text, expected):
         """(papers, box) as the listing states them; None where it says nothing."""
         assert parse_box_papers(text) == expected
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "Box & " * 2000 + "Box ?",
+            "Box/" * 5000 + "?",
+            "ohne " + "Box und " * 2000 + "Papiere ?",
+            "x" * 50000 + "box" + " und x" * 300,
+            "uhr box papiere ohne kratzer " * 18000,
+        ],
+    )
+    def test_a_long_text_of_such_words_is_read_at_once(self, text):
+        """Half a megabyte of them takes a fraction of a second; a scan never waits on one description."""
+        started = time.perf_counter()
+        parse_box_papers(text)
+        assert time.perf_counter() - started < 2
     
     def test_parse_box_only(self):
         """Test parsing box status only.""" 

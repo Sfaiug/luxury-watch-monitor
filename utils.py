@@ -297,33 +297,39 @@ _PAPERS_WORD = (
     r"\w*(?:papiere?n?|papers?|zertifikat\w*|certificates?|garantiekarten?)\b"
 )
 _BOX_WORD = r"(?:original\w*[\s-]+)?(?:\w*box(?:es|en)?\b|originalverpackung\w*)"
-_NAMED = rf"(?:{_PAPERS_WORD}|{_BOX_WORD}|full\s?set\b)"
+_NAMED = rf"\b(?:{_PAPERS_WORD}|{_BOX_WORD}|full\s?set\b)"
 # Two of them named together: "Box und Papiere", "box or papers", "Box/Papiere".
-# A comma does not join: after it the listing says something new
-_JOIN = r"(?:\s+(?:&|or|oder|und|and|noch)\s+|\s*[/&]\s*)"
-_NAMED_TOGETHER = rf"{_NAMED}(?:{_JOIN}{_NAMED})*"
-# Said after the words: "nicht vorhanden", "not included", "fehlen", "missing", "nein"
-_MISSING = (
+# A comma does not join: after it the listing says something new. No listing
+# names more than a few at once; the bound keeps the reading of a long text of
+# such words quick
+_JOIN = r"(?:\s+(?:or|oder|und|and|noch)\s+|\s*[/&]\s*)"
+_NAMED_TOGETHER = rf"{_NAMED}(?:{_JOIN}{_NAMED}){{0,3}}"
+# Said of them, after the words or as a field's value: "nicht vorhanden",
+# "leider nicht mehr dabei", "are not included", "fehlen", "is missing", "nein"
+_SAID_MISSING = (
+    r"(?:(?:ist|sind|leider|is|are)\s+){0,3}"
     r"(?:(?:nicht|not)\s+(?:mehr\s+)?"
     r"(?:vorhanden|dabei|da|enthalten|included|available|present)"
-    r"|fehlt|fehlen|missing|nein)"
+    r"|fehlt|fehlen|missing|nein)\b"
 )
-# Where a field's value ends: anywhere but before a further word of the same
-# value. Punctuation, a number, the next field's name and the line's end all end it
-_VALUE_ENDS = r"(?![^\S\n]*[^\W\d_]+\b(?!\s*:))"
+# Where a field's value ends: at the line's end, at any punctuation, at a
+# number, or at the name of the next field ("Papiere: keine Original-Box: ja")
+_VALUE_ENDS = rf"(?=[^\S\n]*(?:$|\n|[^\w\s]|\d|(?:{_NAMED}|[^\W\d_]+)\s*:))"
 # The ways a listing says they are missing:
 _SAID_ABSENT = re.compile(
-    # the negation right before them: "ohne Papiere", "keine Box/Papiere",
-    # "weder Box noch Papiere", "no box or papers", "kein Fullset". It does not
-    # reach a word that heads a field of its own: "ohne Box / Papiere: vorhanden"
-    rf"\b(?:ohne|kein\w*|weder|no|without)\s+{_NAMED}(?:{_JOIN}{_NAMED}(?!\s*:))*"
+    # the negation right before them, on the same line: "ohne Papiere", "keine
+    # Box/Papiere", "weder Box noch Papiere", "no box or papers", "kein Fullset".
+    # It does not reach a word that heads a field of its own, whose value decides:
+    # "ohne Box / Papiere: vorhanden", "Kratzer: keine Box: ja"
+    rf"\b(?:ohne|kein\w*|weder|no|without)[^\S\n]+{_NAMED}(?!\s*:)"
+    rf"(?:{_JOIN}{_NAMED}(?!\s*:)){{0,3}}"
     # as a field: "Papiere: nein", "Box und Papiere: keine", "Papers: not
     # included". A bare "keine", "ohne", "none" or "no" must be the whole value:
     # "Box: ohne Kratzer" is about scratches. "No." with its period is a number
     rf"|{_NAMED_TOGETHER}\s*:\s*"
-    rf"(?:(?:none|keine?|ohne|no(?!\.\s*\d)){_VALUE_ENDS}|{_MISSING}\b)"
+    rf"(?:(?:none|keine?|ohne|no(?!\.\s*\d)){_VALUE_ENDS}|{_SAID_MISSING})"
     # after them: "Box und Papiere nicht vorhanden", "papers are missing", "Papiere nein"
-    rf"|{_NAMED_TOGETHER}(?:\s+(?:ist|sind|leider|is|are))*\s+{_MISSING}\b"
+    rf"|{_NAMED_TOGETHER}\s+{_SAID_MISSING}"
 )
 # What says they are there, wherever it stands in a word ("Garantiepapieren")
 _BOTH_PRESENT = (
