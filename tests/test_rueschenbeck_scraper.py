@@ -463,19 +463,14 @@ class TestRueschenbeckScraper:
     async def test_scrape_parse_error_handling(self, rueschenbeck_scraper):
         """Test scraping handles parse errors gracefully."""
         malformed_html = """
-        <li class="-rb-list-item">
-            <a class="-rb-list-item-link" href="/uhren/error-watch">
-                <div class="watch-details">
-                    <span class="-rb-manufacturer-name">Error</span>
-                    <span class="-rb-prod-name">Error Watch</span>
-                    <div class="price-box">
-                        <span class="regular-price">
-                            <span class="price">€ 1.000,00</span>
-                        </span>
-                    </div>
-                </div>
+        <div class="product-list-item card product-box">
+            <a class="card-body" href="/error-watch-1234-567890" data-title="1234 Error Watch">
+                <img class="product-image" src="/error.jpg" />
             </a>
-        </li>
+            <div class="product-price-wrapper" data-product-number="1234#*567890">
+                <span class="product-price">1.000,00 €</span>
+            </div>
+        </div>
         """
         
         with patch('scrapers.base.fetch_page', return_value=malformed_html):
@@ -483,8 +478,10 @@ class TestRueschenbeckScraper:
                 mock_config.enable_detail_scraping = False
                 
                 # Mock _parse_watch_element to raise an error
+                parsed = []
                 original_parse = rueschenbeck_scraper._parse_watch_element
                 def mock_parse(element):
+                    parsed.append(element)
                     if "error-watch" in str(element):
                         raise Exception("Parse error")
                     return original_parse(element)
@@ -494,5 +491,6 @@ class TestRueschenbeckScraper:
                 watches = await rueschenbeck_scraper.scrape()
         
         # Should handle errors gracefully and return empty list
+        assert len(parsed) == 1  # the card was found and its reading failed
         assert watches == []
     
