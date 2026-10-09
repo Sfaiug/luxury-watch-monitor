@@ -1,4 +1,5 @@
 ---
+users: none
 tests: scripts/test.sh
 ---
 # AGENTS.md
