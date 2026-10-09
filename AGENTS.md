@@ -6,6 +6,7 @@ tests: scripts/test.sh
 - One process (`main_production.py`) scans watch shops every few minutes and posts each new listing to Discord. A shop is one file in `scrapers/`, one entry in `config.py` and one line in `monitor.py`'s `SCRAPER_CLASSES`.
 - `scripts/test.sh` builds `.venv` from `requirements.txt` on first use and runs the suite; its arguments go to pytest, and `PYTHON` names the interpreter when `python3` is not the one to use.
 - Tests never touch the network or Discord. A scraper is tested on `tests/pages/<site_key>.html`, the listing cards cut from the shop's real page with scripts and styles removed, through the `listed_watches` fixture.
+- Live: `ssh live`, checkout `/home/info/luxury-watch-monitor`, service `extras-luxury-watch-monitor`, log `/home/info/logs/extras-luxury-watch-monitor.log`. A merge to `main` is live within about two minutes: `luxury-watch-monitor-deploy.timer` runs `deploy/auto_deploy.sh` there.
 
 ## Owner rules
 
