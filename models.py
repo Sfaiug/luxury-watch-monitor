@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from decimal import Decimal
 from typing import Optional, List, Dict, Any
-from urllib.parse import urljoin, quote_plus
+from urllib.parse import quote_plus, urlsplit
 
 from config import APP_CONFIG
 
@@ -47,6 +47,7 @@ class WatchData:
 
     # Internal fields (not for display)
     _composite_id: Optional[str] = field(default=None, init=False)
+    _former_id: Optional[str] = field(default=None, init=False)
     _price_for_hash: Optional[str] = field(default=None, init=False)
 
     def __post_init__(self):
@@ -73,8 +74,9 @@ class WatchData:
         if self.price:
             self._price_for_hash = str(int(self.price * 100))  # Convert to cents
 
-        # Generate composite ID
+        # Generate composite ID, and the id this listing had before 9 Oct 2026
         self._composite_id = self._generate_composite_id()
+        self._former_id = self._generate_former_id()
 
     @staticmethod
     def _clean_text(text: str) -> str:
@@ -106,8 +108,16 @@ class WatchData:
             return f"{formatted} {self.currency}"
 
     def _generate_composite_id(self) -> str:
-        """Generate unique ID for duplicate detection."""
-        # Normalize components
+        """Shop, the listing's address there and its listed price: the same
+        listing is announced once, and again only when its price changes."""
+        path = urlsplit(self.url).path
+        return f"{self.site_key}:{path}:{self._price_for_hash or ''}"
+
+    def _generate_former_id(self) -> str:
+        """The id watches were remembered under until 9 Oct 2026: a hash of
+        brand, model, reference, price, year and material, or of title, price
+        and link where two of the first four were missing. Kept so that a
+        watch announced under it stays known."""
         brand_norm = (self.brand or "").lower()
         model_norm = (self.model or "").lower()
         ref_norm = (self.reference or "").lower().replace(" ", "")
@@ -115,34 +125,28 @@ class WatchData:
         price_norm = self._price_for_hash or ""
         material_norm = (self.case_material or "").lower()
 
-        # Build ID components
-        id_components = [
-            brand_norm,
-            model_norm,
-            ref_norm,
-            price_norm,
-            year_norm,
-            material_norm,
-        ]
-
-        # Check if we have enough meaningful components
-        id_string = "|".join(filter(None, id_components))
-        essential_components = sum(
-            1 for x in [brand_norm, model_norm, ref_norm, price_norm] if x
+        id_string = "|".join(
+            filter(
+                None,
+                [brand_norm, model_norm, ref_norm, price_norm, year_norm, material_norm],
+            )
         )
+        if sum(1 for x in [brand_norm, model_norm, ref_norm, price_norm] if x) < 2:
+            id_string = "|".join(
+                filter(None, [self.title.lower(), price_norm, self.url.lower()])
+            )
 
-        # Fallback to title + price + URL if not enough components
-        if essential_components < 2:
-            fallback_parts = [self.title.lower(), price_norm, self.url.lower()]
-            id_string = "|".join(filter(None, fallback_parts))
-
-        # Generate hash
         return hashlib.md5(id_string.encode("utf-8")).hexdigest()
 
     @property
     def composite_id(self) -> str:
         """Get the composite ID for duplicate detection."""
         return self._composite_id
+
+    @property
+    def former_id(self) -> str:
+        """The id this listing was remembered under until 9 Oct 2026."""
+        return self._former_id
 
     @property
     def chrono24_search_url(self) -> str:

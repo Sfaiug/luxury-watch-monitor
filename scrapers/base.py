@@ -88,24 +88,7 @@ class BaseScraper(ABC):
                             f"ID: {watch.composite_id[:12]}..."
                         )
 
-                # Filter new watches
-                new_watches = []
-                for watch in watches:
-                    composite_id = watch.composite_id
-                    if composite_id not in self.seen_ids:
-                        new_watches.append(watch)
-                        self.seen_ids.add(composite_id)
-                        self.logger.debug(
-                            f"New watch detected: {watch.title[:50]}... (ID: {composite_id[:8]}...)"
-                        )
-                    else:
-                        self.logger.debug(
-                            f"Already seen: {watch.title[:50]}... (ID: {composite_id[:8]}...)"
-                        )
-
-                self.logger.info(
-                    f"Found {len(new_watches)} new watches (Total seen: {len(self.seen_ids)})"
-                )
+                new_watches = self._new_watches(watches)
 
                 # Fetch details for new watches
                 if new_watches and APP_CONFIG.enable_detail_scraping:
@@ -120,6 +103,26 @@ class BaseScraper(ABC):
                 # Ensure soup is cleaned up even if an exception occurs
                 if soup is not None:
                     self._cleanup_soup(soup)
+
+    def _new_watches(self, watches: List[WatchData]) -> List[WatchData]:
+        """Remember every listed watch and return the ones to announce."""
+        new_watches = []
+        for watch in watches:
+            if watch.composite_id in self.seen_ids:
+                continue
+            self.seen_ids.add(watch.composite_id)
+            # A watch announced under its former id is known, not news. The
+            # former id vouches for one listing and goes: a later listing of
+            # an identical watch at the same price is news again
+            if watch.former_id in self.seen_ids:
+                self.seen_ids.discard(watch.former_id)
+            else:
+                new_watches.append(watch)
+
+        self.logger.info(
+            f"Found {len(new_watches)} new watches (Total seen: {len(self.seen_ids)})"
+        )
+        return new_watches
 
     @abstractmethod
     async def _extract_watches(self, soup: BeautifulSoup) -> List[WatchData]:
