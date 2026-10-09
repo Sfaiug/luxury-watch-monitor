@@ -303,22 +303,24 @@ _PAPERS_WORD = (
     r"\w*(?:papiere?n?|papers?|zertifikat\w*|certificates?|garantiekarten?)\b"
 )
 _BOX_WORD = r"(?:original\w*[ -]+)?(?:\w*box\w*|originalverpackung\w*)"
-# ... but not where the word heads a field whose value says they are there:
-# "ohne Box / Papiere: vorhanden", "Kratzer: keine Box: ja"
+# ... but not where the word heads a field whose whole value says they are
+# there: "ohne Box / Papiere: vorhanden", "Kratzer: keine Box: ja Papiere: ja".
+# The value ends at the line's end, punctuation, a number or the next field;
+# "ohne Box: vorhanden sind nur Papiere" says nothing of the box being there
 _NAMED = (
     rf"\b(?:{_PAPERS_WORD}|{_BOX_WORD}|full ?set\b)"
-    r"(?![^\S\n]*:[^\S\n]*(?:ja|yes|vorhanden|dabei|enthalten|included|available|present)\b)"
+    r"(?![^\S\n]*:[^\S\n]*(?:ja|yes|vorhanden|dabei|enthalten|included|available|present)\b"
+    r"(?=[^\S\n]*(?:$|\n|[^\w\s]|\d)|[^\S\n]+[^\W\d_]+[^\S\n]*:))"
 )
 # What a listing says is missing by the negation right before it, on the same
 # line: "ohne Papiere", "keine Box/Papiere", "weder Box noch Papiere", "no box
 # or papers", "kein Fullset". A comma does not join: after it the listing says
-# something new. A "keine" or "no" right after a colon is that field's own
-# value ("Kratzer: keine", "Polished: no") and says nothing of the next word;
-# "ohne" and "without" cannot stand alone and always take what follows them
-# ("Lieferumfang: ohne Box und Papiere"). A negation that is itself negated
-# ("nicht ohne Papiere") does not say they are missing
+# something new, and so does a new line: "Kratzer: keine" on one line says
+# nothing of the box on the next. A label before it changes nothing:
+# "Zubehör: keine Papiere". A negation that is itself negated ("nicht ohne
+# Papiere") does not say they are missing
 _SAID_ABSENT = re.compile(
-    r"(?P<not_of_them>:[^\S\n]*(?=kein|no\b)|\b(?:nicht|not)[^\S\n]+)?"
+    r"(?P<not_of_them>\b(?:nicht|not)[^\S\n]+)?"
     r"\b(?:ohne|kein\w*|weder|no|without)[^\S\n]+"
     rf"{_NAMED}"
     r"(?:(?:[^\S\n]+(?:or|oder|und|and|noch)[^\S\n]+|[^\S\n]*[/&][^\S\n]*)"
@@ -343,7 +345,8 @@ def parse_box_papers(text: str) -> Tuple[Optional[bool], Optional[bool]]:
 
     # Cut out what the listing says is missing, and read the rest by the
     # phrases below. A full set said to be missing leaves open which of the
-    # two is
+    # two is. What was cut is searched from a word's start only, so a long
+    # word takes time in step with its length
     missing = []
 
     def cut(said):
@@ -391,7 +394,7 @@ def parse_box_papers(text: str) -> Tuple[Optional[bool], Optional[bool]]:
     # Papiere, kein Zertifikat" has its papers
     if any(kw in rest for kw in papers_yes):
         has_papers = True
-    elif re.search(_PAPERS_WORD, said_absent):
+    elif re.search(rf"\b{_PAPERS_WORD}", said_absent):
         has_papers = False
 
     # Check box
@@ -414,7 +417,7 @@ def parse_box_papers(text: str) -> Tuple[Optional[bool], Optional[bool]]:
     # "Ohne Box (die Box ist leider verloren gegangen)"
     if any(kw in rest for kw in box_yes):
         has_box = True
-    elif re.search(_BOX_WORD, said_absent) or any(kw in text_lower for kw in box_no):
+    elif re.search(rf"\b{_BOX_WORD}", said_absent) or any(kw in text_lower for kw in box_no):
         has_box = False
     elif "box" in rest:
         has_box = True  # Default to yes if "box" is mentioned

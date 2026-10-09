@@ -402,13 +402,16 @@ class TestBoxPapersParsing:
             ("Ungetragen keine Kratzer Box und Papiere", (True, True)),
             ("No reserve box and papers", (True, True)),
             ("ohne\nBox", (None, True)),
-            # A "keine" or "no" right after a colon is that field's own value
+            # A negation ending one line says nothing of the next
             ("Kratzer: keine\nBox: ja\nPapiere: ja", (True, True)),
             ("Polished: no\nBox: yes\nPapers: yes", (True, True)),
-            ("Kratzer: keine Box und Papiere dabei", (True, True)),
-            ("Kratzer:  keine Box und Papiere dabei", (True, True)),
-            ("Polished: no Box and papers included", (True, True)),
-            # ... while "ohne" takes what follows it, after a label too
+            ("Service: no\nPapers: yes", (True, None)),
+            # A label before the negation changes nothing
+            ("Zubehör: keine Papiere", (False, None)),
+            ("Lieferumfang: keine Box und Papiere", (False, False)),
+            ("Accessories: no box", (None, False)),
+            ("Zubehör: keine Box und keine Papiere", (False, False)),
+            ("Hinweis: keine Papiere", (False, None)),
             ("Lieferumfang: ohne Box und Papiere", (False, False)),
             ("Hinweis: ohne Box", (None, False)),
             ("Ohne Box: nur Uhr und Papiere", (True, False)),
@@ -416,6 +419,10 @@ class TestBoxPapersParsing:
             # ... but not a word that heads a field saying it is there
             ("Gebrauchsspuren: ohne Box: ja", (None, True)),
             ("Kratzer: keine Box: ja", (None, True)),
+            ("Kratzer: keine Box: ja Papiere: ja", (True, True)),
+            ("Ohne Box und Papiere: vorhanden.", (True, False)),
+            # ... whose whole value says so
+            ("ohne Box: vorhanden sind nur Papiere", (True, False)),
             # A negation that is itself negated does not say they are missing
             ("Natürlich nicht ohne Papiere", (True, None)),
             ("Natürlich nicht ohne Box", (None, True)),
@@ -461,6 +468,10 @@ class TestBoxPapersParsing:
         "text",
         [
             "ohne " + "Box und " * 20000 + "Papiere",
+            "ohne " + "x" * 100000 + "box",
+            "ohne " + "x" * 100000 + "papiere",
+            "keine " + "x" * 100000 + "zertifikat",
+            "x" * 200000,
             "keine " * 50000 + "Box",
             "original " * 50000 + "box",
             "uhr box papiere ohne kratzer " * 18000,
