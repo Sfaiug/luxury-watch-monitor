@@ -389,6 +389,8 @@ class TestJuwelierExchangeScraper:
             ("/978973_1_400x400.webp 400w, /978973_1_800x800.webp 800w, /978973_1_1920x1920.webp 1920w", "1920x1920.webp"),
             ("/978973_1_400x400.webp 400w, /978973_1_800x800.jpg 800w", "400x400.webp"),  # Prefer webp
             ("", None),  # Empty srcset
+            (" ", None),  # A srcset that names no picture
+            (" , ,", None),
         ]
         
         for srcset, expected_preference in test_cases:
@@ -540,38 +542,34 @@ class TestJuwelierExchangeScraper:
         assert watch.has_box is True
         assert watch.has_papers is True
 
-    def test_diameter_extraction_patterns(self, juwelier_exchange_scraper):
+    @pytest.mark.asyncio
+    async def test_diameter_extraction_patterns(self, juwelier_exchange_scraper):
         """Test diameter extraction from various German description patterns."""
         test_cases = [
             ("Durchmesser 40 mm", "40 mm"),
             ("Gehäusedurchmesser von 42 mm", "42 mm"),
             ("Gehäusegröße ca. 38,5 mm", "38.5 mm"),
+            ("Gehäusedurchmesser: 40 mm", "40 mm"),
             ("20,5 x 28 mm rectangular case", "20.5 mm"),  # Rectangular, take first dimension
             ("No diameter mentioned", None),
         ]
         
         for description, expected_diameter in test_cases:
-            # Extract diameter parsing logic
-            import re
-            
-            diameter = None
-            dia_match = re.search(
-                r'(?:Durchmesser|Gehäusedurchmesser|Gehäusegröße)\s*(?:von|ca\.)?\s*(\d{1,2}(?:[,.]\d{1,2})?)\s*mm',
-                description, re.IGNORECASE
+            watch = WatchData(
+                title="Test Watch",
+                url="https://juwelier-exchange.de/uhren/test",
+                site_name="Juwelier Exchange",
+                site_key="juwelier_exchange"
             )
-            
-            if dia_match:
-                diameter = dia_match.group(1).replace(',', '.') + " mm"
-            else:
-                # Check for rectangular format
-                dia_match_rect = re.search(
-                    r'(\d{1,2}(?:[,.]\d{1,2})?)\s*x\s*\d{1,2}(?:[,.]\d{1,2})?\s*mm',
-                    description, re.IGNORECASE
-                )
-                if dia_match_rect:
-                    diameter = dia_match_rect.group(1).replace(',', '.') + " mm"
-            
-            assert diameter == expected_diameter, f"Failed for description: {description}"
+            page = BeautifulSoup(
+                '<div class="product-detail-description-text" itemprop="description">'
+                f"<p>{description}</p></div>",
+                "html.parser",
+            )
+
+            await juwelier_exchange_scraper._extract_watch_details(watch, page)
+
+            assert watch.diameter == expected_diameter, f"Failed for description: {description}"
     
     def test_model_extraction_from_title(self, juwelier_exchange_scraper):
         """Test model extraction from complex titles."""
@@ -585,23 +583,8 @@ class TestJuwelierExchangeScraper:
         ]
         
         for title, brand, expected_model in test_cases:
-            # Simulate model extraction logic
-            import re
-            
-            model_candidate = title
-            model_candidate = re.sub(r"^(Herrenuhr|Damenuhr|Unisexuhr)\s+", "", model_candidate, flags=re.IGNORECASE).strip()
-            model_candidate = re.sub(fr"^{re.escape(brand)}\s*", "", model_candidate, flags=re.IGNORECASE).strip()
-            
-            # Try to extract from single quotes
-            quoted_model_match = re.search(r"'(.*?)'", model_candidate)
-            if quoted_model_match and len(quoted_model_match.group(1).strip()) > 1:
-                model = quoted_model_match.group(1).strip()
-            else:
-                # Remove common terms
-                temp_model = model_candidate
-                temp_model = re.sub(r'\s*(Automatik|Quarz|Chrono|GMT|Date)$', '', temp_model, flags=re.IGNORECASE).strip(" ,")
-                model = " ".join(temp_model.split()[:3]).strip() if temp_model else None
-            
+            model = juwelier_exchange_scraper._model(title, brand)
+
             assert model == expected_model, f"Failed for title: {title} with brand: {brand}"
     
     @pytest.mark.asyncio

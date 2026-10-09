@@ -47,19 +47,17 @@ class JuwelierExchangeScraper(BaseScraper):
         img_tag = item_tag.select_one('img.product-image')
         if img_tag:
             # Simplified srcset logic from original
-            srcset = img_tag.get('srcset', '')
-            if srcset:
-                # The widest picture of the srcset, a webp one where there is one
-                def rank(entry):
-                    src, *descriptor = entry.split()
-                    width = descriptor[0].rstrip("w") if descriptor else ""
-                    return (".webp" in src, int(width) if width.isdigit() else 0)
+            # The widest picture of the srcset, a webp one where there is one;
+            # without a srcset that names one, the plain src
+            def rank(entry):
+                src, *descriptor = entry.split()
+                width = descriptor[0].rstrip("w") if descriptor else ""
+                return (".webp" in src, int(width) if width.isdigit() else 0)
 
-                entries = [entry for entry in srcset.split(",") if entry.strip()]
-                best_src = max(entries, key=rank).split()[0]
+            entries = [entry for entry in img_tag.get('srcset', '').split(",") if entry.strip()]
+            best_src = max(entries, key=rank).split()[0] if entries else img_tag.get('src')
+            if best_src:
                 image_url = urljoin(self.config.base_url, best_src)
-            elif img_tag.has_attr('src'):
-                image_url = urljoin(self.config.base_url, img_tag['src'])
         
         # The card's own data has the price to pay; the visible price block of a
         # reduced watch also holds the old price and the saving
