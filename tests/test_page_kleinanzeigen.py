@@ -1,4 +1,4 @@
-"""Kleinanzeigen's reader on the first eight cards of a saved copy of a real search result page."""
+"""Kleinanzeigen's reader on ten cards from saved copies of two real search result pages."""
 
 import asyncio
 import logging
@@ -42,12 +42,14 @@ def test_the_search_address_lets_the_site_do_the_filtering():
         SEARCH + "preis::3000/omega-speedmaster/k0c157"
     )
     assert search_url("omega speedmaster") == SEARCH + "omega-speedmaster/k0c157"
+    # A slash separates words like a space; in the address it would start a new part
+    assert search_url("Rolex 16613 Stahl/Gold") == SEARCH + "rolex-16613-stahl-gold/k0c157"
 
 
 def test_an_offer_is_read_like_a_shop_s_watch():
     watches = offers()
 
-    assert len(watches) == 8
+    assert len(watches) == 10
     submariner = watches[2]
     assert submariner.title == "Rolex Submariner Date aus 2008"
     assert submariner.url == (
@@ -57,13 +59,31 @@ def test_an_offer_is_read_like_a_shop_s_watch():
     assert submariner.reference == "16610"  # "Ref.16610" in the description
     assert submariner.year == "2008"
     assert submariner.condition == "★★★☆☆"  # "Guter Zustand"
-    assert (submariner.has_box, submariner.has_papers) == (True, True)  # "Fullset"
     assert submariner.image_url.startswith("https://img.kleinanzeigen.de/")
     assert all(watch.price for watch in watches)
 
 
 def test_a_price_open_to_offers_says_so():
     assert offers()[3].price_display == "€8.490 VB"
+
+
+def test_the_price_is_the_one_to_pay():
+    reduced, box = offers()[8:]
+
+    # "1.699 € VB", then the old price struck through: "2.199 €"
+    assert reduced.title.startswith("Vintage Omega Constellation Manhattan")
+    assert reduced.price_display == "€1.699 VB"
+    # The seller's text says "Versand zzgl 7€"
+    assert (box.title, box.price) == ("OMEGA Uhrenbox neu", Decimal("100"))
+
+
+def test_an_offer_says_nothing_of_papers_and_box():
+    dealer = offers()[0]
+
+    # Its text says "Box/Papiere: Nicht vorhanden". A seller's own words are
+    # not read for papers and box, so no alert shows them as there
+    assert dealer.title == "Rolex Submariner Date 16613 Bicolor 40mm"
+    assert {(watch.has_box, watch.has_papers) for watch in offers()} == {(None, None)}
 
 
 def test_the_year_is_not_the_service_year():
@@ -87,8 +107,6 @@ def test_an_offer_s_alert_has_a_shop_alert_s_structure():
         year="2008",
         price=Decimal("8300"),
         condition="★★★☆☆",
-        has_papers=True,
-        has_box=True,
         image_url="https://www.grimmeissen.de/1.jpg",
     )
     shop, offer = shop_watch.to_discord_embed(0), offers()[2].to_discord_embed(0)

@@ -9,13 +9,7 @@ from bs4 import BeautifulSoup
 
 from scrapers.base import BaseScraper
 from models import WatchData
-from utils import (
-    parse_price,
-    parse_year,
-    parse_box_papers,
-    parse_condition,
-    extract_text_from_element,
-)
+from utils import parse_price, parse_year, parse_condition, extract_text_from_element
 
 BASE_URL = "https://www.kleinanzeigen.de"
 SELLERS = {"private": "anbieter:privat/", "dealer": "anbieter:gewerblich/", "any": ""}
@@ -31,7 +25,8 @@ def search_url(
     price = ""
     if min_price or max_price:
         price = f"preis:{min_price or ''}:{max_price or ''}/"
-    slug = "-".join(quote(word) for word in words.lower().split())
+    # A slash would start a new part of the address: it separates words like a space
+    slug = "-".join(quote(word) for word in re.split(r"[\s/]+", words.lower()) if word)
     return f"{BASE_URL}/s-uhren-schmuck/anzeige:angebote/{SELLERS[seller]}{price}{slug}/k0c157"
 
 
@@ -56,16 +51,10 @@ class KleinanzeigenScraper(BaseScraper):
         title = ad["title"]
         text = f"{title}\n{ad.get('description') or ''}"
 
-        price_text = next(
-            (
-                price_text
-                for price_text in map(extract_text_from_element, card.select("p"))
-                if "€" in price_text
-            ),
-            "",
-        )
+        # The price has an element of its own. A reduced offer's old price follows
+        # it, struck through; the seller's text may name other amounts
+        price_text = extract_text_from_element(card.select_one("p.text-title3"))
         reference = re.search(r"\bRef(?:erenz)?\b[.:\s]*([A-Z0-9][\w./-]{2,})", text)
-        has_papers, has_box = parse_box_papers(text)
 
         watch = WatchData(
             title=title,
@@ -77,8 +66,6 @@ class KleinanzeigenScraper(BaseScraper):
             price=parse_price(price_text.replace("VB", ""), "EUR"),
             currency="EUR",
             condition=parse_condition(text, self.config.key),
-            has_papers=has_papers,
-            has_box=has_box,
             image_url=ad.get("contentUrl"),
         )
         # "VB": the seller takes offers
