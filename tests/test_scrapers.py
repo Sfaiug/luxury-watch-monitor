@@ -55,6 +55,7 @@ class TestBaseScraper:
                 ]
         
         scraper = TestScraper(test_site_config, mock_aiohttp_session, mock_logger)
+        scraper.seen_ids = {"test_site:/earlier-watch:"}  # not the shop's first scan
         
         # Mock fetch_page to return HTML content
         with patch('scrapers.base.fetch_page', return_value=sample_html_content):
@@ -66,7 +67,7 @@ class TestBaseScraper:
         assert len(result) == 2
         assert result[0].title == "Test Watch 1"
         assert result[1].title == "Test Watch 2"
-        assert len(scraper.seen_ids) == 2
+        assert len(scraper.seen_ids) == 3
     
     @pytest.mark.asyncio
     async def test_scrape_with_seen_watches(self, test_site_config, mock_aiohttp_session, mock_logger, sample_html_content):
@@ -142,6 +143,7 @@ class TestBaseScraper:
                 watch.year = "2020"
         
         scraper = TestScraper(test_site_config, mock_aiohttp_session, mock_logger)
+        scraper.seen_ids = {"test_site:/earlier-watch:"}  # not the shop's first scan
         
         with patch('scrapers.base.fetch_page', return_value=sample_html_content):
             with patch('scrapers.base.APP_CONFIG') as mock_config:

@@ -869,6 +869,8 @@ class TestWatchOutScraper:
         self, watch_out_scraper, watch_out_listing_html
     ):
         """Test full scraping workflow integration."""
+        # Not the shop's first scan
+        watch_out_scraper.seen_ids = {"watch_out:/earlier-listing:"}
         with patch(
             "scrapers.base.fetch_page",
             new=AsyncMock(return_value=watch_out_listing_html),
@@ -885,7 +887,7 @@ class TestWatchOutScraper:
         assert all(watch.currency == "EUR" for watch in watches)
 
         # Verify composite IDs are generated
-        assert len(watch_out_scraper.seen_ids) == 3
+        assert len(watch_out_scraper.seen_ids) == 4
         for watch in watches:
             assert watch.composite_id in watch_out_scraper.seen_ids
 

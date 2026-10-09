@@ -30,45 +30,41 @@ class TestWatchData:
         assert watch.price == Decimal("8500.00")
         assert watch.currency == "EUR"
         assert watch.brand == "Rolex"
-        assert watch.composite_id is not None
-        assert len(watch.composite_id) == 32  # MD5 hash length
+        assert watch.composite_id == "test_site:/watch:850000"
     
     def test_composite_id_generation(self):
-        """Test composite ID generation and uniqueness."""
-        watch1 = WatchData(
-            title="Rolex Submariner",
-            url="https://example.com/watch1",
-            site_name="Test Site",
-            site_key="test_site",
+        """A listing is its address at the shop plus its listed price."""
+
+        def listing(url, price="8500", **fields):
+            return WatchData(
+                title="Rolex Submariner",
+                url=url,
+                site_name="Test Site",
+                site_key="test_site",
+                price=Decimal(price),
+                **fields,
+            )
+
+        first = listing("https://example.com/watches/submariner-1?neighbours=A,B")
+
+        # The same listing, whatever the link's extras or the fields read from it
+        assert first.composite_id == listing(
+            "https://example.com/watches/submariner-1?neighbours=B,C,D",
             brand="Rolex",
-            model="Submariner",
-            price=Decimal("8500")
-        )
-        watch2 = WatchData(
-            title="Rolex Submariner",
-            url="https://example.com/watch2",
-            site_name="Test Site",
-            site_key="test_site",
-            brand="Rolex",
-            model="Submariner",
-            price=Decimal("8500")
-        )
-        watch3 = WatchData(
-            title="Omega Speedmaster",
-            url="https://example.com/watch3", 
-            site_name="Test Site",
-            site_key="test_site",
-            brand="Omega",
-            model="Speedmaster",
-            price=Decimal("4000")
-        )
-        
-        # Same watches should have same ID
-        assert watch1.composite_id == watch2.composite_id
-        
-        # Different watches should have different IDs
-        assert watch1.composite_id != watch3.composite_id
-    
+            year="2010",
+            case_material="Stahl",
+        ).composite_id
+
+        # Another listing of an identical watch at the same price
+        assert first.composite_id != listing(
+            "https://example.com/watches/submariner-2"
+        ).composite_id
+
+        # The same listing at a new price
+        assert first.composite_id != listing(
+            "https://example.com/watches/submariner-1", price="7900"
+        ).composite_id
+
     def test_text_cleaning(self):
         """Test text cleaning functionality."""
         watch = WatchData(
