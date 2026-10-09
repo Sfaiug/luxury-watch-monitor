@@ -106,28 +106,14 @@ class BaseScraper(ABC):
 
     def _new_watches(self, watches: List[WatchData]) -> List[WatchData]:
         """Remember every listed watch and return the ones to announce."""
-        # Ids remembered from before they named their shop match nothing listed
-        # today. A shop that still holds them is taken stock of once, silently,
-        # instead of being announced whole
-        outdated = {
-            seen_id
-            for seen_id in self.seen_ids
-            if not WatchData.is_id_of(seen_id, self.config.key)
-        }
-        self.seen_ids -= outdated
-
         new_watches = []
         for watch in watches:
-            if watch.composite_id not in self.seen_ids:
-                self.seen_ids.add(watch.composite_id)
+            if watch.composite_id in self.seen_ids:
+                continue
+            self.seen_ids.add(watch.composite_id)
+            # A watch announced under its former id is known, not news
+            if watch.former_id not in self.seen_ids:
                 new_watches.append(watch)
-
-        if outdated:
-            self.logger.info(
-                f"Remembered ids were outdated: took stock of {len(new_watches)} "
-                "listed watches, announcing none"
-            )
-            return []
 
         self.logger.info(
             f"Found {len(new_watches)} new watches (Total seen: {len(self.seen_ids)})"
