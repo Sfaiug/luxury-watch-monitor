@@ -17,6 +17,7 @@ ENV/
 # Data files
 seen_watches.json
 session_history.json
+filters.json
 
 # The owner's proxies, with their logins
 proxies.txt

@@ -17,6 +17,7 @@ from utils import clear_exchange_rate_cache
 from action_store import ActionStore
 from discord_interactions import DiscordInteractionServer
 from muv_service import MUVActionService
+from filters import FilterStore
 
 # Import all scraper implementations
 from scrapers.worldoftime import WorldOfTimeScraper
@@ -66,6 +67,8 @@ class WatchMonitor:
         # State
         self.seen_items: Dict[str, Set[str]] = {}
         self.scrapers: Dict[str, BaseScraper] = {}
+        self.filter_store = FilterStore(APP_CONFIG.filters_file)
+        self.filter_keys: Set[str] = set()
         self.running = False
         self.shutdown_event = asyncio.Event()
 
@@ -405,6 +408,7 @@ class WatchMonitor:
             ScrapingSession with results
         """
         session = ScrapingSession()
+        self._sync_filters()
 
         # Log memory usage at start of cycle
         memory_start = self.memory_monitor.get_current_usage_mb()
@@ -480,6 +484,24 @@ class WatchMonitor:
 
         return session
 
+    def _sync_filters(self):
+        """One scraper per filter: new filters get theirs, a removed one loses it."""
+        try:
+            filters = {f.key: f for f in self.filter_store.all()}
+        except Exception as e:
+            # The shops are scanned all the same, and the filters as last read
+            self.logger.error(f"Filters could not be read: {e}")
+            return
+
+        for key in self.filter_keys - set(filters):
+            self.scrapers.pop(key, None)
+            self.seen_items.pop(key, None)
+        for key in set(filters) - self.filter_keys:
+            scraper = filters[key].scraper(self.session, self.logger)
+            scraper.set_seen_ids(self.seen_items.setdefault(key, SeenIds()))
+            self.scrapers[key] = scraper
+        self.filter_keys = set(filters)
+
     async def _scrape_single_site(
         self, site_key: str, scraper: BaseScraper, session: ScrapingSession
     ):
@@ -503,12 +525,11 @@ class WatchMonitor:
             # Send notifications
             notifications_sent = 0
             if new_watches and APP_CONFIG.enable_notifications:
-                site_config = SITE_CONFIGS[site_key]
                 self.logger.info(
                     f"[{site_key}] Sending {len(new_watches)} notifications..."
                 )
                 notifications_sent = await self.notification_manager.send_notifications(
-                    new_watches, site_config
+                    new_watches, scraper.config
                 )
                 if notifications_sent < len(new_watches):
                     self.logger.warning(
