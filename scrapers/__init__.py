@@ -7,6 +7,7 @@ from .tropicalwatch import TropicalWatchScraper
 from .juwelier_exchange import JuwelierExchangeScraper
 from .watch_out import WatchOutScraper
 from .rueschenbeck import RueschenbeckScraper
+from .bachmann_scher import BachmannScherScraper
 
 __all__ = [
     "BaseScraper",
@@ -15,5 +16,6 @@ __all__ = [
     "TropicalWatchScraper",
     "JuwelierExchangeScraper", 
     "WatchOutScraper",
-    "RueschenbeckScraper"
+    "RueschenbeckScraper",
+    "BachmannScherScraper"
 ]

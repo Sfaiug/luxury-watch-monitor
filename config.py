@@ -346,6 +346,19 @@ SITE_CONFIGS = {
             "tabs": "div.tab-content",
         },
     ),
+    "bachmann_scher": SiteConfig(
+        name="Bachmann & Scher",
+        key="bachmann_scher",
+        url="https://www.bachmann-scher.de/gebrauchte-luxusuhren-kaufen.html",
+        webhook_env_var="BACHMANN_SCHER_WEBHOOK_URL",
+        color=0x1F3A5F,
+        base_url="https://www.bachmann-scher.de",
+        condition_mappings={
+            "ungetragen": "★★★★★",
+            "sehr gut": "★★★★☆",
+            "gut": "★★★☆☆",
+        },
+    ),
 }
 
 

@@ -25,6 +25,7 @@ from scrapers.tropicalwatch import TropicalWatchScraper
 from scrapers.juwelier_exchange import JuwelierExchangeScraper
 from scrapers.watch_out import WatchOutScraper
 from scrapers.rueschenbeck import RueschenbeckScraper
+from scrapers.bachmann_scher import BachmannScherScraper
 
 # Map site keys to scraper classes
 SCRAPER_CLASSES: Dict[str, Type[BaseScraper]] = {
@@ -34,6 +35,7 @@ SCRAPER_CLASSES: Dict[str, Type[BaseScraper]] = {
     "juwelier_exchange": JuwelierExchangeScraper,
     "watch_out": WatchOutScraper,
     "rueschenbeck": RueschenbeckScraper,
+    "bachmann_scher": BachmannScherScraper,
 }
 
 
