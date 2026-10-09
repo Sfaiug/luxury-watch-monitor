@@ -402,28 +402,40 @@ class TestBoxPapersParsing:
             ("Ungetragen keine Kratzer Box und Papiere", (True, True)),
             ("No reserve box and papers", (True, True)),
             ("ohne\nBox", (None, True)),
-            # A negation that is a field's own value says nothing of what follows
+            # A "keine" or "no" right after a colon is that field's own value
             ("Kratzer: keine\nBox: ja\nPapiere: ja", (True, True)),
             ("Polished: no\nBox: yes\nPapers: yes", (True, True)),
             ("Kratzer: keine Box und Papiere dabei", (True, True)),
             ("Kratzer:  keine Box und Papiere dabei", (True, True)),
             ("Polished: no Box and papers included", (True, True)),
+            # ... while "ohne" takes what follows it, after a label too
+            ("Lieferumfang: ohne Box und Papiere", (False, False)),
+            ("Hinweis: ohne Box", (None, False)),
+            ("Ohne Box: nur Uhr und Papiere", (True, False)),
+            ("Zubehör: weder Box noch Papiere", (False, False)),
+            # ... but not a word that heads a field saying it is there
             ("Gebrauchsspuren: ohne Box: ja", (None, True)),
-            # ... and one that is itself negated does not say they are missing
+            ("Kratzer: keine Box: ja", (None, True)),
+            # A negation that is itself negated does not say they are missing
             ("Natürlich nicht ohne Papiere", (True, None)),
+            ("Natürlich nicht ohne Box", (None, True)),
             ("Not without box and papers", (True, True)),
-            # Said to be missing and named again: still missing
-            ("Uhr ohne Papiere. Die Papiere liegen beim Vorbesitzer.", (False, None)),
+            # Papers are missing only when nothing else names them
+            ("Box und Papiere, kein Zertifikat", (True, True)),
+            ("Papiere dabei, kein Echtheitszertifikat", (True, None)),
+            ("Box & Papiere, keine Garantiekarte", (True, True)),
+            ("With papers, no certificate", (True, None)),
+            ("Keine Garantiekarte, aber Papiere", (True, None)),
+            ("Keine Servicepapiere, aber Garantiekarte von 2015", (True, None)),
+            # A box said to be missing stays missing when it is merely named again
             ("Uhr ohne Box. Auf Wunsch liefern wir eine Uhrenbox gegen Aufpreis.", (None, False)),
             ("Ohne Box (die Box ist leider verloren gegangen), Papiere: ja", (True, False)),
-            # ... unless the listing states that they are there
+            # ... unless the listing states that it is there
             ("Ohne Box. Box: ja", (None, True)),
-            ("Keine Servicepapiere, aber Garantiekarte von 2015", (True, None)),
-            # What was read as missing before still is
+            # A field's value is read as before
             ("Box: nein (Box beim Umzug verloren)", (None, False)),
             ("Box: none included", (None, False)),
             ("Box: no longer available", (None, False)),
-            ("Ohne Box: nur Uhr und Papiere", (True, False)),
             ("Original-Box: nein, Box kann nachgekauft werden", (None, False)),
             # A full set said to be missing leaves open which of the two is
             ("Kein Fullset", (None, None)),

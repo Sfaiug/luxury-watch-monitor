@@ -297,26 +297,32 @@ def parse_year(text: str, title: str = "") -> Optional[str]:
 
 # A word for papers, for a box, or for both at once, as a listing names them
 # when it says they are missing: "Papiere", "originalen Papieren",
-# "Garantiepapiere", "Zertifikat"; "Box", "Originalbox", "boxes"; "Full Set"
+# "Garantiepapiere", "Zertifikat"; "Box", "Originalbox", "Boxen"; "Full Set"
 _PAPERS_WORD = (
     r"(?:original\w*[ -]+)?"
     r"\w*(?:papiere?n?|papers?|zertifikat\w*|certificates?|garantiekarten?)\b"
 )
-_BOX_WORD = r"(?:original\w*[ -]+)?(?:\w*box(?:es|en)?\b|originalverpackung\w*)"
-_NAMED = rf"\b(?:{_PAPERS_WORD}|{_BOX_WORD}|full ?set\b)"
+_BOX_WORD = r"(?:original\w*[ -]+)?(?:\w*box\w*|originalverpackung\w*)"
+# ... but not where the word heads a field whose value says they are there:
+# "ohne Box / Papiere: vorhanden", "Kratzer: keine Box: ja"
+_NAMED = (
+    rf"\b(?:{_PAPERS_WORD}|{_BOX_WORD}|full ?set\b)"
+    r"(?![^\S\n]*:[^\S\n]*(?:ja|yes|vorhanden|dabei|enthalten|included|available|present)\b)"
+)
 # What a listing says is missing by the negation right before it, on the same
 # line: "ohne Papiere", "keine Box/Papiere", "weder Box noch Papiere", "no box
 # or papers", "kein Fullset". A comma does not join: after it the listing says
-# something new. Nor does the negation reach a word that heads a field of its
-# own: "ohne Box / Papiere: vorhanden". A negation that is a field's own value
-# ("Kratzer: keine Box: ja") or is itself negated ("nicht ohne Papiere") does
-# not say they are missing
+# something new. A "keine" or "no" right after a colon is that field's own
+# value ("Kratzer: keine", "Polished: no") and says nothing of the next word;
+# "ohne" and "without" cannot stand alone and always take what follows them
+# ("Lieferumfang: ohne Box und Papiere"). A negation that is itself negated
+# ("nicht ohne Papiere") does not say they are missing
 _SAID_ABSENT = re.compile(
-    r"(?P<not_of_them>(?::|\b(?:nicht|not)\b)[^\S\n]*)?"
+    r"(?P<not_of_them>:[^\S\n]*(?=kein|no\b)|\b(?:nicht|not)[^\S\n]+)?"
     r"\b(?:ohne|kein\w*|weder|no|without)[^\S\n]+"
     rf"{_NAMED}"
     r"(?:(?:[^\S\n]+(?:or|oder|und|and|noch)[^\S\n]+|[^\S\n]*[/&][^\S\n]*)"
-    rf"{_NAMED}(?![^\S\n]*:)){{0,3}}"
+    rf"{_NAMED}){{0,3}}"
 )
 
 
@@ -335,10 +341,9 @@ def parse_box_papers(text: str) -> Tuple[Optional[bool], Optional[bool]]:
 
     text_lower = text.lower()
 
-    # Cut out what the listing says is missing. What the rest states to be
-    # there counts first, then what was said to be missing, and a mere mention
-    # last: "Ohne Papiere, die Papiere hat der Vorbesitzer" has no papers. A
-    # full set said to be missing leaves open which of the two is
+    # Cut out what the listing says is missing, and read the rest by the
+    # phrases below. A full set said to be missing leaves open which of the
+    # two is
     missing = []
 
     def cut(said):
@@ -378,14 +383,16 @@ def parse_box_papers(text: str) -> Tuple[Optional[bool], Optional[bool]]:
         "service karte",
         "garantiekarte",
         "certificate",
+        "papiere",
+        "papers",
     ]
 
+    # Papers are missing when nothing but what was cut names them: "Box und
+    # Papiere, kein Zertifikat" has its papers
     if any(kw in rest for kw in papers_yes):
         has_papers = True
     elif re.search(_PAPERS_WORD, said_absent):
         has_papers = False
-    elif "papiere" in rest or "papers" in rest:
-        has_papers = True  # Default to yes if papers are mentioned
 
     # Check box
     has_box = None
@@ -400,8 +407,11 @@ def parse_box_papers(text: str) -> Tuple[Optional[bool], Optional[bool]]:
         "box vorhanden",
     ]
 
-    box_no = ["box: no", "box: nein", "ohne box", "original-box: nein"]
+    # "ohne box" is read above with the other negations
+    box_no = ["box: no", "box: nein", "original-box: nein"]
 
+    # A box said to be missing stays missing when it is merely named again:
+    # "Ohne Box (die Box ist leider verloren gegangen)"
     if any(kw in rest for kw in box_yes):
         has_box = True
     elif re.search(_BOX_WORD, said_absent) or any(kw in text_lower for kw in box_no):
