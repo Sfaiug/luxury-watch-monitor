@@ -127,10 +127,10 @@ class RueschenbeckScraper(BaseScraper):
         price = None
         price_tag = item_tag.select_one('span.product-price')
         if price_tag:
-            price_text_raw = extract_text_from_element(price_tag)
-            # Clean up: may contain both sale price and original price
-            # Take the first price value (current price)
-            if price_text_raw:
+            # A reduced watch also holds its old price, in a nested span.list-price:
+            # the price to pay is the tag's own text
+            price_text_raw = "".join(price_tag.find_all(string=True, recursive=False))
+            if price_text_raw.strip():
                 price = parse_price(price_text_raw, "EUR")
 
         # Set condition based on CPO badge
