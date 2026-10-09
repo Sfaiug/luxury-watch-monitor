@@ -270,15 +270,17 @@ class TestYearParsing:
         assert parse_year("Year 2050", "") is None  # Too new
         assert parse_year("Model 1234", "") is None  # Ambiguous
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason="a reference, SKU or article number is returned as the year: the first pattern takes any four digits before the reference check runs",
-    )
     def test_parse_year_skip_reference_context(self):
         """Test that reference numbers are skipped."""
         assert parse_year("Ref 2020 model", "") is None  # Reference context
         assert parse_year("SKU: 1985", "") is None  # SKU context
         assert parse_year("Article ID: 2000", "") is None  # Article context
+
+    def test_parse_year_next_to_a_reference(self):
+        """The year is found beside a number that only looks like one."""
+        assert parse_year("Ref. 2020, Baujahr 2010", "") == "2010"
+        assert parse_year("Blue Star, steel, very nice original condition, 1982", "") == "1982"
+        assert parse_year("enamel dial, silver case, 1920", "") == "1920"
     
 class TestBoxPapersParsing:
     """Test box and papers parsing."""

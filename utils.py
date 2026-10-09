@@ -246,7 +246,7 @@ def parse_year(text: str, title: str = "") -> Optional[str]:
 
         # Look for year with keywords
         year_match = re.search(
-            r"(?:jahr|year|baujahr|papers from|original-papiere: ja \()?"
+            r"(?:jahr|year|baujahr|papers from|original-papiere: ja \()"
             r"\s*(?:ca\.\s*|um\s*)?(\d{4})\b",
             search_text,
             re.IGNORECASE,
@@ -259,7 +259,7 @@ def parse_year(text: str, title: str = "") -> Optional[str]:
                 return year_val
 
         # Look for standalone 4-digit years
-        potential_years = re.findall(r"\b(19[5-9]\d|20[0-3]\d)\b", search_text)
+        potential_years = re.findall(r"\b(19\d\d|20[0-3]\d)\b", search_text)
 
         for year in potential_years:
             # Check context to avoid reference numbers
