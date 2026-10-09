@@ -306,17 +306,14 @@ def create_test_scraping_session(
 
 
 @pytest.fixture
-def mock_base_scraper(test_site_config, mock_aiohttp_session, mock_logger):
-    """Mock base scraper for testing."""
-    scraper = Mock(spec=BaseScraper)
-    scraper.config = test_site_config
-    scraper.session = mock_aiohttp_session
-    scraper.logger = Mock()
-    scraper.logger.logger = mock_logger
-    scraper.seen_ids = set()
-    scraper.scrape = AsyncMock(return_value=[])
-    scraper.set_seen_ids = Mock()
-    return scraper
+def base_scraper(test_site_config, mock_aiohttp_session, mock_logger):
+    """A real scraper with no shop of its own, for what every scraper inherits."""
+
+    class ShoplessScraper(BaseScraper):
+        async def _extract_watches(self, soup):
+            return []
+
+    return ShoplessScraper(test_site_config, mock_aiohttp_session, mock_logger)
 
 
 @pytest.fixture

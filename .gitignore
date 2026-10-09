@@ -31,10 +31,7 @@ logs/
 
 # Testing
 .pytest_cache/
-.coverage
-htmlcov/
 .tox/
-*.cover
 
 # Docker
 *.pid

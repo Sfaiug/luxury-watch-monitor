@@ -250,6 +250,7 @@ class TestPersistenceManager:
         
         with patch('persistence.APP_CONFIG') as mock_config:
             mock_config.session_history_retention_days = 30
+            mock_config.max_session_history_entries = 1000
             
             test_persistence_manager.save_session(new_session)
         
@@ -261,7 +262,7 @@ class TestPersistenceManager:
         assert "old-session" not in session_ids  # Should be removed
         assert "recent-session" in session_ids   # Should be kept  
         assert "new-session" in session_ids      # Should be added
-    
+
     def test_save_session_error(self, test_persistence_manager):
         """Test session saving with error."""
         session = ScrapingSession(session_id="test-session")
@@ -384,6 +385,7 @@ class TestPersistenceManager:
         
         with patch('persistence.APP_CONFIG') as mock_config:
             mock_config.session_history_retention_days = 30
+            mock_config.max_session_history_entries = 1000
             
             test_persistence_manager.cleanup_old_data()
         
@@ -395,7 +397,7 @@ class TestPersistenceManager:
         assert saved_data[0]["session_id"] == "recent-session"
         
         test_persistence_manager.logger.info.assert_called()
-    
+
     def test_cleanup_old_data_no_cleanup_needed(self, test_persistence_manager, temp_dir):
         """Test cleanup when no cleanup is needed."""
         recent_session = {
@@ -416,9 +418,10 @@ class TestPersistenceManager:
         
         # No cleanup should have occurred
         test_persistence_manager.logger.info.assert_not_called()
-    
+
     def test_cleanup_old_data_error(self, test_persistence_manager):
         """Test cleanup with error."""
+        test_persistence_manager.session_history_file.write_text("[]")
         test_persistence_manager.load_session_history = Mock(side_effect=Exception("Load error"))
         
         test_persistence_manager.cleanup_old_data()
@@ -426,3 +429,4 @@ class TestPersistenceManager:
         test_persistence_manager.logger.error.assert_called_with(
             "Error during cleanup: Load error"
         )
+    

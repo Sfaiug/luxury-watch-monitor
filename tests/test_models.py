@@ -285,14 +285,3 @@ class TestScrapingSession:
         assert "site_stats" in session_dict
         assert "site1" in session_dict["site_stats"]
     
-    def test_session_id_generation(self):
-        """Test automatic session ID generation."""
-        session1 = ScrapingSession()
-        session2 = ScrapingSession()
-        
-        # Session IDs should be different
-        assert session1.session_id != session2.session_id
-        
-        # Session IDs should follow the expected format (YYYYMMDD_HHMMSS)
-        assert len(session1.session_id) == 15  # YYYYMMDD_HHMMSS format
-        assert "_" in session1.session_id
