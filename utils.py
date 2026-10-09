@@ -308,6 +308,8 @@ _MISSING = (
     r"(?:vorhanden|dabei|da|enthalten|included|available|present)"
     r"|fehlt|fehlen|missing|nein)"
 )
+# Where a field's value ends: at punctuation, a number, the next field or the line's end
+_VALUE_ENDS = r"(?=[^\S\n]*(?:[.,;|/)\n]|\d|\w+\s*:|$))"
 # The ways a listing says they are missing:
 _SAID_ABSENT = re.compile(
     # the negation right before them: "ohne Papiere", "keine Box/Papiere",
@@ -315,8 +317,10 @@ _SAID_ABSENT = re.compile(
     # reach a word that heads a field of its own: "ohne Box / Papiere: vorhanden"
     rf"\b(?:ohne|kein\w*|weder|no|without)\s+{_NAMED}(?:{_JOIN}{_NAMED}(?!\s*:))*"
     # as a field: "Papiere: nein", "Box und Papiere: keine", "Papers: not
-    # included". "No." with its period is a number: "Papers: No. 12345"
-    rf"|{_NAMED_TOGETHER}\s*:\s*(?:none|keine?|ohne|no(?!\.\s*\d)|{_MISSING})\b"
+    # included". A bare "keine", "ohne", "none" or "no" must be the whole value:
+    # "Box: ohne Kratzer" is about scratches. "No." with its period is a number
+    rf"|{_NAMED_TOGETHER}\s*:\s*"
+    rf"(?:(?:none|keine?|ohne|no(?!\.\s*\d)){_VALUE_ENDS}|{_MISSING}\b)"
     # after them: "Box und Papiere nicht vorhanden", "papers are missing", "Papiere nein"
     rf"|{_NAMED_TOGETHER}(?:\s+(?:ist|sind|leider|is|are))*\s+{_MISSING}\b"
 )

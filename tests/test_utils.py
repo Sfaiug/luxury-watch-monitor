@@ -359,6 +359,14 @@ class TestBoxPapersParsing:
             ("Box: vorhanden, Papiere: nicht vorhanden", (False, True)),
             ("Papers: not included", (False, None)),
             ("Box: no 2 years warranty", (None, False)),
+            ("Papiere: keine Box: ja", (False, True)),
+            # A value that says "none" of something else
+            ("Box: ohne Umkarton", (None, True)),
+            ("Box: ohne Kratzer", (None, True)),
+            ("Box: keine Gebrauchsspuren", (None, True)),
+            ("Papiere: ohne Stempel", (True, None)),
+            ("Garantiekarte: ohne Datum", (True, None)),
+            ("Papers: no date", (True, None)),
             # Said to be there, in the same forms
             ("Box: vorhanden", (None, True)),
             ("Box is included", (None, True)),
