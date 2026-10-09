@@ -229,10 +229,6 @@ class TestRueschenbeckScraper:
         assert watch.has_papers is True
 
     @pytest.mark.asyncio
-    @pytest.mark.xfail(
-        strict=True,
-        reason="a condition worded 'als Sehr gut bewertet' gives no rating: 'sehr gut' alone is not among the known wordings",
-    )
     async def test_extract_watch_details_condition_sehr_gut(self, rueschenbeck_scraper, rueschenbeck_detail_html):
         """A watch page that rates the watch "Sehr gut" gives a condition."""
         watch = WatchData(
