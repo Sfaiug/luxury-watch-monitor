@@ -21,3 +21,4 @@ tests: scripts/test.sh
 ## Lessons
 
 - A failing test is removed only when it cannot test this code: markup the scraper no longer reads, a method that does not exist. A failure that shows a defect stays as a strict xfail narrowed to the defect; one caused by the test's own setup is fixed in the test. What a removal leaves unused (fixtures, imports) goes with it. (9 Oct 2026: the pull request that repaired the suite spent three review rounds on removals that were none of these.)
+- A reading defect is counted on the saved real pages before anything is built for it; a form that no real page uses stays a strict xfail. (9 Oct 2026: four pull requests and eleven review rounds went into reading "box or papers missing", which none of 19 real shop pages says.)
