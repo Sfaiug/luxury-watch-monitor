@@ -10,7 +10,6 @@ from bs4 import BeautifulSoup
 from config import SiteConfig
 from models import WatchData
 from scrapers.kleinanzeigen import KleinanzeigenScraper, search_url
-from utils import parse_year
 
 SEARCH = "https://www.kleinanzeigen.de/s-uhren-schmuck/anzeige:angebote/"
 
@@ -56,9 +55,6 @@ def test_an_offer_is_read_like_a_shop_s_watch():
         "https://www.kleinanzeigen.de/s-anzeige/rolex-submariner-date-aus-2008/3535014294-157-2057"
     )
     assert submariner.price == Decimal("8300")
-    assert submariner.reference == "16610"  # "Ref.16610" in the description
-    assert submariner.year == "2008"
-    assert submariner.condition == "★★★☆☆"  # "Guter Zustand"
     assert submariner.image_url.startswith("https://img.kleinanzeigen.de/")
     assert all(watch.price for watch in watches)
 
@@ -77,22 +73,15 @@ def test_the_price_is_the_one_to_pay():
     assert (box.title, box.price) == ("OMEGA Uhrenbox neu", Decimal("100"))
 
 
-def test_an_offer_says_nothing_of_papers_and_box():
+def test_nothing_is_read_out_of_the_seller_s_own_words():
     dealer = offers()[0]
 
-    # Its text says "Box/Papiere: Nicht vorhanden". A seller's own words are
-    # not read for papers and box, so no alert shows them as there
+    # Its text says "Referenz: 16613", "Herstellungsjahr: ca. 1993" and
+    # "Box/Papiere: Nicht vorhanden", and is cut off after a few lines
     assert dealer.title == "Rolex Submariner Date 16613 Bicolor 40mm"
-    assert {(watch.has_box, watch.has_papers) for watch in offers()} == {(None, None)}
-
-
-def test_the_year_is_not_the_service_year():
-    serviced = offers()[7]
-
-    assert serviced.title.startswith("Rolex Submariner Date - 16800 - Service 2026 - 1981")
-    assert serviced.year == "1981"
-    assert parse_year("Rolex Submariner Date - 16800 - Service 2026 - 1981") == "1981"
-    assert parse_year("Revision 2024, gekauft 2015") == "2015"
+    for watch in offers():
+        assert (watch.reference, watch.year, watch.condition) == (None, None, None)
+        assert (watch.has_box, watch.has_papers) == (None, None)
 
 
 def test_an_offer_s_alert_has_a_shop_alert_s_structure():
@@ -101,12 +90,7 @@ def test_an_offer_s_alert_has_a_shop_alert_s_structure():
         url="https://www.grimmeissen.de/de/uhren/rolex/submariner/1",
         site_name="Grimmeissen",
         site_key="grimmeissen",
-        brand="Rolex",
-        model="Submariner Date",
-        reference="16610",
-        year="2008",
         price=Decimal("8300"),
-        condition="★★★☆☆",
         image_url="https://www.grimmeissen.de/1.jpg",
     )
     shop, offer = shop_watch.to_discord_embed(0), offers()[2].to_discord_embed(0)
@@ -115,12 +99,20 @@ def test_an_offer_s_alert_has_a_shop_alert_s_structure():
     assert [field["name"] for field in offer["fields"]] == [
         field["name"] for field in shop["fields"]
     ]
-    assert offer["title"] == "Rolex Submariner Date aus 2008 | 16610"
     assert offer["footer"]["text"].startswith("Kleinanzeigen - Detected: ")
 
 
-def test_an_offer_without_a_reference_is_searched_by_its_title():
-    untitled = offers()[4]
+def test_the_alert_is_headed_by_the_seller_s_title_whole():
+    assert offers()[2].to_discord_embed(0)["title"] == "Rolex Submariner Date aus 2008"
+    # A title's last word is part of it: a "Submariner Date" is not a "Submariner"
+    ending_in_date = WatchData(
+        title="Rolex Submariner Date",
+        url="https://www.kleinanzeigen.de/s-anzeige/rolex-submariner-date/1-157-1",
+        site_name="Kleinanzeigen",
+        site_key="filter:1",
+    )
+    assert ending_in_date.to_discord_embed(0)["title"] == "Rolex Submariner Date"
 
-    assert untitled.reference is None
-    assert "query=Rolex+Submariner+16613+Stahl+Gold" in untitled.chrono24_search_url
+
+def test_an_offer_is_searched_on_chrono24_by_its_title():
+    assert "query=Rolex+Submariner+Date+aus+2008" in offers()[2].chrono24_search_url

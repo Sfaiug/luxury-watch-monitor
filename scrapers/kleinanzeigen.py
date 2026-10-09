@@ -9,7 +9,7 @@ from bs4 import BeautifulSoup
 
 from scrapers.base import BaseScraper
 from models import WatchData
-from utils import parse_price, parse_year, parse_condition, extract_text_from_element
+from utils import parse_price, extract_text_from_element
 
 BASE_URL = "https://www.kleinanzeigen.de"
 SELLERS = {"private": "anbieter:privat/", "dealer": "anbieter:gewerblich/", "any": ""}
@@ -46,26 +46,24 @@ class KleinanzeigenScraper(BaseScraper):
         return watches
 
     def _parse_watch_element(self, card) -> WatchData:
-        """Parse one offer; its title, full description and picture come as JSON-LD."""
-        ad = json.loads(card.select_one('script[type="application/ld+json"]').string)
-        title = ad["title"]
-        text = f"{title}\n{ad.get('description') or ''}"
+        """Parse one offer from what its card states as data: title, price, picture and address.
 
+        Nothing is read out of the seller's own words. The card holds only the
+        start of them, cut off mid-word, and a reference, year, condition,
+        papers or box taken from free text is wrong too often.
+        """
+        ad = json.loads(card.select_one('script[type="application/ld+json"]').string)
         # The price has an element of its own. A reduced offer's old price follows
         # it, struck through; the seller's text may name other amounts
         price_text = extract_text_from_element(card.select_one("p.text-title3"))
-        reference = re.search(r"\bRef(?:erenz)?\b[.:\s]*([A-Z0-9][\w./-]{2,})", text)
 
         watch = WatchData(
-            title=title,
+            title=ad["title"],
             url=urljoin(BASE_URL, card["data-href"]),
             site_name=self.config.name,
             site_key=self.config.key,
-            reference=reference.group(1) if reference else None,
-            year=parse_year(text),
             price=parse_price(price_text.replace("VB", ""), "EUR"),
             currency="EUR",
-            condition=parse_condition(text, self.config.key),
             image_url=ad.get("contentUrl"),
         )
         # "VB": the seller takes offers

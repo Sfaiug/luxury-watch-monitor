@@ -324,17 +324,9 @@ class WatchData:
             else:
                 parts.append(self.model)
 
-        # Use title as fallback
+        # A listing known only by its title is announced by its title
         if not parts:
-            title = self.title
-            # Clean up common suffixes
-            title = re.sub(
-                r"\s*(Automatik|Quarz|Chrono|GMT|Date|Certified Pre-Owned|Stahl|Gold|Keramik)$",
-                "",
-                title,
-                flags=re.IGNORECASE,
-            ).strip()
-            parts = [title]
+            parts = [self.title]
 
         embed_title = " ".join(parts)
 

@@ -242,11 +242,10 @@ def parse_price(price_text: str, currency: str = "EUR") -> Optional[Decimal]:
 # number: the label as a word of its own ("Ref", "Referenz", "SKU", "ID",
 # "Art-Nr", "Artikel", "Mod", "Modell", "P/N", "Ident", "Kal", "No", "Nr"),
 # then at most "Nr"/"No"/"Nummer" and punctuation. "President", "Chrono."
-# and "Herrenmodell" end in such letters without being one. The year after
-# "Service" or "Revision" is when the watch was serviced, not made
+# and "Herrenmodell" end in such letters without being one
 _NUMBER_LABEL = re.compile(
     r"\b(?:ref(?:erenz\w*|erence\w*)?|sku|id|art-nr|artikel\w*|mod(?:ell\w*)?"
-    r"|p/n|ident\w*|kal|no|nr|service|revision)"
+    r"|p/n|ident\w*|kal|no|nr)"
     r"(?:[-\s.]*(?:nr|no|nummer|number)\b)?[\s.:#-]*$"
 )
 
