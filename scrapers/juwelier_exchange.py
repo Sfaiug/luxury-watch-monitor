@@ -47,21 +47,17 @@ class JuwelierExchangeScraper(BaseScraper):
         img_tag = item_tag.select_one('img.product-image')
         if img_tag:
             # Simplified srcset logic from original
-            srcset = img_tag.get('srcset', '')
-            if srcset:
-                # Prefer higher resolution webp, then jpg, then src
-                potential_srcs = [s.strip().split(" ")[0] for s in srcset.split(",")]
-                best_src = img_tag.get('src', '')  # fallback to src
-                for res in ["1920x1920.webp", "800x800.webp", "400x400.webp", ".webp"]:  # Order of preference
-                    for p_src in potential_srcs:
-                        if res in p_src:
-                            best_src = p_src
-                            break
-                    if res in best_src:
-                        break  # Found preferred type
+            # The widest picture of the srcset, a webp one where there is one;
+            # without a srcset that names one, the plain src
+            def rank(entry):
+                src, *descriptor = entry.split()
+                width = descriptor[0].rstrip("w") if descriptor else ""
+                return (".webp" in src, int(width) if width.isdigit() else 0)
+
+            entries = [entry for entry in img_tag.get('srcset', '').split(",") if entry.strip()]
+            best_src = max(entries, key=rank).split()[0] if entries else img_tag.get('src')
+            if best_src:
                 image_url = urljoin(self.config.base_url, best_src)
-            elif img_tag.has_attr('src'):
-                image_url = urljoin(self.config.base_url, img_tag['src'])
         
         # The card's own data has the price to pay; the visible price block of a
         # reduced watch also holds the old price and the saving
@@ -99,8 +95,9 @@ class JuwelierExchangeScraper(BaseScraper):
         quoted_model_match = re.search(r"'(.*?)'", model_candidate)
         if quoted_model_match and len(quoted_model_match.group(1).strip()) > 1:
             model = quoted_model_match.group(1).strip()
-        else:  # Fallback: remove common terms
-            temp_model = re.sub(r'\s*(Automatik|Quarz|Chrono|GMT|Date)$', '', model_candidate, flags=re.IGNORECASE).strip(" ,")
+        else:  # Fallback: what comes before a reference, without common terms
+            temp_model = re.sub(r"\s*\bRef\b.*$", "", model_candidate, flags=re.IGNORECASE)
+            temp_model = re.sub(r'\s*(Automatik|Quarz|Chrono|GMT|Date)$', '', temp_model, flags=re.IGNORECASE).strip(" ,")
             model = " ".join(temp_model.split()[:3]).strip()
         
         if len(model) < 2 or model.lower() == brand.lower():
@@ -152,7 +149,7 @@ class JuwelierExchangeScraper(BaseScraper):
             details["box_status"] = box_status
             
             # Diameter from description
-            dia_match = re.search(r'(?:Durchmesser|Gehäusedurchmesser|Gehäusegröße)\s*(?:von|ca\.)?\s*(\d{1,2}(?:[,.]\d{1,2})?)\s*mm', full_description_text, re.IGNORECASE)
+            dia_match = re.search(r'(?:Durchmesser|Gehäusedurchmesser|Gehäusegröße):?\s*(?:von|ca\.)?\s*(\d{1,2}(?:[,.]\d{1,2})?)\s*mm', full_description_text, re.IGNORECASE)
             if dia_match:
                 details["diameter"] = dia_match.group(1).replace(',', '.') + " mm"
             else:  # Check for format like "20,5 x 28 mm" for rectangular cases (take first dimension)
