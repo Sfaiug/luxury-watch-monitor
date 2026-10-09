@@ -45,25 +45,8 @@ class WorldOfTimeScraper(BaseScraper):
         title_tag = item_tag.select_one("div.text-truncate[style*='font-size: 17px'][style*='font-family: \\'AB\\'']")
         full_title = extract_text_from_element(title_tag) if title_tag else "Unknown Watch"
         
-        # Extract brand and model using original logic
-        known_brands = {
-            "patek philippe": "Patek Philippe", 
-            "rolex vintage": "Rolex", 
-            "rolex": "Rolex", 
-            "omega": "Omega", 
-            "iwc": "IWC", 
-            "jaeger lecoultre": "Jaeger LeCoultre", 
-            "cartier": "Cartier", 
-            "breitling": "Breitling", 
-            "audemars piguet": "Audemars Piguet", 
-            "heuer": "Heuer", 
-            "universal geneve": "Universal Genève", 
-            "panerai": "Panerai", 
-            "tudor": "Tudor", 
-            "longines": "Longines", 
-            "zenith": "Zenith", 
-            "a. lange & söhne": "A. Lange & Söhne"
-        }
+        # Brand and model: the shop's known brands are in its config
+        known_brands = self.config.known_brands
         
         parsed_brand, parsed_model = None, None
         
@@ -78,8 +61,8 @@ class WorldOfTimeScraper(BaseScraper):
                     break
             
             if parsed_brand and found_brand_proper:
-                # Extract model text after brand
-                model_text = re.sub(fr"^{re.escape(found_brand_proper)}", "", full_title, flags=re.IGNORECASE).strip()
+                # The model is what follows the brand as the title writes it
+                model_text = full_title[len(kb_lower):].strip()
                 parsed_model = model_text if model_text else None
                 
                 # Special handling for Rolex vintage
