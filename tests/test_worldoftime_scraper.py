@@ -9,38 +9,13 @@ from urllib.parse import urljoin
 
 from scrapers.worldoftime import WorldOfTimeScraper
 from models import WatchData
-from config import SiteConfig
+from config import SITE_CONFIGS
 
 
 @pytest.fixture
 def worldoftime_config():
-    """WorldOfTime site configuration for testing."""
-    return SiteConfig(
-        name="World of Time",
-        key="worldoftime",
-        url="https://www.worldoftime.de/Watches/NewArrivals",
-        webhook_env_var="WORLDOFTIME_WEBHOOK_URL",
-        color=0x2F4F4F,
-        base_url="https://www.worldoftime.de",
-        known_brands={
-            "patek philippe": "Patek Philippe",
-            "rolex vintage": "Rolex",
-            "rolex": "Rolex",
-            "omega": "Omega",
-            "iwc": "IWC",
-            "jaeger lecoultre": "Jaeger LeCoultre",
-            "cartier": "Cartier",
-            "breitling": "Breitling",
-            "audemars piguet": "Audemars Piguet",
-            "heuer": "Heuer",
-            "universal geneve": "Universal Genève",
-            "panerai": "Panerai",
-            "tudor": "Tudor",
-            "longines": "Longines",
-            "zenith": "Zenith",
-            "a. lange & söhne": "A. Lange & Söhne"
-        }
-    )
+    """The shop's own configuration, with its known brands."""
+    return SITE_CONFIGS["worldoftime"]
 
 
 @pytest.fixture
@@ -418,10 +393,6 @@ class TestWorldOfTimeScraper:
                 assert watch.brand == expected_brand
                 assert watch.model == expected_model
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason="'Universal Genève Polerouter' gives the brand 'Universal': the known brand is spelt 'universal geneve'",
-    )
     def test_brand_model_extraction_with_an_accent(self, worldoftime_scraper):
         """A known brand is recognised in the shop's accented spelling."""
         test_cases = [

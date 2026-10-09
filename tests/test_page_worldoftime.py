@@ -47,3 +47,9 @@ def test_a_new_watch_s_own_page_is_not_fetched(listed_watches):
 
     assert len(announced) == len(listed_watches("worldoftime")) > 0
     assert fetch.call_count == 1
+
+
+def test_a_two_word_brand_is_the_brand(listed_watches):
+    carrera = next(w for w in listed_watches("worldoftime") if w.title.startswith("TAG HEUER Carrera"))
+
+    assert (carrera.brand, carrera.model) == ("TAG Heuer", "Carrera")
