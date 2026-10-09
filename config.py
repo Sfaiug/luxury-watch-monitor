@@ -355,11 +355,8 @@ SITE_CONFIGS = {
         webhook_env_var="BACHMANN_SCHER_WEBHOOK_URL",
         color=0x1F3A5F,
         base_url="https://www.bachmann-scher.de",
-        condition_mappings={
-            "ungetragen": "★★★★★",
-            "sehr gut": "★★★★☆",
-            "gut": "★★★☆☆",
-        },
+        # "Ungetragen" and "Sehr gut" are read like every shop's
+        condition_mappings={"gut": "★★★☆☆"},
     ),
 }
 

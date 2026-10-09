@@ -436,6 +436,7 @@ def parse_condition(
                 "near mint",
                 "perfekter zustand",
                 "sehr guter zustand",
+                "sehr gut",
                 "very good condition",
                 "1a zustand",
             ],
