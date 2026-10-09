@@ -17,8 +17,9 @@ class WorldOfTimeScraper(BaseScraper):
         """Extract watches from World of Time listing page."""
         watches = []
         
-        # Use exact selectors from original implementation
-        watch_elements = soup.select('div.new-arrivals-watch, div.paged-clocks-container div.watch-link')
+        # Every card of the page: the eight newest in the section on top, the
+        # rest in the paged list below it
+        watch_elements = soup.select('div.watch-link, div.new-arrivals-watch')
         
         for item_tag in watch_elements:
             try:
