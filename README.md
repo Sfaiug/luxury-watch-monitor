@@ -158,7 +158,7 @@ python main_production.py --health-check
 
 ### Running Tests
 ```bash
-python run_tests.py
+scripts/test.sh
 ```
 
 ### Code Structure
