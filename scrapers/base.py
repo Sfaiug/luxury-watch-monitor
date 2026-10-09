@@ -147,6 +147,10 @@ class BaseScraper(ABC):
         Args:
             watches: List of watches to fetch details for
         """
+        # A scraper that reads nothing from a watch's own page does not fetch it
+        if type(self)._extract_watch_details is BaseScraper._extract_watch_details:
+            return
+
         # Limit concurrent detail fetches
         semaphore = asyncio.Semaphore(APP_CONFIG.max_concurrent_details)
 
