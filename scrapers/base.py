@@ -111,8 +111,12 @@ class BaseScraper(ABC):
             if watch.composite_id in self.seen_ids:
                 continue
             self.seen_ids.add(watch.composite_id)
-            # A watch announced under its former id is known, not news
-            if watch.former_id not in self.seen_ids:
+            # A watch announced under its former id is known, not news. The
+            # former id vouches for one listing and goes: a later listing of
+            # an identical watch at the same price is news again
+            if watch.former_id in self.seen_ids:
+                self.seen_ids.discard(watch.former_id)
+            else:
                 new_watches.append(watch)
 
         self.logger.info(

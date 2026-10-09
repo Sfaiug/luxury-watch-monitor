@@ -74,6 +74,30 @@ async def test_a_watch_remembered_under_its_former_id_is_not_announced_again(tes
     ]
 
 
+async def test_a_former_id_vouches_for_one_listing(test_site_config):
+    """An identical watch listed anew at the same price, after the first one sold, is news."""
+
+    def datejust(number):
+        return WatchData(
+            title="Rolex Datejust",
+            url=f"https://example.com/watches/datejust/{number}",
+            site_name="Test Site",
+            site_key="test_site",
+            brand="Rolex",
+            model="Datejust",
+            reference="16234",
+            price=Decimal("6900"),
+        )
+
+    shop = Shop(test_site_config, None, logging.getLogger("test"))
+    remembered = {datejust(1).former_id}  # the former id has no link in it
+    shop.set_seen_ids(remembered)
+
+    assert await scan(shop, datejust(1)) == []
+    assert datejust(1).former_id not in remembered
+    assert await scan(shop, datejust(2)) == ["https://example.com/watches/datejust/2"]
+
+
 def test_the_former_id_is_the_one_the_server_remembers():
     """Two ids as the code before this change made them."""
     hashed = WatchData(
