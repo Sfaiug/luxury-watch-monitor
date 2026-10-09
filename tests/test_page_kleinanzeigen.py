@@ -51,9 +51,7 @@ def test_an_offer_is_read_like_a_shop_s_watch():
     assert len(watches) == 10
     submariner = watches[2]
     assert submariner.title == "Rolex Submariner Date aus 2008"
-    assert submariner.url == (
-        "https://www.kleinanzeigen.de/s-anzeige/rolex-submariner-date-aus-2008/3535014294-157-2057"
-    )
+    assert submariner.url == "https://www.kleinanzeigen.de/s-anzeige/3535014294"
     assert submariner.price == Decimal("8300")
     assert submariner.image_url.startswith("https://img.kleinanzeigen.de/")
     assert all(watch.price for watch in watches)
@@ -138,3 +136,25 @@ def test_an_offer_without_a_picture_is_read_too():
 
     assert watch.title == "Vacheron Constantin Overseas 4000V/210A-B911 Box + Papiere Moonp"
     assert (watch.price_display, watch.image_url) == ("€44.990", None)
+
+
+def test_an_offer_whose_title_is_edited_is_the_same_offer():
+    """The site rewrites an offer's link when its title is edited; its number stays."""
+    page = (Path(__file__).parent / "pages" / "kleinanzeigen.html").read_text(encoding="utf-8")
+    edited = page.replace("rolex-submariner-date-aus-2008/", "rolex-submariner-date-aus-2008-auch-tausch/")
+    edited = edited.replace("aus 2008</a>", "aus 2008 auch Tausch</a>")
+    assert edited.count("auch-tausch/") >= 1 and "auch Tausch</a>" in edited
+    scraper = KleinanzeigenScraper(
+        SiteConfig(name="Kleinanzeigen", key="filter:1", url="", webhook_env_var="", color=0,
+                   base_url="https://www.kleinanzeigen.de"),
+        None,
+        logging.getLogger("test"),
+    )
+
+    before, after = (
+        asyncio.run(scraper._extract_watches(BeautifulSoup(html, "lxml")))[2]
+        for html in (page, edited)
+    )
+
+    assert after.title == "Rolex Submariner Date aus 2008 auch Tausch"
+    assert after.composite_id == before.composite_id

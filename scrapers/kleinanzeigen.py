@@ -3,7 +3,7 @@
 import json
 import re
 from typing import List, Optional
-from urllib.parse import quote, urljoin
+from urllib.parse import quote
 
 from bs4 import BeautifulSoup
 
@@ -60,7 +60,9 @@ class KleinanzeigenScraper(BaseScraper):
 
         watch = WatchData(
             title=extract_text_from_element(card.select_one("h3")),
-            url=urljoin(BASE_URL, card["data-href"]),
+            # By its number alone: the site's own link holds the title, and a
+            # seller who edits the title would make it a new offer
+            url=f"{BASE_URL}/s-anzeige/{card['data-adid']}",
             site_name=self.config.name,
             site_key=self.config.key,
             price=parse_price(price_text.replace("VB", ""), "EUR"),
