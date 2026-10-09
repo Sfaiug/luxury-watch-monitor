@@ -18,7 +18,8 @@ from action_store import ActionStore
 from discord_interactions import DiscordInteractionServer, discord_route_enabled
 from muv_service import MUVActionService
 from filters import Filter, FilterStore
-from filter_flow import DiscordApi, FilterFlow
+from discord_api import DiscordApi
+from filter_flow import FilterFlow
 
 # Import all scraper implementations
 from scrapers.worldoftime import WorldOfTimeScraper
@@ -144,11 +145,7 @@ class WatchMonitor:
             if discord_route_enabled() and APP_CONFIG.discord_bot_token and shops_channel:
                 self.filter_flow = FilterFlow(
                     self.filter_store,
-                    DiscordApi(
-                        self.session,
-                        APP_CONFIG.discord_bot_token,
-                        APP_CONFIG.discord_api_base_url,
-                    ),
+                    DiscordApi(self.session, APP_CONFIG),
                     self.logger,
                     self._scan_new_filter,
                     shops_channel,

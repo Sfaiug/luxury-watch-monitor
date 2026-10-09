@@ -3,6 +3,7 @@
 import asyncio
 from typing import Any, Awaitable, Callable, Dict, Optional, Tuple
 
+from discord_api import DiscordApi
 from discord_interactions import (
     EPHEMERAL_FLAG,
     RESPONSE_CHANNEL_MESSAGE,
@@ -24,29 +25,6 @@ WIDGET_TEXT = (
 # Discord: permission bits, and whom a channel's permission is for
 VIEW_CHANNEL, SEND_MESSAGES, EMBED_LINKS, MANAGE_CHANNELS = 1 << 10, 1 << 11, 1 << 14, 1 << 4
 ROLE, MEMBER = 0, 1
-
-
-class DiscordApi:
-    """The bot's calls to Discord."""
-
-    def __init__(self, session, token: str, base_url: str):
-        self.session = session
-        self.base_url = base_url.rstrip("/")
-        self.headers = {
-            "Authorization": f"Bot {token}",
-            "User-Agent": "DiscordBot (https://atlas.hopcomp.com, 1.0)",
-        }
-
-    async def call(self, method: str, path: str, body: Optional[dict] = None) -> Tuple[int, Any]:
-        """One call; (status, answer). Told to slow down, it waits and asks once more."""
-        for attempt in range(2):
-            async with self.session.request(
-                method, self.base_url + path, json=body, headers=self.headers
-            ) as response:
-                answer = await response.json(content_type=None)
-                if response.status != 429 or attempt:
-                    return response.status, answer
-                await asyncio.sleep(float(answer.get("retry_after", 1)))
 
 
 def _buttons(*buttons: Tuple[str, str]) -> list:

@@ -27,6 +27,7 @@ import aiohttp  # noqa: E402
 
 from action_store import ActionStore  # noqa: E402
 from config import APP_CONFIG, SITE_CONFIGS  # noqa: E402
+from discord_api import DiscordApi  # noqa: E402
 from logging_config import setup_logging  # noqa: E402
 from models import WatchData  # noqa: E402
 from muv_service import MUVActionService  # noqa: E402
@@ -123,11 +124,7 @@ async def fetch_discord_messages(
     if not APP_CONFIG.discord_bot_token:
         raise RuntimeError("DISCORD_BOT_TOKEN is required to fetch Discord messages")
 
-    headers = {
-        "Authorization": f"Bot {APP_CONFIG.discord_bot_token}",
-        "User-Agent": "DiscordBot (https://atlas.hopcomp.com, 1.0)",
-    }
-    api_base = APP_CONFIG.discord_api_base_url.rstrip("/")
+    discord = DiscordApi(session, APP_CONFIG)
     messages: List[Dict[str, Any]] = []
 
     for key, channel_id in channels.items():
@@ -139,15 +136,13 @@ async def fetch_discord_messages(
             if before:
                 params["before"] = before
 
-            url = f"{api_base}/channels/{channel_id}/messages"
-            async with session.get(url, headers=headers, params=params) as response:
-                if response.status != 200:
-                    text = (await response.text())[:500]
-                    raise RuntimeError(
-                        f"Discord fetch failed for {key}/{channel_id}: "
-                        f"{response.status} {text}"
-                    )
-                batch = await response.json()
+            status, batch = await discord.call(
+                "GET", f"/channels/{channel_id}/messages", params=params
+            )
+            if status != 200:
+                raise RuntimeError(
+                    f"Discord fetch failed for {key}/{channel_id}: {status} {batch}"
+                )
 
             if not batch:
                 break
