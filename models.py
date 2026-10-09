@@ -169,6 +169,10 @@ class WatchData:
         if self.reference and self.reference != APP_CONFIG.emoji_config["question"]:
             query_parts.append(self.reference)
 
+        # A listing known only by its title is searched by its title
+        if not query_parts:
+            query_parts.append(self.title)
+
         # URL encode the query
         query = quote_plus(" ".join(query_parts))
         return f"https://www.chrono24.de/search/index.htm?dosearch=true&query={query}&sortorder=1"
