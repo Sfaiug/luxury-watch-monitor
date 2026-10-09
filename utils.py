@@ -224,6 +224,18 @@ def parse_price(price_text: str, currency: str = "EUR") -> Optional[Decimal]:
         return None
 
 
+# The end of a text whose next number is a reference, article or movement
+# number: the label as a word of its own ("Ref", "Referenz", "SKU", "ID",
+# "Art-Nr", "Artikel", "Mod", "Modell", "P/N", "Ident", "Kal", "No", "Nr"),
+# then at most "Nr"/"No"/"Nummer" and punctuation. "President", "Chrono."
+# and "Herrenmodell" end in such letters without being one
+_NUMBER_LABEL = re.compile(
+    r"\b(?:ref(?:erenz\w*|erence\w*)?|sku|id|art-nr|artikel\w*|mod(?:ell\w*)?"
+    r"|p/n|ident\w*|kal|no|nr)"
+    r"(?:[-\s.]*(?:nr|no|nummer|number)\b)?[\s.:#-]*$"
+)
+
+
 def parse_year(text: str, title: str = "") -> Optional[str]:
     """
     Extract year from text.
@@ -258,14 +270,10 @@ def parse_year(text: str, title: str = "") -> Optional[str]:
             if 1900 <= year_int <= 2030:
                 return year_val
 
-        # A year standing on its own. A number that directly follows a word
-        # for a reference or article number ("Ref. 2020", "SKU: 1985") is none
+        # A year standing on its own. A number that directly follows a label
+        # for a reference or article number ("Ref. 2020", "Art-Nr. 1985") is none
         for match in re.finditer(r"\b(19\d\d|20[0-3]\d)\b", search_text):
-            before = search_text[: match.start()].lower()
-            if re.search(
-                r"(?:ref\w*|sku|id:|art-nr|no\.|mod\w*|artikel\w*|p/n|ident\w*|kal\.)\W*$",
-                before,
-            ):
+            if _NUMBER_LABEL.search(search_text[: match.start()].lower()):
                 continue
             if 1900 <= int(match.group(1)) <= 2030:
                 return match.group(1)

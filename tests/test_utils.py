@@ -288,6 +288,30 @@ class TestYearParsing:
         assert parse_year("Ref. 116610LN, 2015", "") == "2015"
         assert parse_year("Ref. 2020 from 2020", "") == "2020"
         assert parse_year("Referenz 2015", "") is None
+
+    @pytest.mark.parametrize(
+        "text,year",
+        [
+            # Words that only end in, or contain, the letters of a label
+            ("Rolex Day-Date President 1978", "1978"),
+            ("Rolex Datejust 36 Jubilee President 1985", "1985"),
+            ("Heuer Carrera Chrono. 1968", "1968"),
+            ("Omega Seamaster Herrenmodell 1965", "1965"),
+            ("modern 1995", "1995"),
+            ("refurbished 2019", "2019"),
+            # Labels, with and without "Nr"
+            ("Art-Nr. 1985", None),
+            ("Artikelnummer 2020", None),
+            ("Ident-Nr. 1999", None),
+            ("Ref. No. 1999", None),
+            ("Modell 2015", None),
+            ("Kal. 2000", None),
+            ("No. 1950", None),
+            ("P/N 2010", None),
+        ],
+    )
+    def test_parse_year_beside_a_label(self, text, year):
+        assert parse_year(text, "") == year
     
 class TestBoxPapersParsing:
     """Test box and papers parsing."""
