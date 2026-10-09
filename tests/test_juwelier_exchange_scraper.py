@@ -530,10 +530,6 @@ class TestJuwelierExchangeScraper:
         assert watch.diameter == "42 mm"
 
     @pytest.mark.asyncio
-    @pytest.mark.xfail(
-        strict=True,
-        reason="'Nur Uhr, keine Papiere oder Box vorhanden.' is read as box and papers present",
-    )
     async def test_extract_watch_details_without_box_and_papers(self, juwelier_exchange_scraper, juwelier_exchange_minimal_detail_html):
         """A description saying there is neither box nor papers shows neither."""
         watch = WatchData(

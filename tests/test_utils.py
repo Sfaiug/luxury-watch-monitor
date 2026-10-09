@@ -290,16 +290,28 @@ class TestBoxPapersParsing:
         assert papers is True
         assert box is None
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason="'Papiere: nein' is read as papers present: every 'no papers' "
-        "phrase contains a word from the 'has papers' list, which is checked first",
-    )
     def test_parse_papers_absent(self):
         """A listing that says there are no papers must not show papers."""
         papers, box = parse_box_papers("Papiere: nein")
         assert papers is False
         assert box is None
+
+    @pytest.mark.parametrize(
+        "text,expected",
+        [
+            ("Ohne Papiere, mit Box", (False, True)),
+            ("ohne Box und ohne Papiere", (False, False)),
+            ("Box: nein, Papiere: nein", (False, False)),
+            ("keine Papiere vorhanden", (False, None)),
+            ("Nur Uhr, keine Papiere oder Box vorhanden.", (False, False)),
+            ("no box or papers", (False, False)),
+            ("Originalbox, Garantiekarte, Bedienungsanleitung", (True, True)),
+            ("Boxer-Armband", (None, None)),
+        ],
+    )
+    def test_parse_what_the_listing_says(self, text, expected):
+        """(papers, box) as the listing states them; None where it says nothing."""
+        assert parse_box_papers(text) == expected
     
     def test_parse_box_only(self):
         """Test parsing box status only.""" 

@@ -289,6 +289,17 @@ def parse_year(text: str, title: str = "") -> Optional[str]:
     return None
 
 
+_PAPERS = r"(?:original[- ]?)?(?:papiere?n?|papers?|zertifikat\w*|certificate|garantiekarte|service ?karte)"
+_BOX = r"(?:\w*box|originalverpackung)"
+_BOX_OR_PAPERS = rf"(?:{_PAPERS}|{_BOX})"
+# "ohne Papiere", "keine Papiere oder Box", "no box or papers", "Box: nein"
+_ABSENT = re.compile(
+    rf"\b(?:ohne|keine?|no|without)\s+(?:\w+\s+)?{_BOX_OR_PAPERS}"
+    rf"(?:\s*(?:,|/|&|or|oder|und|and|noch)\s*{_BOX_OR_PAPERS})*"
+    rf"|\b{_BOX_OR_PAPERS}:\s*(?:nein|no|none)\b"
+)
+
+
 def parse_box_papers(text: str) -> Tuple[Optional[bool], Optional[bool]]:
     """
     Parse box and papers status from text.
@@ -297,83 +308,28 @@ def parse_box_papers(text: str) -> Tuple[Optional[bool], Optional[bool]]:
         text: Text to parse
 
     Returns:
-        Tuple of (has_papers, has_box) booleans
+        Tuple of (has_papers, has_box) booleans; None where the text does not say
     """
     if not text:
         return None, None
 
     text_lower = text.lower()
+    said_absent = " ".join(match.group(0) for match in _ABSENT.finditer(text_lower))
+    said_present = _ABSENT.sub(" ", text_lower)
 
-    # Check for both together
-    both_keywords = [
-        "box and paper",
-        "box und papieren",
-        "fullset",
-        "full set",
-        "box & papers",
-        "box, papiere",
-    ]
+    def status(pattern: str) -> Optional[bool]:
+        if re.search(rf"\b{pattern}\b", said_present):
+            return True
+        if re.search(rf"\b{pattern}\b", said_absent):
+            return False
+        return None
 
-    if any(kw in text_lower for kw in both_keywords):
-        return True, True
+    has_papers, has_box = status(_PAPERS), status(_BOX)
 
-    # Check papers
-    has_papers = None
-    papers_yes = [
-        "papers: yes",
-        "papiere: ja",
-        "original-papiere: ja",
-        "originalzertifikat",
-        "zertifikat vorhanden",
-        "mit papieren",
-        "original papieren",
-        "mit zertifikat",
-        "papiere vorhanden",
-        "service karte",
-        "garantiekarte",
-        "certificate",
-        "papiere",
-        "papers",
-    ]
-
-    papers_no = [
-        "papers: no",
-        "papiere: nein",
-        "ohne papiere",
-        "original-papiere: nein",
-    ]
-
-    if any(kw in text_lower for kw in papers_yes):
-        has_papers = True
-    elif any(kw in text_lower for kw in papers_no):
-        has_papers = False
-
-    # Check box
-    has_box = None
-    box_yes = [
-        "box: yes",
-        "box: ja",
-        "original-box: ja",
-        "original box",
-        "originalbox",
-        "mit box",
-        "originalverpackung",
-        "box vorhanden",
-    ]
-
-    box_no = ["box: no", "box: nein", "ohne box", "original-box: nein"]
-
-    if any(kw in text_lower for kw in box_yes):
-        has_box = True
-    elif any(kw in text_lower for kw in box_no):
-        has_box = False
-    elif "box" in text_lower:
-        has_box = True  # Default to yes if "box" is mentioned
-
-    # Check for "no accessories"
+    if "fullset" in said_present or "full set" in said_present:
+        has_papers = has_box = True
     if "accessories: none" in text_lower or "accessories:none" in text_lower:
-        has_papers = False
-        has_box = False
+        has_papers = has_box = False
 
     return has_papers, has_box
 

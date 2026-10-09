@@ -552,10 +552,6 @@ class TestWorldOfTimeScraper:
             assert watch.has_papers == expected_papers, f"Papers failed for: {description}"
             assert watch.has_box == expected_box, f"Box failed for: {description}"
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason="'no box or papers' and 'without papers' are read as box and papers present",
-    )
     def test_box_papers_absent(self, worldoftime_scraper):
         """A description saying there is no box or no papers shows none."""
         test_cases = [
