@@ -59,6 +59,7 @@ class AppConfig:
     session_history_file: str = os.getenv(
         "SESSION_HISTORY_FILE", "session_history.json"
     )
+    proxies_file: str = os.getenv("PROXIES_FILE", "proxies.txt")
 
     # Monitoring - PRODUCTION SAFE DEFAULTS
     check_interval_seconds: int = int(

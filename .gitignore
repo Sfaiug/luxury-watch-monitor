@@ -18,6 +18,9 @@ ENV/
 seen_watches.json
 session_history.json
 
+# The owner's proxies, with their logins
+proxies.txt
+
 # Logs
 logs/
 *.log
