@@ -416,11 +416,6 @@ class TestJuwelierExchangeScraper:
                 # Should fallback to src
                 assert "fallback.jpg" in watch.image_url
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason="a srcset without a webp picture gives the plain src; the scraper's own "
-        "comment says 'Prefer higher resolution webp, then jpg, then src'",
-    )
     def test_image_srcset_prefers_the_larger_jpg(self, juwelier_exchange_scraper):
         """Without a webp picture, the larger jpg of the srcset is taken."""
         html = """
@@ -464,20 +459,11 @@ class TestJuwelierExchangeScraper:
         assert watch.has_box is True
         assert watch.has_papers is True
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason="the name 'Rolex Submariner Date Ref. 116610LN' gives the model 'Submariner Date Ref.': "
-        "its first three words, 'Ref.' among them",
-    )
     def test_model_before_a_reference(self, juwelier_exchange_scraper):
         """A name that ends in "Ref. <reference>" gives the model without it."""
         assert juwelier_exchange_scraper._model("Rolex Submariner Date Ref. 116610LN", "Rolex") == "Submariner"
 
     @pytest.mark.asyncio
-    @pytest.mark.xfail(
-        strict=True,
-        reason="'Gehäusedurchmesser: 40 mm' gives no diameter: the pattern allows no colon after the label",
-    )
     async def test_extract_watch_details_diameter_after_a_colon(self, juwelier_exchange_scraper, juwelier_exchange_detail_html):
         """A diameter written as "Gehäusedurchmesser: 40 mm" is read."""
         watch = WatchData(
