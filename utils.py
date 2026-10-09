@@ -92,10 +92,7 @@ async def fetch_page(
         timeout = aiohttp.ClientTimeout(total=APP_CONFIG.request_timeout)
 
         async with session.get(
-            url,
-            headers=headers,
-            timeout=timeout,
-            proxy=proxies.ROUTES.proxy_for(host),
+            url, headers=headers, timeout=timeout, **proxies.ROUTES.way_to(host)
         ) as response:
             if response.status in (403, 429) and proxies.ROUTES.refused(host) and logger:
                 logger.warning(
