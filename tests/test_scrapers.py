@@ -231,35 +231,7 @@ class TestBaseScraper:
         result = base_scraper._build_absolute_url("")
         assert result == ""
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason="'Reference: 311.30.42' gives 'ERENCE311.30.42': the prefix 'REF' is cut before 'REFERENCE' is tried",
-    )
-    def test_clean_reference_written_out(self, base_scraper):
-        """The prefix "Reference:" is removed like "Ref."."""
-        assert base_scraper._clean_reference("Reference: 311.30.42") == "311.30.42"
 
-    def test_clean_reference(self, base_scraper):
-        """Test reference number cleaning."""
-        # With prefix
-        result = base_scraper._clean_reference("Ref. 116610LN")
-        assert result == "116610LN"
-        
-        # Without prefix
-        result = base_scraper._clean_reference("123456")
-        assert result == "123456"
-        
-        # With special characters
-        result = base_scraper._clean_reference("REF#: 123-ABC/456")
-        assert result == "123-ABC456"
-        
-        # Empty reference
-        result = base_scraper._clean_reference("")
-        assert result is None
-        
-        result = base_scraper._clean_reference(None)
-        assert result is None
-    
 class TestWorldOfTimeScraper:
     """Test WorldOfTimeScraper implementation."""
     

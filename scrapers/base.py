@@ -292,20 +292,3 @@ class BaseScraper(ABC):
 
         return urljoin(self.config.base_url, url)
 
-    def _clean_reference(self, ref: str) -> Optional[str]:
-        """Clean and validate reference number."""
-        if not ref:
-            return None
-
-        # Remove common prefixes
-        ref = ref.upper()
-        for prefix in ["REF.", "REF", "REFERENCE", "MODEL"]:
-            if ref.startswith(prefix):
-                ref = ref[len(prefix) :].strip()
-
-        # Remove special characters but keep alphanumeric and dashes
-        import re
-
-        ref = re.sub(r"[^\w\-.]", "", ref)
-
-        return ref if ref else None
