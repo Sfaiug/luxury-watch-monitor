@@ -16,3 +16,12 @@ def test_reduced_watches_have_the_price_to_pay(listed_watches):
         Decimal("3450"),
     ]
     assert watches[1].price_display == "€55.500"
+
+
+def test_a_watch_has_its_name_and_brand_from_its_card(listed_watches):
+    watch = listed_watches("juwelier_exchange")[3]
+
+    # This watch's own page answers 404 at the shop: its name has a "/"
+    assert watch.title.startswith("Herrenuhr Rolex 'Day-Date' Ø 40 mm Ref. 228239")
+    assert "750 Weißgold / 211,8 g" in watch.title
+    assert watch.brand == "Rolex"

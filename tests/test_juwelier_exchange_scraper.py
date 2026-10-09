@@ -318,7 +318,7 @@ class TestJuwelierExchangeScraper:
         
         # Test first watch - with srcset
         rolex_watch = watches[0]
-        assert rolex_watch.title == "Unknown Watch"  # Will be updated from detail page
+        assert rolex_watch.title == "Unknown Watch"  # the made-up card has no name
         assert rolex_watch.url == "https://juwelier-exchange.de/uhren/rolex-submariner-date-116610ln"
         assert rolex_watch.price == Decimal("8500.00")
         assert rolex_watch.currency == "EUR"
@@ -441,10 +441,11 @@ class TestJuwelierExchangeScraper:
         assert "800x800.jpg" in watch.image_url
 
     @pytest.mark.asyncio
-    async def test_extract_watch_details_with_json_ld(self, juwelier_exchange_scraper, juwelier_exchange_detail_html):
-        """Test detail extraction with JSON-LD data."""
+    async def test_extract_watch_details(self, juwelier_exchange_scraper, juwelier_exchange_detail_html):
+        """Test detail extraction from the watch's own page."""
         watch = WatchData(
-            title="Unknown Watch",
+            title="Rolex Submariner Date Ref. 116610LN",
+            brand="Rolex",
             url="https://juwelier-exchange.de/uhren/test",
             site_name="Juwelier Exchange",
             site_key="juwelier_exchange"
@@ -453,10 +454,6 @@ class TestJuwelierExchangeScraper:
         soup = BeautifulSoup(juwelier_exchange_detail_html, 'html.parser')
         
         await juwelier_exchange_scraper._extract_watch_details(watch, soup)
-        
-        # Check JSON-LD data extraction
-        assert watch.title == "Rolex Submariner Date Ref. 116610LN"
-        assert watch.brand == "Rolex"
         
         # Check table data extraction
         assert watch.reference == "116610LN"
@@ -476,7 +473,8 @@ class TestJuwelierExchangeScraper:
     async def test_extract_watch_details_model_before_a_reference(self, juwelier_exchange_scraper, juwelier_exchange_detail_html):
         """A name that ends in "Ref. <reference>" gives the model without it."""
         watch = WatchData(
-            title="Unknown Watch",
+            title="Rolex Submariner Date Ref. 116610LN",
+            brand="Rolex",
             url="https://juwelier-exchange.de/uhren/test",
             site_name="Juwelier Exchange",
             site_key="juwelier_exchange"
@@ -509,10 +507,10 @@ class TestJuwelierExchangeScraper:
         assert watch.diameter == "40 mm"
 
     @pytest.mark.asyncio
-    async def test_extract_watch_details_without_json_ld(self, juwelier_exchange_scraper, juwelier_exchange_minimal_detail_html):
-        """Test detail extraction without JSON-LD data."""
+    async def test_extract_watch_details_from_a_minimal_page(self, juwelier_exchange_scraper, juwelier_exchange_minimal_detail_html):
+        """Test detail extraction from a page with little on it."""
         watch = WatchData(
-            title="Unknown Watch",
+            title="Omega Speedmaster Professional",
             url="https://juwelier-exchange.de/uhren/test",
             site_name="Juwelier Exchange",
             site_key="juwelier_exchange"
@@ -522,8 +520,6 @@ class TestJuwelierExchangeScraper:
         
         await juwelier_exchange_scraper._extract_watch_details(watch, soup)
         
-        # Should use visible elements
-        assert watch.title == "Omega Speedmaster Professional"
         assert watch.reference == "311.30.42.30.01.005"
         assert watch.case_material == "Edelstahl"
         assert watch.year == "2019"
@@ -571,37 +567,6 @@ class TestJuwelierExchangeScraper:
         assert watch.has_box is True
         assert watch.has_papers is True
 
-    @pytest.mark.asyncio
-    async def test_json_ld_parsing_errors(self, juwelier_exchange_scraper):
-        """Test JSON-LD parsing with malformed JSON."""
-        malformed_json_html = """
-        <script type="application/ld+json">
-        {
-            "@context": "https://schema.org/",
-            "@type": "Product",
-            "name": "Test Watch",
-            // This comment makes it invalid JSON
-            "brand": {
-                "@type": "Brand",
-                "name": "Test Brand"
-        }
-        </script>
-        """
-        
-        watch = WatchData(
-            title="Original Title",
-            url="https://juwelier-exchange.de/uhren/test",
-            site_name="Juwelier Exchange",
-            site_key="juwelier_exchange"
-        )
-        
-        soup = BeautifulSoup(malformed_json_html, 'html.parser')
-        
-        # Should not raise an exception and should keep original title
-        await juwelier_exchange_scraper._extract_watch_details(watch, soup)
-        
-        assert watch.title == "Original Title"  # Should remain unchanged due to JSON error
-    
     def test_diameter_extraction_patterns(self, juwelier_exchange_scraper):
         """Test diameter extraction from various German description patterns."""
         test_cases = [
