@@ -426,6 +426,75 @@ class TestWorldOfTimeScraper:
             assert watch is not None
             assert watch.case_material == expected_material, f"Failed for: {description}"
     
+    def test_box_papers_parsing(self, worldoftime_scraper):
+        """Test box and papers detection from descriptions."""
+        test_cases = [
+            ("with box and papers", True, True),
+            ("box and papers included", True, True),
+            ("papers only", True, None),
+            ("with papers", True, None),
+            ("box only", None, True),
+            ("with original box", None, True),
+            ("no mention", None, None),
+        ]
+        
+        for description, expected_papers, expected_box in test_cases:
+            html = f"""
+            <div class="new-arrivals-watch">
+                <div class="image">
+                    <a href="/test">Test</a>
+                </div>
+                <div class="text-truncate" style="font-size: 17px; font-family: 'AB';">
+                    Test Watch
+                </div>
+                <p class="m-0 truncate-two-lines">
+                    {description}
+                </p>
+            </div>
+            """
+            soup = BeautifulSoup(html, 'html.parser')
+            element = soup.select_one('.new-arrivals-watch')
+            
+            watch = worldoftime_scraper._parse_watch_element(element)
+            
+            assert watch is not None
+            assert watch.has_papers == expected_papers, f"Papers failed for: {description}"
+            assert watch.has_box == expected_box, f"Box failed for: {description}"
+
+    @pytest.mark.xfail(
+        strict=True,
+        reason="'no box or papers' and 'without papers' are read as box and papers present",
+    )
+    def test_box_papers_absent(self, worldoftime_scraper):
+        """A description saying there is no box or no papers shows none."""
+        test_cases = [
+            ("no box or papers", False, False),
+            ("without papers", False, None),
+        ]
+        
+        for description, expected_papers, expected_box in test_cases:
+            html = f"""
+            <div class="new-arrivals-watch">
+                <div class="image">
+                    <a href="/test">Test</a>
+                </div>
+                <div class="text-truncate" style="font-size: 17px; font-family: 'AB';">
+                    Test Watch
+                </div>
+                <p class="m-0 truncate-two-lines">
+                    {description}
+                </p>
+            </div>
+            """
+            soup = BeautifulSoup(html, 'html.parser')
+            element = soup.select_one('.new-arrivals-watch')
+            
+            watch = worldoftime_scraper._parse_watch_element(element)
+            
+            assert watch is not None
+            assert watch.has_papers == expected_papers, f"Papers failed for: {description}"
+            assert watch.has_box == expected_box, f"Box failed for: {description}"
+
     def test_price_parsing_various_formats(self, worldoftime_scraper):
         """Test price parsing with different formats."""
         test_cases = [

@@ -382,6 +382,48 @@ class TestJuwelierExchangeScraper:
         
         assert result is None
     
+    @pytest.mark.asyncio
+    async def test_extract_watch_details_without_json_ld(self, juwelier_exchange_scraper, juwelier_exchange_minimal_detail_html):
+        """Test detail extraction without JSON-LD data."""
+        watch = WatchData(
+            title="Unknown Watch",
+            url="https://juwelier-exchange.de/uhren/test",
+            site_name="Juwelier Exchange",
+            site_key="juwelier_exchange"
+        )
+        
+        soup = BeautifulSoup(juwelier_exchange_minimal_detail_html, 'html.parser')
+        
+        await juwelier_exchange_scraper._extract_watch_details(watch, soup)
+        
+        # Should use visible elements
+        assert watch.title == "Omega Speedmaster Professional"
+        assert watch.reference == "311.30.42.30.01.005"
+        assert watch.case_material == "Edelstahl"
+        assert watch.year == "2019"
+        assert watch.diameter == "42 mm"
+
+    @pytest.mark.asyncio
+    @pytest.mark.xfail(
+        strict=True,
+        reason="'Nur Uhr, keine Papiere oder Box vorhanden.' is read as box and papers present",
+    )
+    async def test_extract_watch_details_without_box_and_papers(self, juwelier_exchange_scraper, juwelier_exchange_minimal_detail_html):
+        """A description saying there is neither box nor papers shows neither."""
+        watch = WatchData(
+            title="Unknown Watch",
+            url="https://juwelier-exchange.de/uhren/test",
+            site_name="Juwelier Exchange",
+            site_key="juwelier_exchange"
+        )
+        
+        soup = BeautifulSoup(juwelier_exchange_minimal_detail_html, 'html.parser')
+        
+        await juwelier_exchange_scraper._extract_watch_details(watch, soup)
+        
+        assert watch.has_box is False
+        assert watch.has_papers is False
+
     def test_json_ld_parsing_errors(self, juwelier_exchange_scraper):
         """Test JSON-LD parsing with malformed JSON."""
         malformed_json_html = """

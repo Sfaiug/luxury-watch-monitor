@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock, Mock, patch
 from bs4 import BeautifulSoup
 
 from utils import (
+    clear_exchange_rate_cache,
     retry_with_backoff, fetch_page, get_usd_to_eur_rate, parse_price,
     parse_year, parse_box_papers, parse_condition, extract_text_from_element,
     parse_table_data
@@ -166,6 +167,15 @@ class TestExchangeRate:
         assert rate == 0.85
         # Should not make HTTP request due to cache
         mock_aiohttp_session.get.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_get_exchange_rate_error(self, mock_aiohttp_session, mock_logger):
+        """Test exchange rate fetch error."""
+        clear_exchange_rate_cache()
+        with patch('utils.fetch_page', return_value=None):
+            rate = await get_usd_to_eur_rate(mock_aiohttp_session, mock_logger)
+        
+        assert rate is None
     
 class TestPriceParsing:
     """Test price parsing functionality."""
@@ -250,6 +260,16 @@ class TestYearParsing:
         assert parse_year("Year 1850", "") is None  # Too old
         assert parse_year("Year 2050", "") is None  # Too new
         assert parse_year("Model 1234", "") is None  # Ambiguous
+
+    @pytest.mark.xfail(
+        strict=True,
+        reason="a reference, SKU or article number is returned as the year: the first pattern takes any four digits before the reference check runs",
+    )
+    def test_parse_year_skip_reference_context(self):
+        """Test that reference numbers are skipped."""
+        assert parse_year("Ref 2020 model", "") is None  # Reference context
+        assert parse_year("SKU: 1985", "") is None  # SKU context
+        assert parse_year("Article ID: 2000", "") is None  # Article context
     
 class TestBoxPapersParsing:
     """Test box and papers parsing."""

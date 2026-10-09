@@ -3,7 +3,7 @@
 set -eu
 cd "$(dirname "$0")/.."
 if [ ! -e .venv/installed ] || [ requirements.txt -nt .venv/installed ]; then
-    [ -x .venv/bin/python ] || python3.11 -m venv .venv
+    [ -x .venv/bin/python ] || "${PYTHON:-python3}" -m venv .venv
     .venv/bin/pip install -q -r requirements.txt
     touch .venv/installed
 fi

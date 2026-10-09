@@ -346,4 +346,15 @@ class TestPersistenceManager:
         
         # No cleanup should have occurred
         test_persistence_manager.logger.info.assert_not_called()
+
+    def test_cleanup_old_data_error(self, test_persistence_manager):
+        """Test cleanup with error."""
+        test_persistence_manager.session_history_file.write_text("[]")
+        test_persistence_manager.load_session_history = Mock(side_effect=Exception("Load error"))
+        
+        test_persistence_manager.cleanup_old_data()
+        
+        test_persistence_manager.logger.error.assert_called_with(
+            "Error during cleanup: Load error"
+        )
     
