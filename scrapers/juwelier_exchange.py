@@ -1,6 +1,7 @@
 """Juwelier Exchange scraper implementation."""
 
 import re
+from decimal import Decimal
 from typing import List, Optional
 from bs4 import BeautifulSoup
 from urllib.parse import urljoin
@@ -8,7 +9,7 @@ import json
 
 from scrapers.base import BaseScraper
 from models import WatchData
-from utils import parse_price, parse_year, parse_box_papers, parse_condition, extract_text_from_element
+from utils import parse_year, parse_box_papers, parse_condition, extract_text_from_element
 
 
 class JuwelierExchangeScraper(BaseScraper):
@@ -62,13 +63,10 @@ class JuwelierExchangeScraper(BaseScraper):
             elif img_tag.has_attr('src'):
                 image_url = urljoin(self.config.base_url, img_tag['src'])
         
-        # Get price from listing first
-        price_tag_listing = item_tag.select_one('span.product-price')
-        price = None
-        if price_tag_listing:
-            price_text_raw_listing = extract_text_from_element(price_tag_listing)
-            if price_text_raw_listing:
-                price = parse_price(price_text_raw_listing, "EUR")
+        # The card's own data has the price to pay; the visible price block of a
+        # reduced watch also holds the old price and the saving
+        listed_price = json.loads(item_tag['data-product-information']).get('price')
+        price = Decimal(str(listed_price)) if listed_price is not None else None
         
         # Create initial watch data - details will be filled from detail page
         return WatchData(

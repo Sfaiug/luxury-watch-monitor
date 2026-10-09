@@ -54,7 +54,7 @@ def juwelier_exchange_listing_html():
     <body>
         <div class="product-listing">
             <!-- First watch - Rolex with srcset -->
-            <div class="card product-box" data-product-information='{"id": 12345}'>
+            <div class="card product-box" data-product-information='{"id": 12345, "price": 8500.0}'>
                 <a class="card-body-link" href="/uhren/rolex-submariner-date-116610ln">
                     <img class="product-image" 
                          src="/media/images/rolex-submariner-116610ln-400x400.jpg"
@@ -67,7 +67,7 @@ def juwelier_exchange_listing_html():
             </div>
             
             <!-- Second watch - Omega without srcset -->
-            <div class="card product-box" data-product-information='{"id": 12346}'>
+            <div class="card product-box" data-product-information='{"id": 12346, "price": 4200.0}'>
                 <a class="card-body-link" href="/uhren/omega-speedmaster-professional">
                     <img class="product-image" 
                          src="/media/images/omega-speedmaster-400x400.jpg"
@@ -77,7 +77,7 @@ def juwelier_exchange_listing_html():
             </div>
             
             <!-- Third watch - Patek Philippe with complex srcset -->
-            <div class="card product-box" data-product-information='{"id": 12347}'>
+            <div class="card product-box" data-product-information='{"id": 12347, "price": 32000.0}'>
                 <a class="card-body-link" href="/uhren/patek-philippe-calatrava-5196g">
                     <img class="product-image" 
                          src="/media/images/patek-calatrava-400x400.jpg"
@@ -284,7 +284,7 @@ def juwelier_exchange_malformed_html():
             </div>
             
             <!-- Watch with complete data -->
-            <div class="card product-box" data-product-information='{"id": 88888}'>
+            <div class="card product-box" data-product-information='{"id": 88888, "price": 2000.0}'>
                 <a class="card-body-link" href="/uhren/complete-watch">
                     <img class="product-image" src="/images/complete.jpg" alt="Complete" />
                     <span class="product-price">€ 2.000,00</span>
@@ -703,39 +703,6 @@ class TestJuwelierExchangeScraper:
                 assert watch.has_papers == expected_papers, f"Papers detection failed for: {description}"
                 assert watch.has_box == expected_box, f"Box detection failed for: {description}"
 
-    @pytest.mark.parametrize("price_text,expected_price", [
-        ("€ 8.500,00", Decimal("8500.00")),
-        ("€8.500", Decimal("8500.00")),
-        ("8500 EUR", Decimal("8500.00")),
-        ("€ 1.234.567,89", Decimal("1234567.89")),
-        ("Price on Request", None),
-        ("Verkauft", None),
-        ("", None),
-        ("Not a Price", None)
-    ])
-    def test_price_parsing_variations(self, juwelier_exchange_scraper, price_text, expected_price):
-        """Test various EUR price text formats."""
-        html = f"""
-        <div class="card product-box" data-product-information='{{"id": 12345}}'>
-            <a class="card-body-link" href="/uhren/test-watch">
-                <img class="product-image" src="/images/test.jpg" alt="Test"/>
-                <span class="product-price">{price_text}</span>
-            </a>
-        </div>
-        """
-        
-        soup = BeautifulSoup(html, 'html.parser')
-        element = soup.select_one('.card.product-box')
-        
-        result = juwelier_exchange_scraper._parse_watch_element(element)
-        
-        if expected_price is None:
-            assert result is None or result.price is None
-        else:
-            assert result is not None
-            assert result.price == expected_price
-            assert result.currency == "EUR"
-    
     @pytest.mark.asyncio
     async def test_full_scrape_integration(self, juwelier_exchange_scraper, juwelier_exchange_listing_html):
         """Test full scraping workflow integration."""
