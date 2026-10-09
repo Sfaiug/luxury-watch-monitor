@@ -7,7 +7,7 @@ from bs4 import BeautifulSoup
 
 from scrapers.base import BaseScraper
 from models import WatchData
-from utils import parse_price, parse_condition, extract_text_from_element
+from utils import parse_price, parse_condition, parse_box_papers, extract_text_from_element
 
 
 class BachmannScherScraper(BaseScraper):
@@ -75,9 +75,12 @@ class BachmannScherScraper(BaseScraper):
                 labelled["zustand"], self.config.key, self.config.condition_mappings
             )
 
-        # The shop lists box and papers only when they come with the watch
-        watch.has_box = "Mit Box" in unlabelled
-        watch.has_papers = "Mit Papieren" in unlabelled
+        # "Mit Box" and "Mit Papieren" rows say they come with the watch. Without
+        # the row, the listing's title may still name them; if it does not, the
+        # shop has said nothing either way
+        papers_in_title, box_in_title = parse_box_papers(watch.title)
+        watch.has_box = True if "Mit Box" in unlabelled else box_in_title
+        watch.has_papers = True if "Mit Papieren" in unlabelled else papers_in_title
 
         image_urls = [
             urljoin(self.config.base_url, link["href"])

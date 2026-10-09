@@ -46,10 +46,6 @@ def existing_unique_muv_url(record) -> Optional[str]:
     return None
 
 
-EXTRA_CHANNEL_ENVS = {
-    "bachmann_scher": "BACHMANN_SCHER_CHANNEL_ID",
-}
-
 COMMON_BRANDS = {
     "A. Lange & Söhne",
     "Audemars Piguet",
@@ -103,11 +99,6 @@ def configured_channels(overrides: Iterable[str]) -> Dict[str, str]:
 
     for key, site in SITE_CONFIGS.items():
         channel_id = site.discord_channel_id
-        if channel_id:
-            channels[key] = channel_id
-
-    for key, env_name in EXTRA_CHANNEL_ENVS.items():
-        channel_id = os.getenv(env_name)
         if channel_id:
             channels[key] = channel_id
 
