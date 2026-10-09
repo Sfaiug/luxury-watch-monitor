@@ -270,15 +270,48 @@ class TestYearParsing:
         assert parse_year("Year 2050", "") is None  # Too new
         assert parse_year("Model 1234", "") is None  # Ambiguous
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason="a reference, SKU or article number is returned as the year: the first pattern takes any four digits before the reference check runs",
-    )
     def test_parse_year_skip_reference_context(self):
         """Test that reference numbers are skipped."""
         assert parse_year("Ref 2020 model", "") is None  # Reference context
         assert parse_year("SKU: 1985", "") is None  # SKU context
         assert parse_year("Article ID: 2000", "") is None  # Article context
+
+    def test_parse_year_next_to_a_reference(self):
+        """The year is found beside a number that only looks like one."""
+        assert parse_year("Ref. 2020, Baujahr 2010", "") == "2010"
+        assert parse_year("Blue Star, steel, very nice original condition, 1982", "") == "1982"
+        assert parse_year("enamel dial, silver case, 1920", "") == "1920"
+
+    def test_parse_year_after_a_reference(self):
+        """A year that follows a reference, as vintage watches are titled, is the year."""
+        assert parse_year("Omega Speedmaster Ref. 145.022, 1969", "") == "1969"
+        assert parse_year("Ref. 116610LN, 2015", "") == "2015"
+        assert parse_year("Ref. 2020 from 2020", "") == "2020"
+        assert parse_year("Referenz 2015", "") is None
+
+    @pytest.mark.parametrize(
+        "text,year",
+        [
+            # Words that only end in, or contain, the letters of a label
+            ("Rolex Day-Date President 1978", "1978"),
+            ("Rolex Datejust 36 Jubilee President 1985", "1985"),
+            ("Heuer Carrera Chrono. 1968", "1968"),
+            ("Omega Seamaster Herrenmodell 1965", "1965"),
+            ("modern 1995", "1995"),
+            ("refurbished 2019", "2019"),
+            # Labels, with and without "Nr"
+            ("Art-Nr. 1985", None),
+            ("Artikelnummer 2020", None),
+            ("Ident-Nr. 1999", None),
+            ("Ref. No. 1999", None),
+            ("Modell 2015", None),
+            ("Kal. 2000", None),
+            ("No. 1950", None),
+            ("P/N 2010", None),
+        ],
+    )
+    def test_parse_year_beside_a_label(self, text, year):
+        assert parse_year(text, "") == year
     
 class TestBoxPapersParsing:
     """Test box and papers parsing."""
