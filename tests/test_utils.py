@@ -329,6 +329,31 @@ class TestBoxPapersParsing:
             # "No." is a number, not a no
             ("Papers: No. 12345", (True, None)),
             ("Box: yes Papers: no", (False, True)),
+            # "Neither ... nor", and the two named together
+            ("Weder Box noch Papiere", (False, False)),
+            ("Weder Originalbox noch Garantiekarte", (False, False)),
+            ("Uhr ohne Box/Papiere", (False, False)),
+            ("No box/papers", (False, False)),
+            ("keinerlei Papiere", (False, None)),
+            # As a field
+            ("Box und Papiere: nein", (False, False)),
+            ("Box/Papiere: nein", (False, False)),
+            ("Box and papers: no", (False, False)),
+            ("Box: ja / Papiere: ja", (True, True)),
+            # Said after the word
+            ("Box und Papiere nicht vorhanden", (False, False)),
+            ("Papiere leider nicht mehr vorhanden", (False, None)),
+            ("Box vorhanden, Papiere nicht vorhanden", (False, True)),
+            ("box and papers not included", (False, False)),
+            ("Papiere fehlen", (False, None)),
+            # A full set said to be missing leaves open which of the two is
+            ("Kein Fullset", (None, None)),
+            ("Kein Full Set, nur Box", (None, True)),
+            ("No full set, box only", (None, True)),
+            # A "no" about something else changes nothing
+            ("kein Kratzer, Box und Papiere dabei", (True, True)),
+            ("No scratches, box/papers", (True, True)),
+            ("nicht poliert Box Papiere", (True, True)),
             # A dealer's offer on Kleinanzeigen
             (
                 "Keine Papiere vorhanden, wir stellen ein eigenes Echtheitszertifikat aus"

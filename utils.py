@@ -289,23 +289,29 @@ def parse_year(text: str, title: str = "") -> Optional[str]:
     return None
 
 
-# A word for papers or for a box, as a listing puts it right after "ohne",
-# "keine" or "no": "Papiere", "originalen Papieren", "Garantiepapiere",
-# "Zertifikat"; "Box", "Originalbox", "boxes"
+# A word for papers, for a box, or for both at once, as a listing names them
+# when it says they are missing: "Papiere", "originalen Papieren",
+# "Garantiepapiere", "Zertifikat"; "Box", "Originalbox", "boxes"; "Full Set"
 _PAPERS_WORD = (
     r"(?:original\w*[\s-]+)?"
     r"\w*(?:papiere?n?|papers?|zertifikat\w*|certificates?|garantiekarten?)\b"
 )
 _BOX_WORD = r"(?:original\w*[\s-]+)?(?:\w*box(?:es|en)?\b|originalverpackung\w*)"
-_EITHER_WORD = rf"(?:{_PAPERS_WORD}|{_BOX_WORD})"
-# What a listing says is absent. The "no" stands right before the word and
-# reaches a second one only across a connector standing on its own ("keine
-# Papiere oder Box"); after a comma or a slash the listing says something new
+_NAMED = rf"(?:{_PAPERS_WORD}|{_BOX_WORD}|full\s?set\b)"
+# Two of them named together: "Box und Papiere", "box or papers", "Box/Papiere".
+# A comma does not join: after it the listing says something new
+_JOINED = rf"{_NAMED}(?:(?:\s+(?:&|or|oder|und|and|noch)\s+|\s*[/&]\s*){_NAMED}(?!\s*:\s*(?:ja|yes)\b))*"
+# The ways a listing says they are missing:
 _SAID_ABSENT = re.compile(
-    rf"\b(?:ohne|keine?n?|no|without)\s+{_EITHER_WORD}"
-    rf"(?:\s+(?:&|or|oder|und|and|noch)\s+{_EITHER_WORD})*"
-    # "Papiere: nein", "Box: no"; not "Papers: No. 12345"
-    rf"|{_EITHER_WORD}\s*:\s*(?:nein|none|no(?!\.?\s*\d))\b"
+    # the negation right before them: "ohne Papiere", "keine Box/Papiere",
+    # "weder Box noch Papiere", "no box or papers", "kein Fullset"
+    rf"\b(?:ohne|kein\w*|weder|no|without)\s+{_JOINED}"
+    # as a field: "Papiere: nein", "Box und Papiere: no"; not "Papers: No. 12345"
+    rf"|{_JOINED}\s*:\s*(?:nein|none|no(?!\.?\s*\d))\b"
+    # after them: "Box und Papiere nicht vorhanden", "papers not included", "Papiere fehlen"
+    rf"|{_JOINED}\s+(?:(?:ist|sind|leider|is|are)\s+)*(?:nicht|not)\s+(?:mehr\s+)?"
+    r"(?:vorhanden|dabei|enthalten|included|available)\b"
+    rf"|{_JOINED}\s+(?:fehlt|fehlen|missing)\b"
 )
 # What says they are there, wherever it stands in a word ("Garantiepapieren")
 _BOTH_PRESENT = (
@@ -346,7 +352,8 @@ def parse_box_papers(text: str) -> Tuple[Optional[bool], Optional[bool]]:
     if "accessories: none" in text_lower or "accessories:none" in text_lower:
         return False, False
 
-    # Cut out what the listing says is absent; the rest is read as before
+    # Cut out what the listing says is missing; the rest is read as before. A
+    # full set said to be missing leaves open which of the two is
     said_absent = " ".join(match.group(0) for match in _SAID_ABSENT.finditer(text_lower))
     rest = _SAID_ABSENT.sub(" | ", text_lower)
 
