@@ -289,20 +289,44 @@ def parse_year(text: str, title: str = "") -> Optional[str]:
     return None
 
 
-_PAPERS = (
-    r"(?:original[- ]?)?"
-    r"(?:papiere?n?|papers?|zertifikat\w*|certificates?|garantiekarten?|service ?karten?)"
+# A word for papers or for a box, as a listing puts it right after "ohne",
+# "keine" or "no": "Papiere", "originalen Papieren", "Garantiepapiere",
+# "Zertifikat"; "Box", "Originalbox", "boxes"
+_PAPERS_WORD = (
+    r"(?:original\w*[\s-]+)?"
+    r"\w*(?:papiere?n?|papers?|zertifikat\w*|certificates?|garantiekarten?)\b"
 )
-_BOX = r"(?:\w*box(?:es|en)?|originalverpackung(?:en)?)"
-_BOX_OR_PAPERS = rf"(?:{_PAPERS}|{_BOX})"
-# What the listing says is absent: "ohne Papiere", "keine Papiere oder Box",
-# "no box or papers", "Box: nein". "Ohne" reaches a second word only across
-# "und"/"oder"/"or"/"and": after a comma or a slash the listing says something new
-_ABSENT = re.compile(
-    rf"\b(?:ohne|keine?|no|without)\s+(?:\w+\s+)?{_BOX_OR_PAPERS}"
-    rf"(?:\s*(?:&|or|oder|und|and|noch)\s*{_BOX_OR_PAPERS})*"
-    rf"|\b{_BOX_OR_PAPERS}:\s*(?:nein|no|none)\b"
+_BOX_WORD = r"(?:original\w*[\s-]+)?(?:\w*box(?:es|en)?\b|originalverpackung\w*)"
+_EITHER_WORD = rf"(?:{_PAPERS_WORD}|{_BOX_WORD})"
+# What a listing says is absent. The "no" stands right before the word and
+# reaches a second one only across a connector standing on its own ("keine
+# Papiere oder Box"); after a comma or a slash the listing says something new
+_SAID_ABSENT = re.compile(
+    rf"\b(?:ohne|keine?n?|no|without)\s+{_EITHER_WORD}"
+    rf"(?:\s+(?:&|or|oder|und|and|noch)\s+{_EITHER_WORD})*"
+    # "Papiere: nein", "Box: no"; not "Papers: No. 12345"
+    rf"|{_EITHER_WORD}\s*:\s*(?:nein|none|no(?!\.?\s*\d))\b"
 )
+# What says they are there, wherever it stands in a word ("Garantiepapieren")
+_BOTH_PRESENT = (
+    "box and paper",
+    "box und papieren",
+    "fullset",
+    "full set",
+    "box & papers",
+    "box, papiere",
+)
+_PAPERS_PRESENT = (
+    "papiere",
+    "papers",
+    "certificate",
+    "garantiekarte",
+    "service karte",
+    "originalzertifikat",
+    "zertifikat vorhanden",
+    "mit zertifikat",
+)
+_BOX_PRESENT = re.compile(r"box(?!er)|originalverpackung")
 
 
 def parse_box_papers(text: str) -> Tuple[Optional[bool], Optional[bool]]:
@@ -319,22 +343,25 @@ def parse_box_papers(text: str) -> Tuple[Optional[bool], Optional[bool]]:
         return None, None
 
     text_lower = text.lower()
-    said_absent = " ".join(match.group(0) for match in _ABSENT.finditer(text_lower))
-    said_present = _ABSENT.sub(" ", text_lower)
-
-    def status(pattern: str) -> Optional[bool]:
-        if re.search(rf"\b{pattern}\b", said_present):
-            return True
-        if re.search(rf"\b{pattern}\b", said_absent):
-            return False
-        return None
-
-    has_papers, has_box = status(_PAPERS), status(_BOX)
-
-    if "fullset" in said_present or "full set" in said_present:
-        has_papers = has_box = True
     if "accessories: none" in text_lower or "accessories:none" in text_lower:
-        has_papers = has_box = False
+        return False, False
+
+    # Cut out what the listing says is absent; the rest is read as before
+    said_absent = " ".join(match.group(0) for match in _SAID_ABSENT.finditer(text_lower))
+    rest = _SAID_ABSENT.sub(" | ", text_lower)
+
+    if any(phrase in rest for phrase in _BOTH_PRESENT):
+        return True, True
+
+    has_papers = has_box = None
+    if any(word in rest for word in _PAPERS_PRESENT):
+        has_papers = True
+    elif re.search(_PAPERS_WORD, said_absent):
+        has_papers = False
+    if _BOX_PRESENT.search(rest):
+        has_box = True
+    elif re.search(_BOX_WORD, said_absent):
+        has_box = False
 
     return has_papers, has_box
 

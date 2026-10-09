@@ -315,6 +315,20 @@ class TestBoxPapersParsing:
             ("Original box and certificates included", (True, True)),
             ("Garantiekarten vorhanden", (True, None)),
             ("With original boxes and papers", (True, True)),
+            # "Ohne" stands right before what is missing, and "or" is a word of its own
+            ("Ohne Box Papiere vorhanden", (True, False)),
+            ("Sehr gut ohne Kratzer Box, Papiere", (True, True)),
+            ("Ungetragen keine Kratzer Box und Papiere", (True, True)),
+            ("No reserve box and papers", (True, True)),
+            ("Keine originalen Papiere Originalbox vorhanden", (False, True)),
+            ("Submariner No Date, box, papers", (True, True)),
+            # Papers inside a longer word
+            ("Mit Originalbox und Garantiepapieren", (True, True)),
+            ("Uhrenbox und Herstellerpapiere", (True, True)),
+            ("ohne Garantiepapiere", (False, None)),
+            # "No." is a number, not a no
+            ("Papers: No. 12345", (True, None)),
+            ("Box: yes Papers: no", (False, True)),
             # A dealer's offer on Kleinanzeigen
             (
                 "Keine Papiere vorhanden, wir stellen ein eigenes Echtheitszertifikat aus"
