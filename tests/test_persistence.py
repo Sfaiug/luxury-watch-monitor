@@ -39,9 +39,8 @@ class TestPersistenceManager:
         """Test successful loading of seen items.""" 
         # Create test data file
         test_data = {
-            "site1": ["site1:/a:100", "site1:/b:200", "site1:/c:"],
-            # Written before ids started with their shop's key
-            "site2": ["site2:/d:400", "0123456789abcdef0123456789abcdef"]
+            "site1": ["id1", "id2", "id3"],
+            "site2": ["id4", "id5"]
         }
         
         seen_file = temp_dir / "test_seen_watches.json"
@@ -56,11 +55,11 @@ class TestPersistenceManager:
         assert len(result) == 2
         assert "site1" in result
         assert "site2" in result
-        assert result["site1"] == {"site1:/a:100", "site1:/b:200", "site1:/c:"}  # Lists converted to sets
-        assert result["site2"] == {"site2:/d:400"}
+        assert result["site1"] == {"id1", "id2", "id3"}  # Lists converted to sets
+        assert result["site2"] == {"id4", "id5"}
         
         test_persistence_manager.logger.info.assert_called_with(
-            f"Loaded seen items: 4 total"
+            f"Loaded seen items: 5 total"
         )
     
     def test_load_seen_items_empty_file(self, test_persistence_manager, temp_dir):

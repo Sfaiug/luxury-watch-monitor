@@ -45,13 +45,10 @@ class PersistenceManager:
                 
                 data = json.loads(content)
                 
-                # Convert lists to sets for efficient lookup. An id starts with
-                # its shop's key; anything else was written before ids did
+                # Convert lists to sets for efficient lookup
                 result = {}
                 for site_key, items in data.items():
-                    result[site_key] = {
-                        item for item in items if item.startswith(f"{site_key}:")
-                    }
+                    result[site_key] = set(items)
                 
                 self.logger.info(f"Loaded seen items: {sum(len(s) for s in result.values())} total")
                 return result

@@ -110,6 +110,12 @@ class WatchData:
         path = urlsplit(self.url).path
         return f"{self.site_key}:{path}:{self._price_for_hash or ''}"
 
+    @staticmethod
+    def is_id_of(composite_id: str, site_key: str) -> bool:
+        """Whether _generate_composite_id made this id for this shop. An id
+        remembered from before ids named their shop is not."""
+        return composite_id.startswith(f"{site_key}:")
+
     @property
     def composite_id(self) -> str:
         """Get the composite ID for duplicate detection."""

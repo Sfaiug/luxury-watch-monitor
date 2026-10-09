@@ -36,11 +36,12 @@ async def scan(shop, *listed):
         return [w.url for w in await shop.scrape()]
 
 
-async def test_a_shop_announces_its_news_not_its_stock(test_site_config):
+async def test_a_listed_watch_is_announced_once_and_again_at_a_new_price(test_site_config):
     shop = Shop(test_site_config, None, logging.getLogger("test"))
     a, b, c = (f"https://example.com/watches/{name}" for name in "abc")
 
-    assert await scan(shop, watch("/watches/a"), watch("/watches/b")) == []
+    # A shop with nothing remembered (new, or reset to test it) announces all it lists
+    assert await scan(shop, watch("/watches/a"), watch("/watches/b")) == [a, b]
     assert await scan(shop, watch("/watches/a"), watch("/watches/b")) == []
     assert await scan(shop, watch("/watches/c"), watch("/watches/a")) == [c]
     # Still listed, and listed again after a gap: announced once
@@ -56,3 +57,19 @@ async def test_a_link_that_changes_with_the_page_is_the_same_listing(test_site_c
     await scan(shop, watch("/watches/a?surroundingwotids=B,C"))
 
     assert await scan(shop, watch("/watches/a?surroundingwotids=C,D,E")) == []
+
+
+async def test_a_shop_remembered_under_the_old_ids_is_not_announced_whole(test_site_config):
+    shop = Shop(test_site_config, None, logging.getLogger("test"))
+    remembered = {"0123456789abcdef0123456789abcdef", "fedcba9876543210fedcba9876543210"}
+    shop.set_seen_ids(remembered)
+
+    # Everything listed looks new against the old ids: stock is taken, nothing announced
+    assert await scan(shop, watch("/watches/a"), watch("/watches/b")) == []
+    assert all(WatchData.is_id_of(seen, "test_site") for seen in remembered)
+    assert len(remembered) == 2  # the outdated ids are gone, the two listings are in
+
+    # From then on the shop announces its news
+    assert await scan(shop, watch("/watches/a"), watch("/watches/c")) == [
+        "https://example.com/watches/c"
+    ]

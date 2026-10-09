@@ -837,8 +837,6 @@ class TestTropicalWatchScraper:
         self, tropicalwatch_scraper, tropicalwatch_listing_html
     ):
         """Test full scraping workflow integration."""
-        # Not the shop's first scan
-        tropicalwatch_scraper.seen_ids = {"tropicalwatch:/earlier-listing:"}
         with patch("scrapers.base.fetch_page", return_value=tropicalwatch_listing_html):
             with patch("scrapers.base.APP_CONFIG") as mock_config:
                 mock_config.enable_detail_scraping = False
@@ -852,7 +850,7 @@ class TestTropicalWatchScraper:
         assert all(watch.currency == "USD" for watch in watches)
 
         # Verify composite IDs are generated
-        assert len(tropicalwatch_scraper.seen_ids) == 6
+        assert len(tropicalwatch_scraper.seen_ids) == 5
         for watch in watches:
             assert watch.composite_id in tropicalwatch_scraper.seen_ids
 

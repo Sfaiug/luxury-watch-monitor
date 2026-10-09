@@ -105,22 +105,27 @@ class BaseScraper(ABC):
                     self._cleanup_soup(soup)
 
     def _new_watches(self, watches: List[WatchData]) -> List[WatchData]:
-        """
-        Remember every listed watch and return the ones to announce.
+        """Remember every listed watch and return the ones to announce."""
+        # Ids remembered from before they named their shop match nothing listed
+        # today. A shop that still holds them is taken stock of once, silently,
+        # instead of being announced whole
+        outdated = {
+            seen_id
+            for seen_id in self.seen_ids
+            if not WatchData.is_id_of(seen_id, self.config.key)
+        }
+        self.seen_ids -= outdated
 
-        A shop's first scan announces nothing: what it lists that day is
-        its stock, not its news.
-        """
-        first_scan = not self.seen_ids
         new_watches = []
         for watch in watches:
             if watch.composite_id not in self.seen_ids:
                 self.seen_ids.add(watch.composite_id)
                 new_watches.append(watch)
 
-        if first_scan:
+        if outdated:
             self.logger.info(
-                f"First scan: remembered {len(new_watches)} listed watches, announcing none"
+                f"Remembered ids were outdated: took stock of {len(new_watches)} "
+                "listed watches, announcing none"
             )
             return []
 
