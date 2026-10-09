@@ -223,6 +223,15 @@ class TestPriceParsing:
         assert parse_price("1,234") == Decimal("1234")
         assert parse_price("1.234") == Decimal("1234")
     
+    def test_parse_price_trailing_dot_dash(self):
+        """A dash for "no cents" after a dot, as World of Time writes it."""
+        assert parse_price("6,250.-") == Decimal("6250")
+        assert parse_price("1,250,000.-") == Decimal("1250000")
+
+    def test_parse_price_several_thousands_groups(self):
+        assert parse_price("1.234.567") == Decimal("1234567")
+        assert parse_price("1,234,567") == Decimal("1234567")
+
     def test_parse_price_trailing_comma_dash(self):
         """Test parsing prices with trailing comma-dash."""
         assert parse_price("8500,-") == Decimal("8500")
