@@ -41,10 +41,13 @@ def verify_discord_signature(
 class DiscordInteractionServer:
     """Small aiohttp server for Discord application interactions."""
 
-    def __init__(self, store: ActionStore, muv_service: MUVActionService, logger):
+    def __init__(
+        self, store: ActionStore, muv_service: MUVActionService, logger, filter_flow=None
+    ):
         self.store = store
         self.muv_service = muv_service
         self.logger = logger
+        self.filter_flow = filter_flow
         self._runner: Optional[web.AppRunner] = None
         self._site: Optional[web.TCPSite] = None
         self._tasks: Set[asyncio.Task] = set()
@@ -196,10 +199,13 @@ class DiscordInteractionServer:
         if interaction_type == INTERACTION_PING:
             return {"type": RESPONSE_PONG}
 
+        custom_id = (payload.get("data") or {}).get("custom_id", "")
+        if self.filter_flow and custom_id.startswith("filter:"):
+            return self.filter_flow.handle(payload)
+
         if interaction_type != INTERACTION_MESSAGE_COMPONENT:
             return self._ephemeral("Unsupported interaction type.")
 
-        custom_id = (payload.get("data") or {}).get("custom_id", "")
         action_id = ActionStore.parse_custom_id(
             custom_id, APP_CONFIG.action_token_secret
         )

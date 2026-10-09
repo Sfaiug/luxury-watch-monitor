@@ -17,7 +17,8 @@ from utils import clear_exchange_rate_cache
 from action_store import ActionStore
 from discord_interactions import DiscordInteractionServer
 from muv_service import MUVActionService
-from filters import FilterStore
+from filters import Filter, FilterStore
+from filter_flow import DiscordApi, FilterFlow
 
 # Import all scraper implementations
 from scrapers.worldoftime import WorldOfTimeScraper
@@ -69,6 +70,7 @@ class WatchMonitor:
         self.scrapers: Dict[str, BaseScraper] = {}
         self.filter_store = FilterStore(APP_CONFIG.filters_file)
         self.filter_keys: Set[str] = set()
+        self.filter_flow: Optional[FilterFlow] = None
         self.running = False
         self.shutdown_event = asyncio.Event()
 
@@ -133,10 +135,22 @@ class WatchMonitor:
         ):
             if not self.action_store or not self.muv_service:
                 raise RuntimeError("MUV action store failed to initialize")
+            if APP_CONFIG.discord_bot_token:
+                self.filter_flow = FilterFlow(
+                    self.filter_store,
+                    DiscordApi(
+                        self.session,
+                        APP_CONFIG.discord_bot_token,
+                        APP_CONFIG.discord_api_base_url,
+                    ),
+                    self.logger,
+                    self._scan_new_filter,
+                )
             self.discord_interaction_server = DiscordInteractionServer(
                 self.action_store,
                 self.muv_service,
                 self.logger,
+                self.filter_flow,
             )
             await self.discord_interaction_server.start()
 
@@ -408,6 +422,8 @@ class WatchMonitor:
             ScrapingSession with results
         """
         session = ScrapingSession()
+        if self.filter_flow:
+            await self.filter_flow.tend()
         self._sync_filters()
 
         # Log memory usage at start of cycle
@@ -507,6 +523,12 @@ class WatchMonitor:
             scraper.set_seen_ids(self.seen_items.setdefault(key, SeenIds()))
             self.scrapers[key] = scraper
         self.filter_keys = set(filters)
+
+    async def _scan_new_filter(self, new: Filter):
+        """A filter just made is scanned at once, not at the next cycle."""
+        self._sync_filters()
+        if new.key in self.scrapers:
+            await self._scrape_single_site(new.key, self.scrapers[new.key], ScrapingSession())
 
     async def _scrape_single_site(
         self, site_key: str, scraper: BaseScraper, session: ScrapingSession
