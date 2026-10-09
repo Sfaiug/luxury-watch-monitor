@@ -116,3 +116,25 @@ def test_the_alert_is_headed_by_the_seller_s_title_whole():
 
 def test_an_offer_is_searched_on_chrono24_by_its_title():
     assert "query=Rolex+Submariner+Date+aus+2008" in offers()[2].chrono24_search_url
+
+
+def test_an_offer_without_a_picture_is_read_too():
+    # A real card of 9 October: no picture, so no JSON-LD block
+    card = (
+        "<article data-adid=3527434489 data-href=/s-anzeige/vacheron-constantin-overseas/3527434489-157-9342>"
+        "<div data-image-container><svg data-title=cameraDisabled></svg></div>"
+        "<h3><a href=/s-anzeige/vacheron-constantin-overseas/3527434489-157-9342>"
+        "Vacheron Constantin Overseas 4000V/210A-B911 Box + Papiere Moonp</a></h3>"
+        "<p class=text-title3>44.990 €</p></article>"
+    )
+    scraper = KleinanzeigenScraper(
+        SiteConfig(name="Kleinanzeigen", key="filter:1", url="", webhook_env_var="", color=0,
+                   base_url="https://www.kleinanzeigen.de"),
+        None,
+        logging.getLogger("test"),
+    )
+
+    (watch,) = asyncio.run(scraper._extract_watches(BeautifulSoup(card, "lxml")))
+
+    assert watch.title == "Vacheron Constantin Overseas 4000V/210A-B911 Box + Papiere Moonp"
+    assert (watch.price_display, watch.image_url) == ("€44.990", None)

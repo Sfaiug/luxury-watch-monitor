@@ -52,19 +52,20 @@ class KleinanzeigenScraper(BaseScraper):
         start of them, cut off mid-word, and a reference, year, condition,
         papers or box taken from free text is wrong too often.
         """
-        ad = json.loads(card.select_one('script[type="application/ld+json"]').string)
+        # An offer posted without a picture has no JSON-LD block, which names the picture
+        ad = card.select_one('script[type="application/ld+json"]')
         # The price has an element of its own. A reduced offer's old price follows
         # it, struck through; the seller's text may name other amounts
         price_text = extract_text_from_element(card.select_one("p.text-title3"))
 
         watch = WatchData(
-            title=ad["title"],
+            title=extract_text_from_element(card.select_one("h3")),
             url=urljoin(BASE_URL, card["data-href"]),
             site_name=self.config.name,
             site_key=self.config.key,
             price=parse_price(price_text.replace("VB", ""), "EUR"),
             currency="EUR",
-            image_url=ad.get("contentUrl"),
+            image_url=json.loads(ad.string).get("contentUrl") if ad else None,
         )
         # "VB": the seller takes offers
         if watch.price and "VB" in price_text:
