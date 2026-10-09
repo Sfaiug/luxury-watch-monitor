@@ -65,12 +65,14 @@ class JuwelierExchangeScraper(BaseScraper):
         
         # The card's own data has the price to pay; the visible price block of a
         # reduced watch also holds the old price and the saving
-        listed_price = json.loads(item_tag['data-product-information']).get('price')
+        listed = json.loads(item_tag['data-product-information'])
+        listed_price = listed.get('price')
         price = Decimal(str(listed_price)) if listed_price is not None else None
         
-        # Create initial watch data - details will be filled from detail page
-        return WatchData(
-            title="Unknown Watch",  # Will be updated from detail page
+        # Made of price and address alone, as it was when the server learned the
+        # former id it remembers the watch under
+        watch = WatchData(
+            title="Unknown Watch",
             url=url,
             site_name=self.config.name,
             site_key=self.config.key,
@@ -78,35 +80,42 @@ class JuwelierExchangeScraper(BaseScraper):
             currency="EUR",
             image_url=image_url
         )
+        # The card names the watch, so its alert does too when the watch's own
+        # page cannot be read; that page adds the rest
+        if listed.get('name'):
+            watch.title = listed['name']
+            watch.brand = listed.get('brand')
+            watch.model = self._model(watch.title, watch.brand)
+        return watch
+    
+    @staticmethod
+    def _model(title: str, brand: Optional[str]) -> Optional[str]:
+        """The model as the watch's name gives it: what stands in quotes, else its first words."""
+        if not brand:
+            return None
+        model_candidate = re.sub(r"^(Herrenuhr|Damenuhr|Unisexuhr)\s+", "", title, flags=re.IGNORECASE).strip()
+        model_candidate = re.sub(fr"^{re.escape(brand)}\s*", "", model_candidate, flags=re.IGNORECASE).strip()
+        
+        quoted_model_match = re.search(r"'(.*?)'", model_candidate)
+        if quoted_model_match and len(quoted_model_match.group(1).strip()) > 1:
+            model = quoted_model_match.group(1).strip()
+        else:  # Fallback: remove common terms
+            temp_model = re.sub(r'\s*(Automatik|Quarz|Chrono|GMT|Date)$', '', model_candidate, flags=re.IGNORECASE).strip(" ,")
+            model = " ".join(temp_model.split()[:3]).strip()
+        
+        if len(model) < 2 or model.lower() == brand.lower():
+            return None
+        return model
     
     async def _extract_watch_details(self, watch: WatchData, soup: BeautifulSoup):
         """Extract additional details from Juwelier Exchange detail page - matching original exactly."""
         
-        # Initialize details dict like original
+        # The watch has its name, brand and model from the listing card
         details = {
-            "brand": None, "model": None, "reference": None, "year": None, 
-            "condition_text": None, "case_material": None, "diameter": None, 
-            "box_status": None, "papers_status": None, "description_main": None, "title": None
+            "reference": None, "year": None,
+            "condition_text": None, "case_material": None, "diameter": None,
+            "box_status": None, "papers_status": None
         }
-        
-        # Parse JSON-LD Data first (original logic)
-        json_ld_script = soup.find("script", type="application/ld+json", string=re.compile(r'"@type": "Product"'))
-        if json_ld_script:
-            try:
-                json_data = json.loads(json_ld_script.string)
-                if json_data.get("name"):
-                    details["title"] = json_data["name"]
-                if json_data.get("brand", {}).get("name"):
-                    details["brand"] = json_data["brand"]["name"]
-                if json_data.get("description"):
-                    details["description_main"] = json_data["description"]
-            except Exception as e:
-                self.logger.error(f"Error parsing JSON-LD for Juwelier Exchange: {e}")
-        
-        # Override/Supplement with visible elements if JSON-LD is incomplete
-        title_tag = soup.select_one('h1.product-detail-name')
-        if title_tag and (details["title"] is None or not details["title"]):
-            details["title"] = extract_text_from_element(title_tag)
         
         # Properties Table
         properties_table = soup.select_one('table.product-detail-properties-table')
@@ -120,8 +129,6 @@ class JuwelierExchangeScraper(BaseScraper):
                     
                     if "artikelnummer" == label and (details["reference"] is None or not details["reference"]):
                         details["reference"] = value
-                    elif "marke" == label and (details["brand"] is None or not details["brand"]):
-                        details["brand"] = value
                     elif "zustand" == label and (details["condition_text"] is None or not details["condition_text"]):
                         details["condition_text"] = value
                     elif "art der legierung" == label:
@@ -136,11 +143,9 @@ class JuwelierExchangeScraper(BaseScraper):
         full_description_text = ""
         if description_div:
             full_description_text = extract_text_from_element(description_div, separator=" ")
-            if details["description_main"] is None or not details["description_main"]:  # Use if JSON-LD desc was empty
-                details["description_main"] = full_description_text
         
         if full_description_text:  # Parse from description text
-            details["year"] = parse_year(full_description_text, details["title"] or "")
+            details["year"] = parse_year(full_description_text, watch.title)
             
             papers_status, box_status = parse_box_papers(full_description_text)
             details["papers_status"] = papers_status
@@ -182,33 +187,7 @@ class JuwelierExchangeScraper(BaseScraper):
                     else:
                         details["case_material"] = mat_text_raw.title()
         
-        # Refine model extraction from title
-        if details["brand"] and details["title"]:
-            model_candidate = details["title"]
-            model_candidate = re.sub(r"^(Herrenuhr|Damenuhr|Unisexuhr)\s+", "", model_candidate, flags=re.IGNORECASE).strip()
-            model_candidate = re.sub(fr"^{re.escape(details['brand'])}\s*", "", model_candidate, flags=re.IGNORECASE).strip()
-            
-            # Try to extract from single quotes
-            quoted_model_match = re.search(r"'(.*?)'", model_candidate)
-            if quoted_model_match and len(quoted_model_match.group(1).strip()) > 1:
-                details["model"] = quoted_model_match.group(1).strip()
-            else:  # Fallback: remove reference and common terms
-                temp_model = model_candidate
-                if details.get("reference") and details["reference"] in temp_model:
-                    temp_model = temp_model.replace(details["reference"], "").strip(" |,-")
-                temp_model = re.sub(r'\s*(Automatik|Quarz|Chrono|GMT|Date)$', '', temp_model, flags=re.IGNORECASE).strip(" ,")
-                details["model"] = " ".join(temp_model.split()[:3]).strip() if temp_model else None
-            
-            if not details["model"] or details["model"].lower() == details["brand"].lower() or len(details["model"]) < 2:
-                details["model"] = None
-        
         # Update watch object with extracted details
-        if details["title"]:
-            watch.title = details["title"]
-        if details["brand"]:
-            watch.brand = details["brand"]
-        if details["model"]:
-            watch.model = details["model"]
         if details["reference"]:
             watch.reference = details["reference"]
         if details["year"]:
