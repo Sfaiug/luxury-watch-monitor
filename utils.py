@@ -308,8 +308,9 @@ _MISSING = (
     r"(?:vorhanden|dabei|da|enthalten|included|available|present)"
     r"|fehlt|fehlen|missing|nein)"
 )
-# Where a field's value ends: at punctuation, a number, the next field or the line's end
-_VALUE_ENDS = r"(?=[^\S\n]*(?:[.,;|/)\n]|\d|\w+\s*:|$))"
+# Where a field's value ends: anywhere but before a further word of the same
+# value. Punctuation, a number, the next field's name and the line's end all end it
+_VALUE_ENDS = r"(?![^\S\n]*[^\W\d_]+\b(?!\s*:))"
 # The ways a listing says they are missing:
 _SAID_ABSENT = re.compile(
     # the negation right before them: "ohne Papiere", "keine Box/Papiere",

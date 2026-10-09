@@ -360,6 +360,12 @@ class TestBoxPapersParsing:
             ("Papers: not included", (False, None)),
             ("Box: no 2 years warranty", (None, False)),
             ("Papiere: keine Box: ja", (False, True)),
+            ("Box: no!", (None, False)),
+            ("Box: none (lost in a move)", (None, False)),
+            ("Box: no - Papers: yes", (True, False)),
+            ("Box: No * Papers: yes", (True, False)),
+            ("Papiere: keine (verloren)", (False, None)),
+            ("Papers: none - watch only", (False, None)),
             # A value that says "none" of something else
             ("Box: ohne Umkarton", (None, True)),
             ("Box: ohne Kratzer", (None, True)),
