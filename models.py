@@ -1,12 +1,11 @@
 """Data models for watch monitor application."""
 
-import hashlib
 import re
 from dataclasses import dataclass, field
 from datetime import datetime
 from decimal import Decimal
 from typing import Optional, List, Dict, Any
-from urllib.parse import urljoin, quote_plus
+from urllib.parse import quote_plus, urlsplit
 
 from config import APP_CONFIG
 
@@ -106,38 +105,10 @@ class WatchData:
             return f"{formatted} {self.currency}"
 
     def _generate_composite_id(self) -> str:
-        """Generate unique ID for duplicate detection."""
-        # Normalize components
-        brand_norm = (self.brand or "").lower()
-        model_norm = (self.model or "").lower()
-        ref_norm = (self.reference or "").lower().replace(" ", "")
-        year_norm = str(self.year or "").lower()
-        price_norm = self._price_for_hash or ""
-        material_norm = (self.case_material or "").lower()
-
-        # Build ID components
-        id_components = [
-            brand_norm,
-            model_norm,
-            ref_norm,
-            price_norm,
-            year_norm,
-            material_norm,
-        ]
-
-        # Check if we have enough meaningful components
-        id_string = "|".join(filter(None, id_components))
-        essential_components = sum(
-            1 for x in [brand_norm, model_norm, ref_norm, price_norm] if x
-        )
-
-        # Fallback to title + price + URL if not enough components
-        if essential_components < 2:
-            fallback_parts = [self.title.lower(), price_norm, self.url.lower()]
-            id_string = "|".join(filter(None, fallback_parts))
-
-        # Generate hash
-        return hashlib.md5(id_string.encode("utf-8")).hexdigest()
+        """Shop, the listing's address there and its listed price: the same
+        listing is announced once, and again only when its price changes."""
+        path = urlsplit(self.url).path
+        return f"{self.site_key}:{path}:{self._price_for_hash or ''}"
 
     @property
     def composite_id(self) -> str:

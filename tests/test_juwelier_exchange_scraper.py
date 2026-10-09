@@ -706,6 +706,8 @@ class TestJuwelierExchangeScraper:
     @pytest.mark.asyncio
     async def test_full_scrape_integration(self, juwelier_exchange_scraper, juwelier_exchange_listing_html):
         """Test full scraping workflow integration."""
+        # Not the shop's first scan
+        juwelier_exchange_scraper.seen_ids = {"juwelier_exchange:/earlier-listing:"}
         with patch('scrapers.base.fetch_page', return_value=juwelier_exchange_listing_html):
             with patch('scrapers.base.APP_CONFIG') as mock_config:
                 mock_config.enable_detail_scraping = False
@@ -719,7 +721,7 @@ class TestJuwelierExchangeScraper:
         assert all(watch.currency == "EUR" for watch in watches if watch.price)
         
         # Verify composite IDs are generated
-        assert len(juwelier_exchange_scraper.seen_ids) == 4
+        assert len(juwelier_exchange_scraper.seen_ids) == 5
         for watch in watches:
             assert watch.composite_id in juwelier_exchange_scraper.seen_ids
     

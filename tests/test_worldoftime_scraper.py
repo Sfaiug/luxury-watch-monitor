@@ -729,6 +729,8 @@ class TestWorldOfTimeScraper:
     @pytest.mark.asyncio
     async def test_full_scrape_integration(self, worldoftime_scraper, worldoftime_listing_html):
         """Test full scraping workflow integration."""
+        # Not the shop's first scan
+        worldoftime_scraper.seen_ids = {"worldoftime:/earlier-listing:"}
         with patch('scrapers.base.fetch_page', return_value=worldoftime_listing_html):
             with patch('scrapers.base.APP_CONFIG') as mock_config:
                 mock_config.enable_detail_scraping = False
@@ -741,7 +743,7 @@ class TestWorldOfTimeScraper:
         assert all(watch.site_name == "World of Time" for watch in watches)
         
         # Verify composite IDs are generated
-        assert len(worldoftime_scraper.seen_ids) == 6
+        assert len(worldoftime_scraper.seen_ids) == 7
         for watch in watches:
             assert watch.composite_id in worldoftime_scraper.seen_ids
     

@@ -453,8 +453,8 @@ class TestGrimmeissenScraper:
 
     async def test_scraper_with_mock_data(self, grimmeissen_scraper):
         """Test full scraping flow with mocked data."""
-        # Mock the seen_ids
-        grimmeissen_scraper.set_seen_ids(set())
+        # Not the shop's first scan
+        grimmeissen_scraper.set_seen_ids({"grimmeissen:/uhren/earlier-watch:"})
 
         # Mock fetch_page to return our test HTML
         with patch("scrapers.base.fetch_page") as mock_fetch:

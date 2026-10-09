@@ -46,15 +46,7 @@ class WatchOutScraper(BaseScraper):
                 return await super().scrape()
 
             self.logger.info(f"Found {len(watches)} watches on Shopify JSON listing")
-            new_watches = []
-            for watch in watches:
-                if watch.composite_id not in self.seen_ids:
-                    new_watches.append(watch)
-                    self.seen_ids.add(watch.composite_id)
-
-            self.logger.info(
-                f"Found {len(new_watches)} new watches (Total seen: {len(self.seen_ids)})"
-            )
+            new_watches = self._new_watches(watches)
             if new_watches and APP_CONFIG.enable_detail_scraping:
                 await self._fetch_watch_details(new_watches)
             return new_watches
