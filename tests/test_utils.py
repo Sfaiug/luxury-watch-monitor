@@ -386,6 +386,19 @@ class TestBoxPapersParsing:
             ("Box is included", (None, True)),
             ("papers are present", (True, None)),
             ("Box nicht original", (None, True)),
+            # Said to be missing and named again: still missing
+            ("Box: nein (Box beim Umzug verloren)", (None, False)),
+            ("Box: no (box lost in a move)", (None, False)),
+            ("Ohne Box (die Box ist leider verloren gegangen), Papiere: ja", (True, False)),
+            ("Uhr ohne Box. Auf Wunsch liefern wir eine Uhrenbox gegen Aufpreis.", (None, False)),
+            ("Original-Box: nein, Box kann nachgekauft werden", (None, False)),
+            ("Papiere: nein (Papiere beim Umzug verloren)", (False, None)),
+            ("Uhr ohne Papiere. Die Papiere liegen beim Vorbesitzer.", (False, None)),
+            ("Box und Papiere: nein. Box wird nicht mitgeliefert", (False, False)),
+            # ... unless the listing states in so many words that they are there
+            ("Ohne Box. Box: ja", (None, True)),
+            ("Box: ja. Lieferung ohne Box-Umkarton", (None, True)),
+            ("Keine Servicepapiere, aber Garantiekarte von 2015", (True, None)),
             # A full set said to be missing leaves open which of the two is
             ("Kein Fullset", (None, None)),
             ("Kein Full Set, nur Box", (None, True)),

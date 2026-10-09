@@ -331,8 +331,9 @@ _SAID_ABSENT = re.compile(
     # after them: "Box und Papiere nicht vorhanden", "papers are missing", "Papiere nein"
     rf"|{_NAMED_TOGETHER}\s+{_SAID_MISSING}"
 )
-# What says they are there, wherever it stands in a word ("Garantiepapieren")
-_BOTH_PRESENT = (
+# What says in so many words that they are there, wherever it stands in a
+# longer word ("Uhrenbox: ja", "Garantiekarten")
+_BOTH_STATED = (
     "box and paper",
     "box und papieren",
     "fullset",
@@ -340,17 +341,27 @@ _BOTH_PRESENT = (
     "box & papers",
     "box, papiere",
 )
-_PAPERS_PRESENT = (
-    "papiere",
-    "papers",
-    "certificate",
-    "garantiekarte",
-    "service karte",
-    "originalzertifikat",
-    "zertifikat vorhanden",
-    "mit zertifikat",
+_PAPERS_STATED = re.compile(
+    r"papers: yes|papiere: ja|papiere vorhanden|(?:mit|original) papieren"
+    r"|originalzertifikat|zertifikat vorhanden|mit zertifikat"
+    r"|service karte|garantiekarte|certificate"
 )
-_BOX_PRESENT = re.compile(r"box(?!er)|originalverpackung")
+_BOX = r"box(?!er)"
+_BOX_STATED = re.compile(
+    rf"{_BOX}: (?:yes|ja)|{_BOX} vorhanden|mit {_BOX}|original ?{_BOX}|originalverpackung"
+)
+# What only names them ("Garantiepapieren", "Rolex Box")
+_PAPERS_MENTIONED = re.compile(r"papiere|papers")
+_BOX_MENTIONED = re.compile(_BOX)
+
+
+def _there(stated, mentioned, word, rest, said_absent) -> Optional[bool]:
+    """Papers, or the box: stated as there, else said to be missing, else merely named."""
+    if stated.search(rest):
+        return True
+    if re.search(word, said_absent):
+        return False
+    return True if mentioned.search(rest) else None
 
 
 def parse_box_papers(text: str) -> Tuple[Optional[bool], Optional[bool]]:
@@ -370,25 +381,20 @@ def parse_box_papers(text: str) -> Tuple[Optional[bool], Optional[bool]]:
     if "accessories: none" in text_lower or "accessories:none" in text_lower:
         return False, False
 
-    # Cut out what the listing says is missing; the rest is read as before. A
-    # full set said to be missing leaves open which of the two is
+    # Cut out what the listing says is missing. What the rest states to be
+    # there counts first, then what was said to be missing, and a mere mention
+    # last: "Box: nein (Box beim Umzug verloren)" has no box. A full set said
+    # to be missing leaves open which of the two is
     said_absent = " ".join(match.group(0) for match in _SAID_ABSENT.finditer(text_lower))
     rest = _SAID_ABSENT.sub(" | ", text_lower)
 
-    if any(phrase in rest for phrase in _BOTH_PRESENT):
+    if any(phrase in rest for phrase in _BOTH_STATED):
         return True, True
 
-    has_papers = has_box = None
-    if any(word in rest for word in _PAPERS_PRESENT):
-        has_papers = True
-    elif re.search(_PAPERS_WORD, said_absent):
-        has_papers = False
-    if _BOX_PRESENT.search(rest):
-        has_box = True
-    elif re.search(_BOX_WORD, said_absent):
-        has_box = False
-
-    return has_papers, has_box
+    return (
+        _there(_PAPERS_STATED, _PAPERS_MENTIONED, _PAPERS_WORD, rest, said_absent),
+        _there(_BOX_STATED, _BOX_MENTIONED, _BOX_WORD, rest, said_absent),
+    )
 
 
 def parse_condition(
