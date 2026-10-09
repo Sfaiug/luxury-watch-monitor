@@ -6,9 +6,11 @@ import time
 from decimal import Decimal, InvalidOperation
 from typing import Optional, Callable, TypeVar, List, Tuple, Dict, Any
 from functools import wraps
+from urllib.parse import urlsplit
 import aiohttp
 from bs4 import BeautifulSoup
 
+import proxies
 from config import APP_CONFIG
 from logging_config import PerformanceLogger
 
@@ -71,6 +73,9 @@ async def fetch_page(
     """
     Fetch a web page with error handling and retries.
 
+    A site that refuses the request (403, 429) is asked again, and from then
+    on, through the proxies in proxies.txt, when there are any.
+
     Args:
         session: aiohttp session
         url: URL to fetch
@@ -80,11 +85,23 @@ async def fetch_page(
         Page content or None if failed
     """
 
+    host = urlsplit(url).netloc
+
     async def _fetch():
         headers = {"User-Agent": APP_CONFIG.user_agent}
         timeout = aiohttp.ClientTimeout(total=APP_CONFIG.request_timeout)
 
-        async with session.get(url, headers=headers, timeout=timeout) as response:
+        async with session.get(
+            url,
+            headers=headers,
+            timeout=timeout,
+            proxy=proxies.ROUTES.proxy_for(host),
+        ) as response:
+            if response.status in (403, 429) and proxies.ROUTES.refused(host) and logger:
+                logger.warning(
+                    f"{host} refused the request ({response.status}); "
+                    "its requests go through a proxy from now on"
+                )
             response.raise_for_status()
             text = await response.text()
             # Explicitly release response to free connection buffers
