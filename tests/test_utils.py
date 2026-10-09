@@ -301,6 +301,16 @@ class TestBoxPapersParsing:
         assert papers is False
         assert box is None
     
+    def test_parse_box_only(self):
+        """Test parsing box status only.""" 
+        papers, box = parse_box_papers("Original box included")
+        assert papers is None
+        assert box is True
+        
+        papers, box = parse_box_papers("Box: no")
+        assert papers is None
+        assert box is False
+
     def test_parse_no_accessories(self):
         """Test parsing when no accessories are included."""
         papers, box = parse_box_papers("Accessories: none")
@@ -459,6 +469,21 @@ class TestTableDataParsing:
         result = parse_table_data(None, {"test": "test"})
         assert result == {}
     
+    def test_parse_table_data_no_matches(self):
+        """Test table parsing with no header matches."""
+        html = """
+        <table>
+            <tr><th>Other</th><td>Value</td></tr>
+        </table>
+        """
+        soup = BeautifulSoup(html, 'html.parser')
+        table = soup.find('table')
+        
+        headers_map = {"known": "field"}
+        result = parse_table_data(table, headers_map)
+        
+        assert result == {}
+
     def test_parse_table_data_insufficient_cells(self):
         """Test table parsing with rows having insufficient cells."""
         html = """

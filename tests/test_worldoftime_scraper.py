@@ -349,6 +349,21 @@ class TestWorldOfTimeScraper:
         
         assert watches == []
     
+    @pytest.mark.asyncio
+    async def test_extract_watches_malformed_elements(self, worldoftime_scraper, worldoftime_malformed_html):
+        """Test extraction with malformed/missing elements."""
+        soup = BeautifulSoup(worldoftime_malformed_html, 'html.parser')
+        
+        watches = await worldoftime_scraper._extract_watches(soup)
+        
+        # A card without a link is left out; one without a title is kept as "Unknown Watch"
+        assert [w.title for w in watches] == ["Unknown Watch", "Watch Without Price"]
+        
+        watch = watches[1]
+        assert watch.title == "Watch Without Price"
+        assert watch.price is None  # Missing price
+        assert watch.url == "https://www.worldoftime.de/Watches/Incomplete/Watch3"
+
     def test_parse_watch_element_missing_link(self, worldoftime_scraper):
         """Test parsing element without link returns None."""
         html = """
@@ -365,6 +380,82 @@ class TestWorldOfTimeScraper:
         
         assert result is None
     
+    def test_brand_model_extraction_known_brands(self, worldoftime_scraper):
+        """Test brand and model extraction for known brands."""
+        test_cases = [
+            ("Rolex Submariner Date", "Rolex", "Submariner Date"),
+            ("Patek Philippe Calatrava 5196G", "Patek Philippe", "Calatrava 5196G"),
+            ("Omega Speedmaster Professional", "Omega", "Speedmaster Professional"),
+            ("A. Lange & Söhne Lange 1", "A. Lange & Söhne", "Lange 1"),
+            ("Jaeger LeCoultre Reverso", "Jaeger LeCoultre", "Reverso"),
+        ]
+        
+        for title, expected_brand, expected_model in test_cases:
+            # Create mock element
+            element = Mock()
+            element.select_one.return_value = None
+            
+            # Mock the title extraction
+            with patch('scrapers.worldoftime.extract_text_from_element') as mock_extract:
+                mock_extract.return_value = title
+                
+                html = f"""
+                <div class="new-arrivals-watch">
+                    <div class="image">
+                        <a href="/test">Test</a>
+                    </div>
+                    <div class="text-truncate" style="font-size: 17px; font-family: 'AB';">
+                        {title}
+                    </div>
+                </div>
+                """
+                soup = BeautifulSoup(html, 'html.parser')
+                element = soup.select_one('.new-arrivals-watch')
+                
+                watch = worldoftime_scraper._parse_watch_element(element)
+                
+                assert watch is not None
+                assert watch.brand == expected_brand
+                assert watch.model == expected_model
+
+    @pytest.mark.xfail(
+        strict=True,
+        reason="'Universal Genève Polerouter' gives the brand 'Universal': the known brand is spelt 'universal geneve'",
+    )
+    def test_brand_model_extraction_with_an_accent(self, worldoftime_scraper):
+        """A known brand is recognised in the shop's accented spelling."""
+        test_cases = [
+            ("Universal Genève Polerouter", "Universal Genève", "Polerouter"),
+        ]
+        
+        for title, expected_brand, expected_model in test_cases:
+            # Create mock element
+            element = Mock()
+            element.select_one.return_value = None
+            
+            # Mock the title extraction
+            with patch('scrapers.worldoftime.extract_text_from_element') as mock_extract:
+                mock_extract.return_value = title
+                
+                html = f"""
+                <div class="new-arrivals-watch">
+                    <div class="image">
+                        <a href="/test">Test</a>
+                    </div>
+                    <div class="text-truncate" style="font-size: 17px; font-family: 'AB';">
+                        {title}
+                    </div>
+                </div>
+                """
+                soup = BeautifulSoup(html, 'html.parser')
+                element = soup.select_one('.new-arrivals-watch')
+                
+                watch = worldoftime_scraper._parse_watch_element(element)
+                
+                assert watch is not None
+                assert watch.brand == expected_brand
+                assert watch.model == expected_model
+
     def test_brand_model_extraction_rolex_vintage(self, worldoftime_scraper):
         """Test special handling of Rolex Vintage."""
         html = """
@@ -553,6 +644,70 @@ class TestWorldOfTimeScraper:
         assert watch is not None
         assert watch.reference is None  # Should be filtered out due to Wot-ID
     
+    def test_year_extraction_from_description(self, worldoftime_scraper):
+        """Test year extraction from watch descriptions."""
+        test_cases = [
+            ("year 2020", "2020"),
+            ("from 2019", "2019"),
+            ("manufactured in 2021", "2021"),
+            ("circa 1980", "1980"),
+            ("no year mentioned", None),
+        ]
+        
+        for description, expected_year in test_cases:
+            html = f"""
+            <div class="new-arrivals-watch">
+                <div class="image">
+                    <a href="/test">Test</a>
+                </div>
+                <div class="text-truncate" style="font-size: 17px; font-family: 'AB';">
+                    Test Watch
+                </div>
+                <p class="m-0 truncate-two-lines">
+                    {description}
+                </p>
+            </div>
+            """
+            soup = BeautifulSoup(html, 'html.parser')
+            element = soup.select_one('.new-arrivals-watch')
+            
+            watch = worldoftime_scraper._parse_watch_element(element)
+            
+            assert watch is not None
+            assert watch.year == expected_year, f"Failed for description: {description}"
+
+    @pytest.mark.xfail(
+        strict=True,
+        reason="'vintage 1970s' gives no year: the four digits must end the word",
+    )
+    def test_year_extraction_from_a_decade(self, worldoftime_scraper):
+        """A decade such as "1970s" gives its first year."""
+        test_cases = [
+            ("vintage 1970s", "1970"),
+        ]
+        
+        for description, expected_year in test_cases:
+            html = f"""
+            <div class="new-arrivals-watch">
+                <div class="image">
+                    <a href="/test">Test</a>
+                </div>
+                <div class="text-truncate" style="font-size: 17px; font-family: 'AB';">
+                    Test Watch
+                </div>
+                <p class="m-0 truncate-two-lines">
+                    {description}
+                </p>
+            </div>
+            """
+            soup = BeautifulSoup(html, 'html.parser')
+            element = soup.select_one('.new-arrivals-watch')
+            
+            watch = worldoftime_scraper._parse_watch_element(element)
+            
+            assert watch is not None
+            assert watch.year == expected_year, f"Failed for description: {description}"
+
     @pytest.mark.asyncio
     async def test_extract_watch_details_no_implementation(self, worldoftime_scraper):
         """Test that detail extraction is not implemented for WorldOfTime."""
@@ -590,6 +745,27 @@ class TestWorldOfTimeScraper:
         for watch in watches:
             assert watch.composite_id in worldoftime_scraper.seen_ids
     
+    @pytest.mark.asyncio
+    async def test_scrape_with_seen_watches(self, worldoftime_scraper, worldoftime_listing_html):
+        """Test scraping with some watches already seen."""
+        # Pre-populate with one seen watch, as the scraper itself reads it
+        listed = await worldoftime_scraper._extract_watches(
+            BeautifulSoup(worldoftime_listing_html, 'html.parser')
+        )
+        seen_watch = listed[0]
+        assert seen_watch.title == "Rolex Submariner Date"
+        worldoftime_scraper.seen_ids = {seen_watch.composite_id}
+        
+        with patch('scrapers.base.fetch_page', return_value=worldoftime_listing_html):
+            with patch('scrapers.base.APP_CONFIG') as mock_config:
+                mock_config.enable_detail_scraping = False
+                
+                watches = await worldoftime_scraper.scrape()
+        
+        # Should return only new watches (5 instead of 6)
+        assert len(watches) == 5
+        assert not any(watch.title == "Rolex Submariner Date" for watch in watches)
+
     @pytest.mark.asyncio
     async def test_scrape_parse_error_handling(self, worldoftime_scraper):
         """Test scraping handles parse errors gracefully."""

@@ -235,12 +235,12 @@ def juwelier_exchange_complex_detail_html():
             
             <table class="product-detail-properties-table">
                 <tr class="properties-row">
-                    <th class="properties-label">Legierung:</th>
-                    <td class="properties-value">750</td>
-                </tr>
-                <tr class="properties-row">
                     <th class="properties-label">Art der Legierung:</th>
                     <td class="properties-value">Weißgold</td>
+                </tr>
+                <tr class="properties-row">
+                    <th class="properties-label">Legierung:</th>
+                    <td class="properties-value">750</td>
                 </tr>
             </table>
             
@@ -382,6 +382,109 @@ class TestJuwelierExchangeScraper:
         
         assert result is None
     
+    def test_image_srcset_parsing_priority(self, juwelier_exchange_scraper):
+        """Test image srcset parsing with priority order."""
+        test_cases = [
+            # (srcset, expected_preference), in the shop's own file names
+            ("/978973_1_400x400.webp 400w, /978973_1_800x800.webp 800w, /978973_1_1920x1920.webp 1920w", "1920x1920.webp"),
+            ("/978973_1_400x400.webp 400w, /978973_1_800x800.jpg 800w", "400x400.webp"),  # Prefer webp
+            ("/978973_1_400x400.jpg 400w, /978973_1_800x800.jpg 800w", "fallback.jpg"),   # No webp: the plain src
+            ("", None),  # Empty srcset
+        ]
+        
+        for srcset, expected_preference in test_cases:
+            srcset_attr = f'srcset="{srcset}"' if srcset else ''
+            html = f"""
+            <div class="card product-box" data-product-information='{{"id": 12345}}'>
+                <a class="card-body-link" href="/uhren/test-watch">
+                    <img class="product-image" 
+                         src="/fallback.jpg"
+                         {srcset_attr}
+                         alt="Test" />
+                    <span class="product-price">€ 1.000,00</span>
+                </a>
+            </div>
+            """
+            soup = BeautifulSoup(html, 'html.parser')
+            element = soup.select_one('.card.product-box')
+            
+            watch = juwelier_exchange_scraper._parse_watch_element(element)
+            
+            assert watch is not None
+            if expected_preference:
+                assert expected_preference in watch.image_url
+            else:
+                # Should fallback to src
+                assert "fallback.jpg" in watch.image_url
+
+    @pytest.mark.asyncio
+    async def test_extract_watch_details_with_json_ld(self, juwelier_exchange_scraper, juwelier_exchange_detail_html):
+        """Test detail extraction with JSON-LD data."""
+        watch = WatchData(
+            title="Unknown Watch",
+            url="https://juwelier-exchange.de/uhren/test",
+            site_name="Juwelier Exchange",
+            site_key="juwelier_exchange"
+        )
+        
+        soup = BeautifulSoup(juwelier_exchange_detail_html, 'html.parser')
+        
+        await juwelier_exchange_scraper._extract_watch_details(watch, soup)
+        
+        # Check JSON-LD data extraction
+        assert watch.title == "Rolex Submariner Date Ref. 116610LN"
+        assert watch.brand == "Rolex"
+        
+        # Check table data extraction
+        assert watch.reference == "116610LN"
+        assert watch.case_material == "Edelstahl"  # a fineness is prefixed only when it is a number
+        
+        # Check description parsing
+        assert watch.year == "2020"
+        assert watch.has_box is True
+        assert watch.has_papers is True
+
+    @pytest.mark.asyncio
+    @pytest.mark.xfail(
+        strict=True,
+        reason="the name 'Rolex Submariner Date Ref. 116610LN' gives the model 'Submariner Date Ref.': "
+        "the reference is cut out but its 'Ref.' stays",
+    )
+    async def test_extract_watch_details_model_before_a_reference(self, juwelier_exchange_scraper, juwelier_exchange_detail_html):
+        """A name that ends in "Ref. <reference>" gives the model without it."""
+        watch = WatchData(
+            title="Unknown Watch",
+            url="https://juwelier-exchange.de/uhren/test",
+            site_name="Juwelier Exchange",
+            site_key="juwelier_exchange"
+        )
+
+        soup = BeautifulSoup(juwelier_exchange_detail_html, 'html.parser')
+
+        await juwelier_exchange_scraper._extract_watch_details(watch, soup)
+
+        assert watch.model == "Submariner"
+
+    @pytest.mark.asyncio
+    @pytest.mark.xfail(
+        strict=True,
+        reason="'Gehäusedurchmesser: 40 mm' gives no diameter: the pattern allows no colon after the label",
+    )
+    async def test_extract_watch_details_diameter_after_a_colon(self, juwelier_exchange_scraper, juwelier_exchange_detail_html):
+        """A diameter written as "Gehäusedurchmesser: 40 mm" is read."""
+        watch = WatchData(
+            title="Unknown Watch",
+            url="https://juwelier-exchange.de/uhren/test",
+            site_name="Juwelier Exchange",
+            site_key="juwelier_exchange"
+        )
+
+        soup = BeautifulSoup(juwelier_exchange_detail_html, 'html.parser')
+
+        await juwelier_exchange_scraper._extract_watch_details(watch, soup)
+
+        assert watch.diameter == "40 mm"
+
     @pytest.mark.asyncio
     async def test_extract_watch_details_without_json_ld(self, juwelier_exchange_scraper, juwelier_exchange_minimal_detail_html):
         """Test detail extraction without JSON-LD data."""
@@ -423,6 +526,27 @@ class TestJuwelierExchangeScraper:
         
         assert watch.has_box is False
         assert watch.has_papers is False
+
+    @pytest.mark.asyncio
+    async def test_extract_watch_details_material_mapping(self, juwelier_exchange_scraper, juwelier_exchange_complex_detail_html):
+        """Test case material mapping from German terms."""
+        watch = WatchData(
+            title="Unknown Watch",
+            url="https://juwelier-exchange.de/uhren/test",
+            site_name="Juwelier Exchange",
+            site_key="juwelier_exchange"
+        )
+        
+        soup = BeautifulSoup(juwelier_exchange_complex_detail_html, 'html.parser')
+        
+        await juwelier_exchange_scraper._extract_watch_details(watch, soup)
+        
+        # Check material combination and mapping
+        assert watch.case_material == "750 Weißgold"
+        assert watch.year == "2018"
+        assert watch.diameter == "37 mm"
+        assert watch.has_box is True
+        assert watch.has_papers is True
 
     def test_json_ld_parsing_errors(self, juwelier_exchange_scraper):
         """Test JSON-LD parsing with malformed JSON."""
@@ -518,6 +642,43 @@ class TestJuwelierExchangeScraper:
             
             assert model == expected_model, f"Failed for title: {title} with brand: {brand}"
     
+    @pytest.mark.asyncio
+    async def test_box_papers_detection(self, juwelier_exchange_scraper):
+        """Test box and papers detection from German descriptions."""
+        test_cases = [
+            ("Originalbox, Garantiekarte, Bedienungsanleitung", True, True),
+            ("Uhr, Box, Papiere, Zertifikat", True, True),
+            ("Nur Papiere vorhanden", True, False),
+            ("Nur Box verfügbar", False, True),
+            ("Ohne Box und Papiere", False, False),
+            ("Nur Uhr", False, False),
+            ("No mention", None, None),
+        ]
+        
+        for description, expected_papers, expected_box in test_cases:
+            # Mock parse_box_papers function behavior
+            with patch('scrapers.juwelier_exchange.parse_box_papers') as mock_parse:
+                mock_parse.return_value = (expected_papers, expected_box)
+                
+                detail_html = f"""
+                <div class="product-detail-description-text" itemprop="description">
+                    <p>{description}</p>
+                </div>
+                """
+                
+                watch = WatchData(
+                    title="Test Watch",
+                    url="https://juwelier-exchange.de/uhren/test",
+                    site_name="Juwelier Exchange",
+                    site_key="juwelier_exchange"
+                )
+                
+                soup = BeautifulSoup(detail_html, 'html.parser')
+                await juwelier_exchange_scraper._extract_watch_details(watch, soup)
+                
+                assert watch.has_papers == expected_papers, f"Papers detection failed for: {description}"
+                assert watch.has_box == expected_box, f"Box detection failed for: {description}"
+
     @pytest.mark.parametrize("price_text,expected_price", [
         ("€ 8.500,00", Decimal("8500.00")),
         ("€8.500", Decimal("8500.00")),

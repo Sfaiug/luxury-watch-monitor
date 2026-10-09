@@ -28,6 +28,13 @@ class TestBaseScraper:
         assert scraper.session == mock_aiohttp_session
         assert len(scraper.seen_ids) == 0
     
+    def test_set_seen_ids(self, base_scraper):
+        """Test setting seen IDs."""
+        seen_ids = {"id1", "id2", "id3"}
+        base_scraper.set_seen_ids(seen_ids)
+        
+        assert base_scraper.seen_ids == seen_ids
+
     @pytest.mark.asyncio
     async def test_scrape_success(self, test_site_config, mock_aiohttp_session, mock_logger, sample_html_content):
         """Test successful scraping."""
@@ -163,6 +170,96 @@ class TestBaseScraper:
             result = await scraper.scrape()
         
         assert result == []
+
+    def test_parse_price_text(self, base_scraper):
+        """Test price text parsing from elements."""
+        # Mock element with text
+        element = Mock()
+        element.get_text.return_value = "€8,500.00"
+        
+        result = base_scraper._parse_price_text(element)
+        assert result == "€8,500.00"
+        
+        # Mock element with data attribute
+        element2 = Mock()
+        element2.get_text.return_value = ""
+        element2.attrs = {"data-price": "10000"}
+        
+        result2 = base_scraper._parse_price_text(element2)
+        assert result2 == "10000"
+        
+        # Test with None element
+        result3 = base_scraper._parse_price_text(None)
+        assert result3 is None
+
+    def test_extract_brand_model(self, base_scraper):
+        """Test brand and model extraction from titles."""
+        scraper = base_scraper
+        
+        # Test with known brand
+        brand, model = scraper._extract_brand_model("Rolex Submariner Date")
+        assert brand == "Rolex"
+        assert model == "Submariner Date"
+        
+        # Test with brand not in config
+        brand, model = scraper._extract_brand_model("UnknownBrand Model X")
+        assert brand == "UnknownBrand"
+        assert model == "Model X"
+        
+        # Test with single word
+        brand, model = scraper._extract_brand_model("SingleWord")
+        assert brand == "SingleWord"
+        assert model is None
+        
+        # Test with empty title
+        brand, model = scraper._extract_brand_model("")
+        assert brand is None
+        assert model is None
+
+    def test_build_absolute_url(self, base_scraper):
+        """Test building absolute URLs."""
+        base_scraper.config.base_url = "https://example.com"
+        
+        # Already absolute URL
+        result = base_scraper._build_absolute_url("https://other.com/path")
+        assert result == "https://other.com/path"
+        
+        # Relative URL
+        result = base_scraper._build_absolute_url("/watches/rolex")
+        assert result == "https://example.com/watches/rolex"
+        
+        # Empty URL
+        result = base_scraper._build_absolute_url("")
+        assert result == ""
+
+    @pytest.mark.xfail(
+        strict=True,
+        reason="'Reference: 311.30.42' gives 'ERENCE311.30.42': the prefix 'REF' is cut before 'REFERENCE' is tried",
+    )
+    def test_clean_reference_written_out(self, base_scraper):
+        """The prefix "Reference:" is removed like "Ref."."""
+        assert base_scraper._clean_reference("Reference: 311.30.42") == "311.30.42"
+
+    def test_clean_reference(self, base_scraper):
+        """Test reference number cleaning."""
+        # With prefix
+        result = base_scraper._clean_reference("Ref. 116610LN")
+        assert result == "116610LN"
+        
+        # Without prefix
+        result = base_scraper._clean_reference("123456")
+        assert result == "123456"
+        
+        # With special characters
+        result = base_scraper._clean_reference("REF#: 123-ABC/456")
+        assert result == "123-ABC456"
+        
+        # Empty reference
+        result = base_scraper._clean_reference("")
+        assert result is None
+        
+        result = base_scraper._clean_reference(None)
+        assert result is None
     
 class TestWorldOfTimeScraper:
     """Test WorldOfTimeScraper implementation."""

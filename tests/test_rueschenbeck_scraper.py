@@ -375,6 +375,57 @@ class TestRueschenbeckScraper:
         assert result is None
     
     @pytest.mark.asyncio
+    async def test_extract_watch_details_success(self, rueschenbeck_scraper, rueschenbeck_detail_html):
+        """Test successful detail extraction from detail page."""
+        watch = WatchData(
+            title="Original Title",
+            url="https://rueschenbeck.de/uhren/test",
+            site_name="Rüschenbeck",
+            site_key="rueschenbeck",
+            brand="Original Brand",
+            model="Original Model"
+        )
+        
+        soup = BeautifulSoup(rueschenbeck_detail_html, 'html.parser')
+        
+        await rueschenbeck_scraper._extract_watch_details(watch, soup)
+        
+        # Check updated fields from detail page
+        assert watch.title == "116610LN Submariner Date Black Dial"
+        assert watch.brand == "Rolex"
+        assert watch.model == "Submariner"
+        
+        # Check extracted details from specifications
+        assert watch.year == "2020"
+        assert watch.reference == "116610LN"  # Should prefer longer reference
+        assert watch.diameter == "40mm"
+        assert watch.case_material == "Edelstahl"
+        
+        # Check box and papers from lieferumfang
+        assert watch.has_box is True
+        assert watch.has_papers is True
+
+    @pytest.mark.asyncio
+    @pytest.mark.xfail(
+        strict=True,
+        reason="a condition worded 'als Sehr gut bewertet' gives no rating: 'sehr gut' alone is not among the known wordings",
+    )
+    async def test_extract_watch_details_condition_sehr_gut(self, rueschenbeck_scraper, rueschenbeck_detail_html):
+        """A watch page that rates the watch "Sehr gut" gives a condition."""
+        watch = WatchData(
+            title="Original Title",
+            url="https://rueschenbeck.de/uhren/test",
+            site_name="Rüschenbeck",
+            site_key="rueschenbeck"
+        )
+
+        soup = BeautifulSoup(rueschenbeck_detail_html, 'html.parser')
+
+        await rueschenbeck_scraper._extract_watch_details(watch, soup)
+
+        assert watch.condition is not None
+
+    @pytest.mark.asyncio
     async def test_extract_watch_details_minimal_data(self, rueschenbeck_scraper, rueschenbeck_minimal_detail_html):
         """Test detail extraction with minimal data."""
         watch = WatchData(
@@ -466,6 +517,34 @@ class TestRueschenbeckScraper:
         assert details.get("case_material_text") == "Roségold"
         assert details.get("condition_text") == "Very Good"
     
+    def test_parse_rueschenbeck_details_description_sections(self, rueschenbeck_scraper):
+        """Test parsing from description sections."""
+        detail_html = """
+        <div class="product-detail">
+            <div class="product-description">
+                <p>This is the main description of the watch.</p>
+            </div>
+            
+            <div class="product-condition">
+                <h3>Zustand</h3>
+                <p>The watch is in excellent condition with minimal wear.</p>
+            </div>
+            
+            <div class="lieferumfang">
+                <h3>Accessories</h3>
+                <p>Watch comes with box, papers, and all original accessories.</p>
+            </div>
+        </div>
+        """
+        
+        soup = BeautifulSoup(detail_html, 'html.parser')
+        
+        details = rueschenbeck_scraper._parse_rueschenbeck_details(soup)
+        
+        assert details.get("description_text") == "This is the main description of the watch."
+        assert details.get("condition_text") == "Zustand The watch is in excellent condition with minimal wear."
+        assert details.get("accessories_text") == "Accessories Watch comes with box, papers, and all original accessories."
+
     def test_diameter_extraction_and_cleaning(self, rueschenbeck_scraper):
         """Test diameter extraction and cleaning."""
         test_cases = [
@@ -521,6 +600,42 @@ class TestRueschenbeckScraper:
         
         assert watch.reference == "123.456.789.012"
     
+    @pytest.mark.asyncio
+    async def test_box_papers_detection_from_details(self, rueschenbeck_scraper):
+        """Test box and papers detection from various detail sources."""
+        test_cases = [
+            # (combined_text, expected_papers, expected_box)
+            ("Uhr, Originalbox, Papiere, Garantiekarte, alle Glieder", True, True),
+            ("Nur Uhr, keine Papiere oder Box", False, False),
+            ("Watch with original box only", False, True),
+            ("Papers and certificate included", True, False),
+            ("Complete set with all accessories", True, True),
+            ("No mention of accessories", None, None),
+        ]
+        
+        for detail_text, expected_papers, expected_box in test_cases:
+            with patch('scrapers.rueschenbeck.parse_box_papers') as mock_parse:
+                mock_parse.return_value = (expected_papers, expected_box)
+                
+                detail_html = f"""
+                <div class="lieferumfang">
+                    <p>{detail_text}</p>
+                </div>
+                """
+                
+                watch = WatchData(
+                    title="Test Watch",
+                    url="https://rueschenbeck.de/uhren/test",
+                    site_name="Rüschenbeck",
+                    site_key="rueschenbeck"
+                )
+                
+                soup = BeautifulSoup(detail_html, 'html.parser')
+                await rueschenbeck_scraper._extract_watch_details(watch, soup)
+                
+                assert watch.has_papers == expected_papers, f"Papers detection failed for: {detail_text}"
+                assert watch.has_box == expected_box, f"Box detection failed for: {detail_text}"
+
     @pytest.mark.asyncio
     async def test_scrape_parse_error_handling(self, rueschenbeck_scraper):
         """Test scraping handles parse errors gracefully."""

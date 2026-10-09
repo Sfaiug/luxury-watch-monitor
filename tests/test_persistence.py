@@ -224,6 +224,45 @@ class TestPersistenceManager:
             f"Saved session test-session to history"
         )
     
+    def test_save_session_with_retention(self, test_persistence_manager, temp_dir):
+        """Test session saving with retention policy."""
+        # Create old session data
+        old_session = {
+            "session_id": "old-session",
+            "started_at": (datetime.now() - timedelta(days=60)).isoformat(),
+            "total_new_watches": 1
+        }
+        recent_session = {
+            "session_id": "recent-session", 
+            "started_at": (datetime.now() - timedelta(days=5)).isoformat(),
+            "total_new_watches": 2
+        }
+        
+        history_file = temp_dir / "test_session_history.json"
+        with open(history_file, 'w') as f:
+            json.dump([old_session, recent_session], f)
+        
+        test_persistence_manager.session_history_file = history_file
+        
+        # Add new session
+        new_session = ScrapingSession(session_id="new-session")
+        new_session.finalize()
+        
+        with patch('persistence.APP_CONFIG') as mock_config:
+            mock_config.session_history_retention_days = 30
+            mock_config.max_session_history_entries = 1000
+            
+            test_persistence_manager.save_session(new_session)
+        
+        # Verify old session was removed
+        with open(history_file, 'r') as f:
+            saved_data = json.load(f)
+        
+        session_ids = [s["session_id"] for s in saved_data]
+        assert "old-session" not in session_ids  # Should be removed
+        assert "recent-session" in session_ids   # Should be kept  
+        assert "new-session" in session_ids      # Should be added
+
     def test_save_session_error(self, test_persistence_manager):
         """Test session saving with error."""
         session = ScrapingSession(session_id="test-session")
@@ -326,6 +365,39 @@ class TestPersistenceManager:
         assert stats == {}
         test_persistence_manager.logger.error.assert_called()
     
+    def test_cleanup_old_data_success(self, test_persistence_manager, temp_dir):
+        """Test cleanup of old session data."""
+        # Create sessions with mixed dates
+        old_session = {
+            "session_id": "old-session",
+            "started_at": (datetime.now() - timedelta(days=60)).isoformat()
+        }
+        recent_session = {
+            "session_id": "recent-session",
+            "started_at": (datetime.now() - timedelta(days=5)).isoformat()
+        }
+        
+        history_file = temp_dir / "test_session_history.json"
+        with open(history_file, 'w') as f:
+            json.dump([old_session, recent_session], f)
+        
+        test_persistence_manager.session_history_file = history_file
+        
+        with patch('persistence.APP_CONFIG') as mock_config:
+            mock_config.session_history_retention_days = 30
+            mock_config.max_session_history_entries = 1000
+            
+            test_persistence_manager.cleanup_old_data()
+        
+        # Verify old session was removed
+        with open(history_file, 'r') as f:
+            saved_data = json.load(f)
+        
+        assert len(saved_data) == 1
+        assert saved_data[0]["session_id"] == "recent-session"
+        
+        test_persistence_manager.logger.info.assert_called()
+
     def test_cleanup_old_data_no_cleanup_needed(self, test_persistence_manager, temp_dir):
         """Test cleanup when no cleanup is needed."""
         recent_session = {
