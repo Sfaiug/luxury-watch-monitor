@@ -1,0 +1,14 @@
+# The server's checkout follows the repository's https address as "origin"
+# (it holds no key for it). Installed once on the server, with the timer beside it:
+#   sudo install -m 644 deploy/systemd/luxury-watch-monitor-deploy.* /etc/systemd/system/
+#   sudo systemctl daemon-reload && sudo systemctl enable --now luxury-watch-monitor-deploy.timer
+[Unit]
+Description=Follow luxury-watch-monitor main: check it out and restart the monitor when it moves
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=info
+Group=info
+ExecStart=/home/info/luxury-watch-monitor/deploy/auto_deploy.sh
