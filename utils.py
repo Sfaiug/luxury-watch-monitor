@@ -258,31 +258,17 @@ def parse_year(text: str, title: str = "") -> Optional[str]:
             if 1900 <= year_int <= 2030:
                 return year_val
 
-        # Look for standalone 4-digit years
-        potential_years = re.findall(r"\b(19\d\d|20[0-3]\d)\b", search_text)
-
-        for year in potential_years:
-            # Check context to avoid reference numbers
-            idx = search_text.find(year)
-            pre_context = search_text[max(0, idx - 15) : idx].lower()
-
-            skip_prefixes = [
-                "ref",
-                "sku",
-                "id:",
-                "art-nr",
-                "no.",
-                "mod",
-                "artikel",
-                "p/n",
-                "ident",
-                "kal.",
-            ]
-
-            if not any(prefix in pre_context for prefix in skip_prefixes):
-                year_int = int(year)
-                if 1900 <= year_int <= 2030:
-                    return year
+        # A year standing on its own. A number that directly follows a word
+        # for a reference or article number ("Ref. 2020", "SKU: 1985") is none
+        for match in re.finditer(r"\b(19\d\d|20[0-3]\d)\b", search_text):
+            before = search_text[: match.start()].lower()
+            if re.search(
+                r"(?:ref\w*|sku|id:|art-nr|no\.|mod\w*|artikel\w*|p/n|ident\w*|kal\.)\W*$",
+                before,
+            ):
+                continue
+            if 1900 <= int(match.group(1)) <= 2030:
+                return match.group(1)
 
     return None
 

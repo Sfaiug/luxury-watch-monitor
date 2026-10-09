@@ -281,6 +281,13 @@ class TestYearParsing:
         assert parse_year("Ref. 2020, Baujahr 2010", "") == "2010"
         assert parse_year("Blue Star, steel, very nice original condition, 1982", "") == "1982"
         assert parse_year("enamel dial, silver case, 1920", "") == "1920"
+
+    def test_parse_year_after_a_reference(self):
+        """A year that follows a reference, as vintage watches are titled, is the year."""
+        assert parse_year("Omega Speedmaster Ref. 145.022, 1969", "") == "1969"
+        assert parse_year("Ref. 116610LN, 2015", "") == "2015"
+        assert parse_year("Ref. 2020 from 2020", "") == "2020"
+        assert parse_year("Referenz 2015", "") is None
     
 class TestBoxPapersParsing:
     """Test box and papers parsing."""
