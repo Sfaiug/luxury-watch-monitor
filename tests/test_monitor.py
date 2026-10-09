@@ -545,11 +545,15 @@ class TestWatchMonitor:
 
         # Create multiple mock scrapers with different response times
         scrapers = {}
+        at_once = {"now": 0, "most": 0}  # sites being scraped
         for i in range(5):
             scraper = AsyncMock()
 
             async def mock_scrape(delay=i * 0.01, index=i):
+                at_once["now"] += 1
+                at_once["most"] = max(at_once["most"], at_once["now"])
                 await asyncio.sleep(delay)  # Simulate different response times
+                at_once["now"] -= 1
                 return [
                     WatchData(
                         title=f"Watch {index}",
@@ -578,18 +582,14 @@ class TestWatchMonitor:
                     max_concurrent_scrapers=3,
                 )
 
-                start_time = asyncio.get_event_loop().time()
                 session = await monitor.run_monitoring_cycle()
-                end_time = asyncio.get_event_loop().time()
 
         # All sites should have been scraped
         assert session.sites_scraped == 5
         assert session.total_new_watches == 5
 
-        # With semaphore limiting, this should take longer than if all ran concurrently
-        # but less than if they ran sequentially
-        duration = end_time - start_time
-        assert duration < 0.1  # Should still be reasonably fast
+        # Sites are scraped side by side, and never more at once than the limit
+        assert at_once["most"] == 3
 
         # Verify all scrapers were called
         for scraper in scrapers.values():
