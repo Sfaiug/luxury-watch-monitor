@@ -17,3 +17,7 @@ tests: scripts/test.sh
 - Every alert has the same structure whatever its source, shop, eBay or Kleinanzeigen (9 Oct 2026: "Notification structure should be the same everywhere. Should all look the same. Want consistency and ultimate simplicity").
 - eBay and Kleinanzeigen arrive through filters the member makes in Discord (9 Oct 2026): a widget with a "New filter" button starts a guided flow, the member picks the store and goes through the filter questions, and at the end a channel only that member can see is created. Only watches matching that filter go to that channel.
 - "The best part is no part, the best process is no process. Delete what is not truly necessary." (9 Oct 2026)
+
+## Lessons
+
+- A failing test is removed only when it cannot test this code: markup the scraper no longer reads, a method that does not exist. A failure that shows a defect stays as a strict xfail narrowed to the defect; one caused by the test's own setup is fixed in the test. What a removal leaves unused (fixtures, imports) goes with it. (9 Oct 2026: the pull request that repaired the suite spent three review rounds on removals that were none of these.)
