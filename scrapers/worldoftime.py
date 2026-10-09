@@ -197,9 +197,3 @@ class WorldOfTimeScraper(BaseScraper):
             has_box=has_box,
             image_url=image_url
         )
-    
-    async def _extract_watch_details(self, watch: WatchData, soup: BeautifulSoup):
-        """Extract additional details from World of Time detail page."""
-        # The original implementation doesn't fetch detail pages for World of Time
-        # All information comes from the listing page
-        pass

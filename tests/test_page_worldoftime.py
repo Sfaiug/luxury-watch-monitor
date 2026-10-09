@@ -1,6 +1,13 @@
 """World of Time's scraper reads a saved copy of the shop's real new-arrivals page."""
 
+import asyncio
+import logging
 from decimal import Decimal
+from pathlib import Path
+from unittest.mock import AsyncMock, patch
+
+from config import SITE_CONFIGS
+from monitor import SCRAPER_CLASSES
 
 
 def test_every_priced_watch_has_its_price(listed_watches):
@@ -25,3 +32,18 @@ def test_the_newest_watches_are_read(listed_watches):
     assert newest.price == Decimal("31500")  # "€ 31,500,-"
     assert newest.year == "2000"
     assert newest.url.endswith("/Watches/audemars-piguet/royal-oak-D1B2B40")
+
+
+def test_a_new_watch_s_own_page_is_not_fetched(listed_watches):
+    """Everything the alert shows is on the listing page."""
+    scraper = SCRAPER_CLASSES["worldoftime"](
+        SITE_CONFIGS["worldoftime"], None, logging.getLogger("test")
+    )
+    page = (Path(__file__).parent / "pages" / "worldoftime.html").read_text(encoding="utf-8")
+    fetch = AsyncMock(return_value=page)
+
+    with patch("scrapers.base.fetch_page", fetch):
+        announced = asyncio.run(scraper.scrape())
+
+    assert len(announced) == len(listed_watches("worldoftime")) > 0
+    assert fetch.call_count == 1

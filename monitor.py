@@ -8,7 +8,7 @@ import aiohttp
 
 from config import APP_CONFIG, SITE_CONFIGS
 from models import ScrapingSession
-from persistence import PersistenceManager
+from persistence import PersistenceManager, SeenIds
 from notifications import NotificationManager
 from logging_config import setup_logging, PerformanceLogger
 from scrapers.base import BaseScraper
@@ -25,6 +25,7 @@ from scrapers.tropicalwatch import TropicalWatchScraper
 from scrapers.juwelier_exchange import JuwelierExchangeScraper
 from scrapers.watch_out import WatchOutScraper
 from scrapers.rueschenbeck import RueschenbeckScraper
+from scrapers.bachmann_scher import BachmannScherScraper
 
 # Map site keys to scraper classes
 SCRAPER_CLASSES: Dict[str, Type[BaseScraper]] = {
@@ -34,6 +35,7 @@ SCRAPER_CLASSES: Dict[str, Type[BaseScraper]] = {
     "juwelier_exchange": JuwelierExchangeScraper,
     "watch_out": WatchOutScraper,
     "rueschenbeck": RueschenbeckScraper,
+    "bachmann_scher": BachmannScherScraper,
 }
 
 
@@ -145,7 +147,7 @@ class WatchMonitor:
                 scraper = scraper_class(site_config, self.session, self.logger)
 
                 # Set seen IDs for the scraper
-                site_seen_ids = self.seen_items.get(site_key, set())
+                site_seen_ids = self.seen_items.setdefault(site_key, SeenIds())
                 scraper.set_seen_ids(site_seen_ids)
 
                 self.scrapers[site_key] = scraper
@@ -256,11 +258,8 @@ class WatchMonitor:
             self.logger.debug("Trimming session history...")
             self.persistence.cleanup_old_data()
 
-            # Trim seen items in memory
+            # Save seen items, each shop's trimmed to its limit
             self.logger.debug("Trimming seen items...")
-            self.seen_items = self.persistence.trim_seen_items(self.seen_items)
-
-            # Save trimmed seen items
             self.persistence.save_seen_items(self.seen_items)
 
             # Force garbage collection
@@ -341,15 +340,7 @@ class WatchMonitor:
             self.logger.warning(
                 f"Aggressively trimming seen items to {emergency_seen_limit} per site..."
             )
-            for site_key, items in self.seen_items.items():
-                original_count = len(items)
-                if original_count > emergency_seen_limit:
-                    items_list = list(items)
-                    trimmed_list = items_list[-emergency_seen_limit:]
-                    self.seen_items[site_key] = set(trimmed_list)
-                    self.logger.warning(
-                        f"Emergency trimmed {site_key}: {original_count} -> {len(self.seen_items[site_key])} items"
-                    )
+            self.persistence.trim_seen_items(self.seen_items, emergency_seen_limit)
 
             # Save aggressively trimmed seen items
             self.persistence.save_seen_items(self.seen_items)
@@ -546,16 +537,6 @@ class WatchMonitor:
 
             # Update global seen items
             self.seen_items[site_key] = scraper.seen_ids
-
-            # Trim this site's items immediately to prevent accumulation
-            if len(self.seen_items[site_key]) > APP_CONFIG.max_seen_items_per_site:
-                items_list = list(self.seen_items[site_key])
-                self.seen_items[site_key] = set(
-                    items_list[-APP_CONFIG.max_seen_items_per_site :]
-                )
-                self.logger.debug(
-                    f"[{site_key}] Trimmed seen items: {len(items_list)} -> {len(self.seen_items[site_key])}"
-                )
 
             # Save seen items after each site
             self.persistence.save_seen_items(self.seen_items)

@@ -59,6 +59,7 @@ class AppConfig:
     session_history_file: str = os.getenv(
         "SESSION_HISTORY_FILE", "session_history.json"
     )
+    proxies_file: str = os.getenv("PROXIES_FILE", "proxies.txt")
 
     # Monitoring - PRODUCTION SAFE DEFAULTS
     check_interval_seconds: int = int(
@@ -343,6 +344,19 @@ SITE_CONFIGS = {
         detail_page_selectors={
             "properties": "div.product-detail-properties",
             "tabs": "div.tab-content",
+        },
+    ),
+    "bachmann_scher": SiteConfig(
+        name="Bachmann & Scher",
+        key="bachmann_scher",
+        url="https://www.bachmann-scher.de/gebrauchte-luxusuhren-kaufen.html",
+        webhook_env_var="BACHMANN_SCHER_WEBHOOK_URL",
+        color=0x1F3A5F,
+        base_url="https://www.bachmann-scher.de",
+        condition_mappings={
+            "ungetragen": "★★★★★",
+            "sehr gut": "★★★★☆",
+            "gut": "★★★☆☆",
         },
     ),
 }

@@ -7,7 +7,7 @@ from pathlib import Path
 from unittest.mock import Mock, patch, mock_open
 from datetime import datetime, timedelta
 
-from persistence import PersistenceManager
+from persistence import PersistenceManager, SeenIds
 from models import ScrapingSession
 
 
@@ -55,8 +55,8 @@ class TestPersistenceManager:
         assert len(result) == 2
         assert "site1" in result
         assert "site2" in result
-        assert result["site1"] == {"id1", "id2", "id3"}  # Lists converted to sets
-        assert result["site2"] == {"id4", "id5"}
+        assert list(result["site1"]) == ["id1", "id2", "id3"]  # In the saved order
+        assert list(result["site2"]) == ["id4", "id5"]
         
         test_persistence_manager.logger.info.assert_called_with(
             f"Loaded seen items: 5 total"
@@ -92,8 +92,8 @@ class TestPersistenceManager:
     def test_save_seen_items_success(self, test_persistence_manager, temp_dir):
         """Test successful saving of seen items."""
         test_data = {
-            "site1": {"id1", "id2", "id3"},
-            "site2": {"id4", "id5"}
+            "site1": SeenIds.fromkeys(["id1", "id2", "id3"]),
+            "site2": SeenIds.fromkeys(["id4", "id5"])
         }
         
         seen_file = temp_dir / "test_seen_watches.json"
@@ -106,11 +106,8 @@ class TestPersistenceManager:
         with open(seen_file, 'r') as f:
             saved_data = json.load(f)
         
-        # Sets should be converted to lists for JSON serialization
-        assert "site1" in saved_data
-        assert "site2" in saved_data
-        assert set(saved_data["site1"]) == {"id1", "id2", "id3"}
-        assert set(saved_data["site2"]) == {"id4", "id5"}
+        # Each shop's ids are saved in the order they were last seen
+        assert saved_data == {"site1": ["id1", "id2", "id3"], "site2": ["id4", "id5"]}
         
         test_persistence_manager.logger.debug.assert_called_with(
             "Saved seen items successfully"
@@ -119,10 +116,10 @@ class TestPersistenceManager:
     def test_save_seen_items_with_size_limit(self, test_persistence_manager, temp_dir):
         """Test saving seen items with size limit enforcement.""" 
         # Create data that exceeds the limit
-        large_item_set = {f"id{i}" for i in range(2000)}  # Larger than limit
+        large_item_set = SeenIds.fromkeys(f"id{i}" for i in range(2000))  # Larger than limit
         test_data = {
             "site1": large_item_set,
-            "site2": {"id1", "id2"}
+            "site2": SeenIds.fromkeys(["id1", "id2"])
         }
         
         seen_file = temp_dir / "test_seen_watches.json"
@@ -138,8 +135,9 @@ class TestPersistenceManager:
         with open(seen_file, 'r') as f:
             saved_data = json.load(f)
         
-        # site1 should be truncated
-        assert len(saved_data["site1"]) == 1000
+        # site1 keeps its newest thousand, in the file and in the caller's own memory
+        assert saved_data["site1"] == [f"id{i}" for i in range(1000, 2000)]
+        assert list(large_item_set) == saved_data["site1"]
         assert len(saved_data["site2"]) == 2
         
         # Verify warning was logged

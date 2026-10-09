@@ -3,13 +3,14 @@
 import asyncio
 import logging
 from abc import ABC, abstractmethod
-from typing import List, Set, Optional, Dict, Any
+from typing import List, Optional, Dict, Any
 from urllib.parse import urljoin
 import aiohttp
 from bs4 import BeautifulSoup
 
 from config import SiteConfig, APP_CONFIG
 from models import WatchData
+from persistence import SeenIds
 from logging_config import ContextLogger, PerformanceLogger
 from utils import (
     fetch_page,
@@ -36,9 +37,9 @@ class BaseScraper(ABC):
         self.config = config
         self.session = session
         self.logger = ContextLogger(logger, {"site": config.key})
-        self.seen_ids: Set[str] = set()
+        self.seen_ids = SeenIds()
 
-    def set_seen_ids(self, seen_ids: Set[str]):
+    def set_seen_ids(self, seen_ids: SeenIds):
         """Update the set of seen watch IDs."""
         self.seen_ids = seen_ids
 
@@ -108,9 +109,11 @@ class BaseScraper(ABC):
         """Remember every listed watch and return the ones to announce."""
         new_watches = []
         for watch in watches:
-            if watch.composite_id in self.seen_ids:
-                continue
+            known = watch.composite_id in self.seen_ids
+            # Seen now, so the last to be forgotten when the memory is full
             self.seen_ids.add(watch.composite_id)
+            if known:
+                continue
             # A watch announced under its former id is known, not news. The
             # former id vouches for one listing and goes: a later listing of
             # an identical watch at the same price is news again
@@ -144,6 +147,10 @@ class BaseScraper(ABC):
         Args:
             watches: List of watches to fetch details for
         """
+        # A scraper that reads nothing from a watch's own page does not fetch it
+        if type(self)._extract_watch_details is BaseScraper._extract_watch_details:
+            return
+
         # Limit concurrent detail fetches
         semaphore = asyncio.Semaphore(APP_CONFIG.max_concurrent_details)
 

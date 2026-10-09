@@ -3,12 +3,35 @@
 import json
 import os
 from pathlib import Path
-from typing import Dict, Set, List, Optional
+from typing import Dict, List, Optional
 from datetime import datetime, timedelta
 import logging
 
 from config import APP_CONFIG
 from models import ScrapingSession
+
+
+class SeenIds(dict):
+    """The ids a shop's watches are remembered under, the one seen longest ago first.
+
+    A set that keeps its order: seeing an id again moves it to the end, so
+    the ids forgotten when the memory is full are those of watches no
+    longer listed, never of one still on the page.
+    """
+
+    def add(self, seen_id: str):
+        self.pop(seen_id, None)
+        self[seen_id] = None
+
+    def discard(self, seen_id: str):
+        self.pop(seen_id, None)
+
+    def forget_oldest(self, keep: int) -> int:
+        """Drop the ids seen longest ago beyond `keep`; how many went."""
+        excess = max(len(self) - keep, 0)
+        for seen_id in list(self)[:excess]:
+            del self[seen_id]
+        return excess
 
 
 class PersistenceManager:
@@ -25,7 +48,7 @@ class PersistenceManager:
         self.seen_items_file = Path(APP_CONFIG.seen_watches_file)
         self.session_history_file = Path(APP_CONFIG.session_history_file)
     
-    def load_seen_items(self) -> Dict[str, Set[str]]:
+    def load_seen_items(self) -> Dict[str, SeenIds]:
         """
         Load seen watch IDs from file.
         
@@ -45,10 +68,10 @@ class PersistenceManager:
                 
                 data = json.loads(content)
                 
-                # Convert lists to sets for efficient lookup
+                # The saved order is the order they were last seen in
                 result = {}
                 for site_key, items in data.items():
-                    result[site_key] = set(items)
+                    result[site_key] = SeenIds.fromkeys(items)
                 
                 self.logger.info(f"Loaded seen items: {sum(len(s) for s in result.values())} total")
                 return result
@@ -60,81 +83,62 @@ class PersistenceManager:
             self.logger.error(f"Error loading seen items: {e}")
             return {}
     
-    def save_seen_items(self, seen_items: Dict[str, Set[str]]):
+    def save_seen_items(self, seen_items: Dict[str, SeenIds]):
         """
-        Save seen watch IDs to file with strict limits enforced.
-        
+        Save seen watch IDs to file, each shop's within its limit.
+
         Args:
-            seen_items: Dictionary mapping site keys to sets of seen watch IDs
+            seen_items: Dictionary mapping site keys to their seen watch IDs
         """
         try:
-            # Trim items before saving to enforce strict limits
-            trimmed_items = self.trim_seen_items(seen_items)
-            
-            # Convert sets to lists for JSON serialization
-            serializable_items = {}
-            for site_key, items in trimmed_items.items():
-                serializable_items[site_key] = list(items)
-            
+            self.trim_seen_items(seen_items)
+
             # Create directory if needed
             self.seen_items_file.parent.mkdir(parents=True, exist_ok=True)
-            
-            # Write to file
+
+            # Write to file, each shop's ids in the order they were last seen
             with open(self.seen_items_file, 'w', encoding='utf-8') as f:
-                json.dump(serializable_items, f, indent=2, ensure_ascii=False)
-            
+                json.dump(
+                    {site_key: list(items) for site_key, items in seen_items.items()},
+                    f,
+                    indent=2,
+                    ensure_ascii=False,
+                )
+
             self.logger.debug("Saved seen items successfully")
-            
+
         except Exception as e:
             self.logger.error(f"Error saving seen items: {e}")
-    
-    def trim_seen_items(self, seen_items: Dict[str, Set[str]]) -> Dict[str, Set[str]]:
+
+    def trim_seen_items(
+        self, seen_items: Dict[str, SeenIds], limit: Optional[int] = None
+    ) -> Dict[str, SeenIds]:
         """
-        Trim seen items to enforce strict limits per site with proper FIFO trimming.
-        
-        This method enforces the maximum number of seen items per site to prevent
-        unbounded memory growth. When the limit is exceeded, it keeps the most
-        recent items (FIFO - First In, First Out).
-        
-        Note: Since sets don't maintain insertion order in Python < 3.7, and we're
-        using sets for efficient lookup, we load from file to get the ordered list,
-        then trim and convert back to sets. In practice, newer items are typically
-        added to the end of the list when loaded from JSON.
-        
+        Keep each shop's memory within the limit by forgetting, in place, the
+        ids seen longest ago. The scraper and the monitor share that memory,
+        so what is saved is what they go on with.
+
         Args:
-            seen_items: Dictionary mapping site keys to sets of seen watch IDs
-        
+            seen_items: Dictionary mapping site keys to their seen watch IDs
+            limit: Ids to keep per shop; MAX_SEEN_ITEMS_PER_SITE when not given
+
         Returns:
-            Dictionary with trimmed sets of seen watch IDs
+            The same dictionary
         """
-        trimmed_items = {}
-        max_items = APP_CONFIG.max_seen_items_per_site
-        
+        if limit is None:
+            limit = APP_CONFIG.max_seen_items_per_site
+
         for site_key, items in seen_items.items():
-            original_count = len(items)
-            
-            if original_count > max_items:
-                # Convert to list for trimming
-                items_list = list(items)
-                
-                # Keep only the most recent items (last N items in the list)
-                # This implements FIFO - we keep the newest and discard the oldest
-                trimmed_list = items_list[-max_items:]
-                
-                # Convert back to set
-                trimmed_items[site_key] = set(trimmed_list)
-                
+            forgotten = items.forget_oldest(limit)
+            if forgotten:
                 self.logger.warning(
                     f"Trimmed seen items for {site_key}: "
-                    f"{original_count} -> {len(trimmed_items[site_key])} items "
-                    f"(removed {original_count - len(trimmed_items[site_key])} oldest items)"
+                    f"{len(items) + forgotten} -> {len(items)} items "
+                    f"(removed {forgotten} oldest items)"
                 )
-            else:
-                # No trimming needed
-                trimmed_items[site_key] = items
-        
-        return trimmed_items
-    
+
+        return seen_items
+
     def load_session_history(self) -> List[Dict]:
         """
         Load session history from file.
