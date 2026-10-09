@@ -55,8 +55,8 @@ class TestPersistenceManager:
         assert len(result) == 2
         assert "site1" in result
         assert "site2" in result
-        assert result["site1"] == {"id1", "id2", "id3"}  # Lists converted to sets
-        assert result["site2"] == {"id4", "id5"}
+        assert list(result["site1"]) == ["id1", "id2", "id3"]  # In the saved order
+        assert list(result["site2"]) == ["id4", "id5"]
         
         test_persistence_manager.logger.info.assert_called_with(
             f"Loaded seen items: 5 total"

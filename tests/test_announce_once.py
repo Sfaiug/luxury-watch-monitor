@@ -4,7 +4,9 @@ import logging
 from decimal import Decimal
 from unittest.mock import patch
 
+import persistence
 from models import WatchData
+from persistence import SeenIds
 from scrapers.base import BaseScraper
 
 
@@ -122,3 +124,26 @@ def test_the_former_id_is_the_one_the_server_remembers():
 
     assert hashed.former_id == "1db30a63397ba5f2636170d6d4563843"
     assert by_link.former_id == "1cface00f8114163f5a3ba58f3b852ee"
+
+
+async def test_a_full_memory_forgets_the_watches_not_listed_for_longest(
+    test_site_config, test_persistence_manager, monkeypatch
+):
+    monkeypatch.setattr(persistence.APP_CONFIG, "max_seen_items_per_site", 3)
+    shop = Shop(test_site_config, None, logging.getLogger("test"))
+    remembered = SeenIds()
+    shop.set_seen_ids(remembered)
+    a, b, c, d = (watch(f"/watches/{name}") for name in "abcd")
+
+    # "a" was listed first and stays listed while "b" and "c" come and go
+    await scan(shop, a)
+    await scan(shop, a, b)
+    await scan(shop, a, c)
+    await scan(shop, a, d)
+    test_persistence_manager.save_seen_items({"test_site": remembered})
+
+    # Room for three: "b", not listed for longest, is forgotten, in the
+    # memory the shop goes on with and in the file alike
+    assert list(remembered) == [c.composite_id, a.composite_id, d.composite_id]
+    assert list(test_persistence_manager.load_seen_items()["test_site"]) == list(remembered)
+    assert await scan(shop, a, d) == []
