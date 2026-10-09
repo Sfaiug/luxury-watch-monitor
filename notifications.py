@@ -54,7 +54,7 @@ class NotificationManager:
             return 0
 
         webhook_url = site_config.webhook_url
-        bot_channel_id = self._bot_channel_id(site_config)
+        bot_channel_id = self.bot_channel_id(site_config)
         use_bot = self._can_send_with_bot(bot_channel_id)
         if not webhook_url and not use_bot:
             self.logger.warning(
@@ -267,7 +267,7 @@ class NotificationManager:
             }
         ]
 
-    def _bot_channel_id(self, site_config: SiteConfig) -> Optional[str]:
+    def bot_channel_id(self, site_config: SiteConfig) -> Optional[str]:
         channel_id = site_config.discord_channel_id or getattr(
             APP_CONFIG, "discord_alert_channel_id", ""
         )

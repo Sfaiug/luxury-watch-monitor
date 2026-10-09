@@ -16,8 +16,16 @@ INTERACTION_MESSAGE_COMPONENT = 3
 
 RESPONSE_PONG = 1
 RESPONSE_CHANNEL_MESSAGE = 4
+RESPONSE_DEFERRED_CHANNEL_MESSAGE = 5
+RESPONSE_UPDATE_MESSAGE = 7
+RESPONSE_MODAL = 9
 
 EPHEMERAL_FLAG = 64
+
+
+def discord_route_enabled() -> bool:
+    """Whether Discord's interactions are answered here."""
+    return APP_CONFIG.discord_interactions_enabled or bool(APP_CONFIG.discord_public_key)
 
 
 def verify_discord_signature(
@@ -62,10 +70,7 @@ class DiscordInteractionServer:
             )
 
         app = web.Application(client_max_size=512 * 1024)
-        discord_route_enabled = APP_CONFIG.discord_interactions_enabled or bool(
-            APP_CONFIG.discord_public_key
-        )
-        if discord_route_enabled:
+        if discord_route_enabled():
             app.router.add_post(
                 APP_CONFIG.discord_interactions_path, self.handle_request
             )
@@ -90,7 +95,7 @@ class DiscordInteractionServer:
             APP_CONFIG.discord_interactions_port,
             (
                 APP_CONFIG.discord_interactions_path
-                if discord_route_enabled
+                if discord_route_enabled()
                 else APP_CONFIG.muv_action_web_path
             ),
             APP_CONFIG.muv_offer_webhook_path,
@@ -201,7 +206,9 @@ class DiscordInteractionServer:
 
         custom_id = (payload.get("data") or {}).get("custom_id", "")
         if self.filter_flow and custom_id.startswith("filter:"):
-            return self.filter_flow.handle(payload)
+            reply = self.filter_flow.handle(payload)
+            if reply:
+                return reply
 
         if interaction_type != INTERACTION_MESSAGE_COMPONENT:
             return self._ephemeral("Unsupported interaction type.")

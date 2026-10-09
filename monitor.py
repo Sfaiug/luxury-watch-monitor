@@ -15,7 +15,7 @@ from scrapers.base import BaseScraper
 from memory_monitor import MemoryMonitor
 from utils import clear_exchange_rate_cache
 from action_store import ActionStore
-from discord_interactions import DiscordInteractionServer
+from discord_interactions import DiscordInteractionServer, discord_route_enabled
 from muv_service import MUVActionService
 from filters import Filter, FilterStore
 from filter_flow import DiscordApi, FilterFlow
@@ -135,7 +135,13 @@ class WatchMonitor:
         ):
             if not self.action_store or not self.muv_service:
                 raise RuntimeError("MUV action store failed to initialize")
-            if APP_CONFIG.discord_bot_token:
+            # The "New filter" button needs its presses answered, the bot to
+            # make channels, and a channel of the shops' to stand beside
+            shops_channel = next(
+                filter(None, map(self.notification_manager.bot_channel_id, SITE_CONFIGS.values())),
+                None,
+            )
+            if discord_route_enabled() and APP_CONFIG.discord_bot_token and shops_channel:
                 self.filter_flow = FilterFlow(
                     self.filter_store,
                     DiscordApi(
@@ -145,6 +151,7 @@ class WatchMonitor:
                     ),
                     self.logger,
                     self._scan_new_filter,
+                    shops_channel,
                 )
             self.discord_interaction_server = DiscordInteractionServer(
                 self.action_store,

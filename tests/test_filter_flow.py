@@ -2,14 +2,18 @@
 
 import asyncio
 import logging
+import os
 from dataclasses import replace
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
 import filter_flow
+from config import APP_CONFIG
 from discord_interactions import DiscordInteractionServer
 from filter_flow import FilterFlow
 from filters import STORES, Filter, FilterStore
+from monitor import WatchMonitor
 
 GUILD, BOT, MEMBER_ID, CATEGORY = "900", "800", "42", "700"
 
@@ -74,14 +78,13 @@ def scanned():
 
 
 @pytest.fixture
-def flow(tmp_path, discord, scanned, monkeypatch):
-    monkeypatch.setenv("WORLDOFTIME_CHANNEL_ID", "1")
-
+def flow(tmp_path, discord, scanned):
     async def scan(new):
         scanned.append(new)
 
+    # "1": the channel of a shop's alerts
     return FilterFlow(
-        FilterStore(tmp_path / "filters.json"), discord, logging.getLogger("test"), scan
+        FilterStore(tmp_path / "filters.json"), discord, logging.getLogger("test"), scan, "1"
     )
 
 
@@ -152,7 +155,7 @@ async def test_from_the_button_to_a_channel_only_the_member_sees(flow, discord, 
 
     (channel,) = discord.said("POST", f"/guilds/{GUILD}/channels")
     assert channel["name"] == "Rolex Submariner"
-    assert channel["topic"] == f"Kleinanzeigen · Private sellers · €5.000 to €9.000 · {made.search_url}"
+    assert channel["topic"] == f"Kleinanzeigen · Private sellers · 5000 to 9000 € · {made.search_url}"
     assert channel["parent_id"] == CATEGORY  # beside the button's channel
     everyone, member, bot = channel["permission_overwrites"]
     assert (everyone["id"], everyone["deny"]) == (GUILD, str(1 << 10))  # nobody else sees it
@@ -189,6 +192,15 @@ async def test_prices_are_optional_and_put_in_order(flow, discord):
     assert (speedmaster.min_price, speedmaster.max_price) == (3000, 9000)
     assert (tank.min_price, tank.max_price) == (None, None)
     assert filter_flow.describe(tank) == "Kleinanzeigen · Dealers"
+
+
+@pytest.mark.parametrize("typed", ["5,000", "5.000", "5000", "5.000 €", "€ 5,000.00"])
+async def test_a_price_is_read_however_it_is_typed(flow, typed):
+    flow.handle(form("kleinanzeigen", "any", "Rolex Submariner", typed, "9,000"))
+    await finish(flow)
+
+    (made,) = flow.store.all()
+    assert (made.min_price, made.max_price) == (5000, 9000)
 
 
 async def test_the_member_is_told_when_the_channel_cannot_be_made(flow, discord, scanned):
@@ -257,3 +269,48 @@ async def test_the_interaction_endpoint_hands_filter_presses_to_the_flow(flow):
     asked = await server.handle_payload(press("filter:new"))
 
     assert asked["data"]["content"] == "Who is selling?"
+    # A step that is none of the flow's is answered like any unknown press
+    unknown = await server.handle_payload(press("filter:nonsense"))
+    assert unknown["data"]["content"] == "Unknown action."
+
+
+async def flow_of_a_monitor(monkeypatch, shops_own_channel=None, **settings):
+    """The flow a monitor starts with under these settings; None when it starts none."""
+    for name in [name for name in os.environ if name.endswith("_CHANNEL_ID")]:
+        monkeypatch.delenv(name)
+    if shops_own_channel:
+        monkeypatch.setenv("WORLDOFTIME_CHANNEL_ID", shops_own_channel)
+    settings = {
+        "discord_interactions_enabled": True,
+        "discord_public_key": "ab" * 32,
+        "discord_bot_token": "token",
+        "discord_alert_channel_id": "1",
+        **settings,
+    }
+    with patch.multiple(APP_CONFIG, **settings), patch("monitor.PersistenceManager"), patch(
+        "monitor.ActionStore"
+    ), patch("monitor.MUVActionService", return_value=AsyncMock()), patch(
+        "monitor.DiscordInteractionServer", return_value=AsyncMock()
+    ):
+        watch = WatchMonitor(log_level="ERROR")
+        await watch.initialize()
+        await watch.session.close()
+    return watch.filter_flow
+
+
+async def test_the_button_stands_beside_the_channel_the_shops_alerts_go_to(monkeypatch):
+    # One alert channel for every shop, or a shop's own
+    assert (await flow_of_a_monitor(monkeypatch)).beside == "1"
+    own = await flow_of_a_monitor(monkeypatch, shops_own_channel="7", discord_alert_channel_id="")
+    assert own.beside == "7"
+
+
+async def test_there_is_no_button_where_nothing_would_answer_or_hold_it(monkeypatch):
+    # Signed links only: the server runs, Discord's presses are not answered
+    signed_links = dict(
+        discord_interactions_enabled=False, discord_public_key="", muv_http_actions_enabled=True
+    )
+    assert await flow_of_a_monitor(monkeypatch, **signed_links) is None
+    # No bot, or no channel the shops' alerts go to
+    assert await flow_of_a_monitor(monkeypatch, discord_bot_token="") is None
+    assert await flow_of_a_monitor(monkeypatch, discord_alert_channel_id="") is None
