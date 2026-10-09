@@ -191,8 +191,8 @@ def parse_price(price_text: str, currency: str = "EUR") -> Optional[Decimal]:
     # Remove currency symbols and text
     cleaned = re.sub(r"[€$£¥₹CHF\s]|EUR|USD|GBP|CHF", "", cleaned, flags=re.IGNORECASE)
 
-    # Remove trailing comma-dash
-    cleaned = re.sub(r",-\s*$", "", cleaned)
+    # Remove a trailing "no cents" dash: 8.500,- or 6,250.-
+    cleaned = re.sub(r"[.,]-+$", "", cleaned)
 
     # Handle different decimal/thousand separators
     if "." in cleaned and "," in cleaned:
@@ -203,21 +203,19 @@ def parse_price(price_text: str, currency: str = "EUR") -> Optional[Decimal]:
         else:
             # US format: 1,234.56
             cleaned = cleaned.replace(",", "")
-    elif "," in cleaned:
-        # Check if comma is thousands separator or decimal
-        parts = cleaned.split(",")
-        if len(parts) == 2 and len(parts[-1]) == 3 and parts[0].isdigit():
-            # Thousands separator: 1,234
-            cleaned = cleaned.replace(",", "")
+    else:
+        separator = "," if "," in cleaned else "."
+        parts = cleaned.split(separator)
+        if (
+            len(parts) > 1
+            and parts[0].isdigit()
+            and all(len(part) == 3 for part in parts[1:])
+        ):
+            # Thousands separator: 1,234 or 1.234.567
+            cleaned = "".join(parts)
         else:
             # Decimal separator: 1234,56
             cleaned = cleaned.replace(",", ".")
-    elif "." in cleaned:
-        # Check if dot is thousands separator or decimal
-        parts = cleaned.split(".")
-        if len(parts) == 2 and len(parts[-1]) == 3 and parts[0].isdigit():
-            # Thousands separator: 1.234
-            cleaned = cleaned.replace(".", "")
 
     # Try to convert to Decimal
     try:

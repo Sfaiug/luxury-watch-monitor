@@ -12,6 +12,7 @@ from typing import Dict, Any, List
 from decimal import Decimal
 from datetime import datetime
 import aiohttp
+from bs4 import BeautifulSoup
 
 # Import actual modules from the codebase
 from models import WatchData, ScrapingSession
@@ -20,6 +21,7 @@ from persistence import PersistenceManager
 from notifications import NotificationManager
 from scrapers.base import BaseScraper
 from scrapers.worldoftime import WorldOfTimeScraper
+from monitor import SCRAPER_CLASSES
 
 
 @pytest.fixture(scope="session")
@@ -363,3 +365,18 @@ def discord_webhook_response():
     response.text = AsyncMock(return_value="")
     response.headers = {}
     return response
+
+@pytest.fixture
+def listed_watches():
+    """What a shop's scraper, wired as in production, finds on tests/pages/<site_key>.html."""
+
+    def read(site_key: str):
+        scraper = SCRAPER_CLASSES[site_key](
+            SITE_CONFIGS[site_key], None, logging.getLogger("test")
+        )
+        page = (Path(__file__).parent / "pages" / f"{site_key}.html").read_text(
+            encoding="utf-8"
+        )
+        return asyncio.run(scraper._extract_watches(BeautifulSoup(page, "lxml")))
+
+    return read
