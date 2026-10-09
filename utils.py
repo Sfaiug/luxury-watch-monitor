@@ -300,18 +300,25 @@ _BOX_WORD = r"(?:original\w*[\s-]+)?(?:\w*box(?:es|en)?\b|originalverpackung\w*)
 _NAMED = rf"(?:{_PAPERS_WORD}|{_BOX_WORD}|full\s?set\b)"
 # Two of them named together: "Box und Papiere", "box or papers", "Box/Papiere".
 # A comma does not join: after it the listing says something new
-_JOINED = rf"{_NAMED}(?:(?:\s+(?:&|or|oder|und|and|noch)\s+|\s*[/&]\s*){_NAMED}(?!\s*:\s*(?:ja|yes)\b))*"
+_JOIN = r"(?:\s+(?:&|or|oder|und|and|noch)\s+|\s*[/&]\s*)"
+_NAMED_TOGETHER = rf"{_NAMED}(?:{_JOIN}{_NAMED})*"
+# Said after the words: "nicht vorhanden", "not included", "fehlen", "missing", "nein"
+_MISSING = (
+    r"(?:(?:nicht|not)\s+(?:mehr\s+)?"
+    r"(?:vorhanden|dabei|da|enthalten|included|available|present)"
+    r"|fehlt|fehlen|missing|nein)"
+)
 # The ways a listing says they are missing:
 _SAID_ABSENT = re.compile(
     # the negation right before them: "ohne Papiere", "keine Box/Papiere",
-    # "weder Box noch Papiere", "no box or papers", "kein Fullset"
-    rf"\b(?:ohne|kein\w*|weder|no|without)\s+{_JOINED}"
-    # as a field: "Papiere: nein", "Box und Papiere: no"; not "Papers: No. 12345"
-    rf"|{_JOINED}\s*:\s*(?:nein|none|no(?!\.?\s*\d))\b"
-    # after them: "Box und Papiere nicht vorhanden", "papers not included", "Papiere fehlen"
-    rf"|{_JOINED}\s+(?:(?:ist|sind|leider|is|are)\s+)*(?:nicht|not)\s+(?:mehr\s+)?"
-    r"(?:vorhanden|dabei|enthalten|included|available)\b"
-    rf"|{_JOINED}\s+(?:fehlt|fehlen|missing)\b"
+    # "weder Box noch Papiere", "no box or papers", "kein Fullset". It does not
+    # reach a word that heads a field of its own: "ohne Box / Papiere: vorhanden"
+    rf"\b(?:ohne|kein\w*|weder|no|without)\s+{_NAMED}(?:{_JOIN}{_NAMED}(?!\s*:))*"
+    # as a field: "Papiere: nein", "Box und Papiere: keine", "Papers: not
+    # included". "No." with its period is a number: "Papers: No. 12345"
+    rf"|{_NAMED_TOGETHER}\s*:\s*(?:none|keine?|ohne|no(?!\.\s*\d)|{_MISSING})\b"
+    # after them: "Box und Papiere nicht vorhanden", "papers are missing", "Papiere nein"
+    rf"|{_NAMED_TOGETHER}(?:\s+(?:ist|sind|leider|is|are))*\s+{_MISSING}\b"
 )
 # What says they are there, wherever it stands in a word ("Garantiepapieren")
 _BOTH_PRESENT = (
