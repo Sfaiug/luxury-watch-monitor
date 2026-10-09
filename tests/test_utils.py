@@ -307,6 +307,20 @@ class TestBoxPapersParsing:
             ("no box or papers", (False, False)),
             ("Originalbox, Garantiekarte, Bedienungsanleitung", (True, True)),
             ("Boxer-Armband", (None, None)),
+            # After a comma or a slash the listing says something new
+            ("Ohne Box, Papiere vorhanden", (True, False)),
+            ("No box, papers included", (True, False)),
+            ("Ohne Box / Papiere: ja", (True, False)),
+            # More than one of them
+            ("Original box and certificates included", (True, True)),
+            ("Garantiekarten vorhanden", (True, None)),
+            ("With original boxes and papers", (True, True)),
+            # A dealer's offer on Kleinanzeigen
+            (
+                "Keine Papiere vorhanden, wir stellen ein eigenes Echtheitszertifikat aus"
+                " ⊛ Keine Originalbox vorhanden",
+                (False, False),
+            ),
         ],
     )
     def test_parse_what_the_listing_says(self, text, expected):

@@ -289,13 +289,18 @@ def parse_year(text: str, title: str = "") -> Optional[str]:
     return None
 
 
-_PAPERS = r"(?:original[- ]?)?(?:papiere?n?|papers?|zertifikat\w*|certificate|garantiekarte|service ?karte)"
-_BOX = r"(?:\w*box|originalverpackung)"
+_PAPERS = (
+    r"(?:original[- ]?)?"
+    r"(?:papiere?n?|papers?|zertifikat\w*|certificates?|garantiekarten?|service ?karten?)"
+)
+_BOX = r"(?:\w*box(?:es|en)?|originalverpackung(?:en)?)"
 _BOX_OR_PAPERS = rf"(?:{_PAPERS}|{_BOX})"
-# "ohne Papiere", "keine Papiere oder Box", "no box or papers", "Box: nein"
+# What the listing says is absent: "ohne Papiere", "keine Papiere oder Box",
+# "no box or papers", "Box: nein". "Ohne" reaches a second word only across
+# "und"/"oder"/"or"/"and": after a comma or a slash the listing says something new
 _ABSENT = re.compile(
     rf"\b(?:ohne|keine?|no|without)\s+(?:\w+\s+)?{_BOX_OR_PAPERS}"
-    rf"(?:\s*(?:,|/|&|or|oder|und|and|noch)\s*{_BOX_OR_PAPERS})*"
+    rf"(?:\s*(?:&|or|oder|und|and|noch)\s*{_BOX_OR_PAPERS})*"
     rf"|\b{_BOX_OR_PAPERS}:\s*(?:nein|no|none)\b"
 )
 
