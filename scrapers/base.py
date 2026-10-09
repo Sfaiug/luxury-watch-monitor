@@ -3,13 +3,14 @@
 import asyncio
 import logging
 from abc import ABC, abstractmethod
-from typing import List, Set, Optional, Dict, Any
+from typing import List, Optional, Dict, Any
 from urllib.parse import urljoin
 import aiohttp
 from bs4 import BeautifulSoup
 
 from config import SiteConfig, APP_CONFIG
 from models import WatchData
+from persistence import SeenIds
 from logging_config import ContextLogger, PerformanceLogger
 from utils import (
     fetch_page,
@@ -36,9 +37,9 @@ class BaseScraper(ABC):
         self.config = config
         self.session = session
         self.logger = ContextLogger(logger, {"site": config.key})
-        self.seen_ids: Set[str] = set()
+        self.seen_ids = SeenIds()
 
-    def set_seen_ids(self, seen_ids: Set[str]):
+    def set_seen_ids(self, seen_ids: SeenIds):
         """Update the set of seen watch IDs."""
         self.seen_ids = seen_ids
 

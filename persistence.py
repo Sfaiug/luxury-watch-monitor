@@ -129,8 +129,6 @@ class PersistenceManager:
             limit = APP_CONFIG.max_seen_items_per_site
 
         for site_key, items in seen_items.items():
-            if not isinstance(items, SeenIds):
-                items = seen_items[site_key] = SeenIds.fromkeys(items)
             forgotten = items.forget_oldest(limit)
             if forgotten:
                 self.logger.warning(
