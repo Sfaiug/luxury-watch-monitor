@@ -4,7 +4,6 @@ import pytest
 import asyncio
 from unittest.mock import AsyncMock, Mock, patch
 from bs4 import BeautifulSoup
-from decimal import Decimal
 from urllib.parse import urljoin
 
 from scrapers.rueschenbeck import RueschenbeckScraper
@@ -39,136 +38,6 @@ def rueschenbeck_config():
 def rueschenbeck_scraper(rueschenbeck_config, mock_aiohttp_session, mock_logger):
     """Rüschenbeck scraper instance for testing."""
     return RueschenbeckScraper(rueschenbeck_config, mock_aiohttp_session, mock_logger)
-
-
-@pytest.fixture
-def rueschenbeck_listing_html():
-    """Realistic Rüschenbeck listing page HTML."""
-    return """
-    <!DOCTYPE html>
-    <html lang="de">
-    <head>
-        <title>Rüschenbeck - Gebrauchte Luxusuhren</title>
-    </head>
-    <body>
-        <div class="product-listing">
-            <!-- First watch - Rolex with CPO certification -->
-            <li class="-rb-list-item">
-                <a class="-rb-list-item-link" href="/uhren/rolex-submariner-116610ln">
-                    <div class="-rb-list-image">
-                        <img src="/media/images/rolex-submariner-116610ln.jpg" alt="Rolex Submariner" />
-                    </div>
-                    <div class="watch-details">
-                        <span class="-rb-manufacturer-name">Rolex</span>
-                        <span class="-rb-line-name">Submariner</span>
-                        <span class="-rb-prod-name">116610LN Submariner Date</span>
-                        <span class="-rb-icon icn-cpo" title="Certified Pre-Owned">CPO</span>
-                        <div class="-rb-availability">
-                            <span class="in-stock"><span class="value">Verfügbar</span></span>
-                        </div>
-                        <div class="price-box">
-                            <span class="regular-price">
-                                <span class="price">€ 8.500,00</span>
-                            </span>
-                        </div>
-                    </div>
-                </a>
-            </li>
-            
-            <!-- Second watch - Omega with special price -->
-            <li class="-rb-list-item">
-                <a class="-rb-list-item-link" href="/uhren/omega-speedmaster-311">
-                    <div class="-rb-list-image">
-                        <img src="/media/images/omega-speedmaster-311.jpg" alt="Omega Speedmaster" />
-                    </div>
-                    <div class="watch-details">
-                        <span class="-rb-manufacturer-name">Omega</span>
-                        <span class="-rb-line-name">Speedmaster</span>
-                        <span class="-rb-prod-name">311.30.42.30.01.005 Professional Moonwatch</span>
-                        <div class="-rb-availability">
-                            <span class="in-stock"><span class="value">Verfügbar</span></span>
-                        </div>
-                        <div class="price-box">
-                            <p class="special-price">
-                                <span class="price">€ 3.800,00</span>
-                            </p>
-                            <span class="regular-price">
-                                <span class="price">€ 4.200,00</span>
-                            </span>
-                        </div>
-                    </div>
-                </a>
-            </li>
-            
-            <!-- Third watch - Breitling without reference pattern -->
-            <li class="-rb-list-item">
-                <a class="-rb-list-item-link" href="/uhren/breitling-navitimer">
-                    <div class="-rb-list-image">
-                        <img src="/media/images/breitling-navitimer.jpg" alt="Breitling Navitimer" />
-                    </div>
-                    <div class="watch-details">
-                        <span class="-rb-manufacturer-name">Breitling</span>
-                        <span class="-rb-line-name">Navitimer</span>
-                        <span class="-rb-prod-name">Certified Pre-Owned Navitimer GMT</span>
-                        <div class="-rb-availability">
-                            <span class="in-stock"><span class="value">Verfügbar</span></span>
-                        </div>
-                        <div class="price-box">
-                            <span class="regular-price">
-                                <span class="price">€ 2.800,00</span>
-                            </span>
-                        </div>
-                    </div>
-                </a>
-            </li>
-            
-            <!-- Fourth watch - Sold watch, should be skipped -->
-            <li class="-rb-list-item">
-                <a class="-rb-list-item-link" href="/uhren/iwc-pilot-sold">
-                    <div class="-rb-list-image">
-                        <img src="/media/images/iwc-pilot-sold.jpg" alt="IWC Pilot" />
-                    </div>
-                    <div class="watch-details">
-                        <span class="-rb-manufacturer-name">IWC</span>
-                        <span class="-rb-line-name">Pilot</span>
-                        <span class="-rb-prod-name">IW327001 Mark XVIII</span>
-                        <div class="-rb-availability">
-                            <span class="sold"><span class="value">verkauft</span></span>
-                        </div>
-                        <div class="price-box">
-                            <span class="regular-price">
-                                <span class="price">€ 3.200,00</span>
-                            </span>
-                        </div>
-                    </div>
-                </a>
-            </li>
-            
-            <!-- Fifth watch - TAG Heuer with numeric-only reference -->
-            <li class="-rb-list-item">
-                <a class="-rb-list-item-link" href="/uhren/tag-heuer-carrera">
-                    <div class="-rb-list-image">
-                        <img src="/media/images/tag-heuer-carrera.jpg" alt="TAG Heuer Carrera" />
-                    </div>
-                    <div class="watch-details">
-                        <span class="-rb-manufacturer-name">TAG Heuer</span>
-                        <span class="-rb-line-name">Carrera</span>
-                        <span class="-rb-prod-name">123 Calibre 16 Chronograph</span>
-                        <div class="-rb-availability">
-                            <span class="in-stock"><span class="value">Verfügbar</span></span>
-                        </div>
-                        <div class="price-box">
-                            <span class="regular-price">
-                                <span class="price">€ 1.800,00</span>
-                            </span>
-                        </div>
-                    </div>
-                </a>
-            </li>
-        </div>
-    </body>
-    </html>
-    """
 
 
 @pytest.fixture
@@ -277,52 +146,6 @@ def rueschenbeck_empty_html():
     <body>
         <div class="no-watches-found">
             <p>Keine Uhren gefunden.</p>
-        </div>
-    </body>
-    </html>
-    """
-
-
-@pytest.fixture
-def rueschenbeck_malformed_html():
-    """Malformed Rüschenbeck listing with missing elements."""
-    return """
-    <html>
-    <body>
-        <div class="product-listing">
-            <!-- Watch without link -->
-            <li class="-rb-list-item">
-                <div class="-rb-list-image">
-                    <img src="/images/no-link.jpg" alt="No Link" />
-                </div>
-                <div class="watch-details">
-                    <span class="-rb-manufacturer-name">NoLink</span>
-                    <span class="-rb-prod-name">Watch Without Link</span>
-                    <div class="price-box">
-                        <span class="regular-price">
-                            <span class="price">€ 1.000,00</span>
-                        </span>
-                    </div>
-                </div>
-            </li>
-            
-            <!-- Complete watch -->
-            <li class="-rb-list-item">
-                <a class="-rb-list-item-link" href="/uhren/complete-watch">
-                    <div class="-rb-list-image">
-                        <img src="/images/complete.jpg" alt="Complete" />
-                    </div>
-                    <div class="watch-details">
-                        <span class="-rb-manufacturer-name">Complete</span>
-                        <span class="-rb-prod-name">Complete Watch</span>
-                        <div class="price-box">
-                            <span class="regular-price">
-                                <span class="price">€ 2.000,00</span>
-                            </span>
-                        </div>
-                    </div>
-                </a>
-            </li>
         </div>
     </body>
     </html>

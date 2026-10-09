@@ -388,7 +388,6 @@ class TestJuwelierExchangeScraper:
             # (srcset, expected_preference), in the shop's own file names
             ("/978973_1_400x400.webp 400w, /978973_1_800x800.webp 800w, /978973_1_1920x1920.webp 1920w", "1920x1920.webp"),
             ("/978973_1_400x400.webp 400w, /978973_1_800x800.jpg 800w", "400x400.webp"),  # Prefer webp
-            ("/978973_1_400x400.jpg 400w, /978973_1_800x800.jpg 800w", "fallback.jpg"),   # No webp: the plain src
             ("", None),  # Empty srcset
         ]
         
@@ -416,6 +415,30 @@ class TestJuwelierExchangeScraper:
             else:
                 # Should fallback to src
                 assert "fallback.jpg" in watch.image_url
+
+    @pytest.mark.xfail(
+        strict=True,
+        reason="a srcset without a webp picture gives the plain src; the scraper's own "
+        "comment says 'Prefer higher resolution webp, then jpg, then src'",
+    )
+    def test_image_srcset_prefers_the_larger_jpg(self, juwelier_exchange_scraper):
+        """Without a webp picture, the larger jpg of the srcset is taken."""
+        html = """
+        <div class="card product-box" data-product-information='{"id": 12345}'>
+            <a class="card-body-link" href="/uhren/test-watch">
+                <img class="product-image"
+                     src="/fallback.jpg"
+                     srcset="/978973_1_400x400.jpg 400w, /978973_1_800x800.jpg 800w"
+                     alt="Test" />
+                <span class="product-price">€ 1.000,00</span>
+            </a>
+        </div>
+        """
+        element = BeautifulSoup(html, 'html.parser').select_one('.card.product-box')
+
+        watch = juwelier_exchange_scraper._parse_watch_element(element)
+
+        assert "800x800.jpg" in watch.image_url
 
     @pytest.mark.asyncio
     async def test_extract_watch_details_with_json_ld(self, juwelier_exchange_scraper, juwelier_exchange_detail_html):
@@ -548,7 +571,8 @@ class TestJuwelierExchangeScraper:
         assert watch.has_box is True
         assert watch.has_papers is True
 
-    def test_json_ld_parsing_errors(self, juwelier_exchange_scraper):
+    @pytest.mark.asyncio
+    async def test_json_ld_parsing_errors(self, juwelier_exchange_scraper):
         """Test JSON-LD parsing with malformed JSON."""
         malformed_json_html = """
         <script type="application/ld+json">
@@ -574,7 +598,7 @@ class TestJuwelierExchangeScraper:
         soup = BeautifulSoup(malformed_json_html, 'html.parser')
         
         # Should not raise an exception and should keep original title
-        juwelier_exchange_scraper._extract_watch_details(watch, soup)
+        await juwelier_exchange_scraper._extract_watch_details(watch, soup)
         
         assert watch.title == "Original Title"  # Should remain unchanged due to JSON error
     

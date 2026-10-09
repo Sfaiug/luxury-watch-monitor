@@ -4,7 +4,6 @@ import pytest
 import asyncio
 from unittest.mock import AsyncMock, Mock, patch
 from bs4 import BeautifulSoup
-from decimal import Decimal
 
 from scrapers.base import BaseScraper
 from scrapers.worldoftime import WorldOfTimeScraper
