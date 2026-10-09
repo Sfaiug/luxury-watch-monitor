@@ -497,7 +497,13 @@ class WatchMonitor:
             self.scrapers.pop(key, None)
             self.seen_items.pop(key, None)
         for key in set(filters) - self.filter_keys:
-            scraper = filters[key].scraper(self.session, self.logger)
+            try:
+                scraper = filters[key].scraper(self.session, self.logger)
+            except Exception as e:
+                # A marketplace or seller this version does not know. Said once:
+                # the filter counts as known and waits in the file
+                self.logger.error(f"Filter {key} cannot be searched: {e!r}")
+                continue
             scraper.set_seen_ids(self.seen_items.setdefault(key, SeenIds()))
             self.scrapers[key] = scraper
         self.filter_keys = set(filters)

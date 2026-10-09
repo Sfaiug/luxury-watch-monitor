@@ -1,5 +1,7 @@
 """A member's filter: kept in a file, scanned like a shop, announced in its own channel."""
 
+import json
+from dataclasses import asdict
 from pathlib import Path
 from unittest.mock import AsyncMock, Mock, patch
 
@@ -101,14 +103,39 @@ async def test_a_restart_announces_nothing_again(monitor, tmp_path):
     assert announced == []
 
 
+def a_shop(monitor):
+    """A shop beside the filters; its scrape counts the scans."""
+    shop = Mock(seen_ids=set(), scrape=AsyncMock(return_value=[]))
+    monitor.scrapers["worldoftime"] = shop
+    return shop.scrape
+
+
 async def test_filters_that_cannot_be_read_do_not_stop_the_shops(monitor, tmp_path):
+    shop_scans = a_shop(monitor)
     monitor.filter_store.add(SUBMARINER)
     await cycle(monitor)
     (tmp_path / "filters.json").write_text("not json", encoding="utf-8")
 
     _, fetched = await cycle(monitor)
 
-    assert fetched == [SUBMARINER.search_url]  # scanned as last read, and no error escapes the cycle
+    assert shop_scans.await_count == 2
+    assert fetched == [SUBMARINER.search_url]  # the filter is scanned as last read
+
+
+@pytest.mark.parametrize("store, seller", [("ebay", "any"), ("kleinanzeigen", "privat")])
+async def test_a_filter_that_cannot_be_searched_stops_nothing_else(monitor, tmp_path, store, seller):
+    """A marketplace or seller this version does not know, as after a rollback."""
+    shop_scans = a_shop(monitor)
+    monitor.logger = Mock()
+    unknown = {"channel_id": "1", "user_id": "42", "store": store, "seller": seller, "words": "rolex"}
+    (tmp_path / "filters.json").write_text(json.dumps([unknown, asdict(SUBMARINER)]), encoding="utf-8")
+
+    for _ in range(2):
+        _, fetched = await cycle(monitor)
+
+        assert fetched == [SUBMARINER.search_url]  # the filter beside it is scanned
+    assert shop_scans.await_count == 2
+    assert monitor.logger.error.call_count == 1  # said once, not every cycle
 
 
 async def test_a_removed_filter_is_no_longer_scanned(monitor):
