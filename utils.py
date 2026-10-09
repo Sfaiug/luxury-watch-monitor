@@ -295,6 +295,31 @@ def parse_year(text: str, title: str = "") -> Optional[str]:
     return None
 
 
+# A word for papers, for a box, or for both at once, as a listing names them
+# when it says they are missing: "Papiere", "originalen Papieren",
+# "Garantiepapiere", "Zertifikat"; "Box", "Originalbox", "boxes"; "Full Set"
+_PAPERS_WORD = (
+    r"(?:original\w*[ -]+)?"
+    r"\w*(?:papiere?n?|papers?|zertifikat\w*|certificates?|garantiekarten?)\b"
+)
+_BOX_WORD = r"(?:original\w*[ -]+)?(?:\w*box(?:es|en)?\b|originalverpackung\w*)"
+_NAMED = rf"\b(?:{_PAPERS_WORD}|{_BOX_WORD}|full ?set\b)"
+# What a listing says is missing by the negation right before it, on the same
+# line: "ohne Papiere", "keine Box/Papiere", "weder Box noch Papiere", "no box
+# or papers", "kein Fullset". A comma does not join: after it the listing says
+# something new. Nor does the negation reach a word that heads a field of its
+# own: "ohne Box / Papiere: vorhanden". A negation that is a field's own value
+# ("Kratzer: keine Box: ja") or is itself negated ("nicht ohne Papiere") does
+# not say they are missing
+_SAID_ABSENT = re.compile(
+    r"(?P<not_of_them>(?::|\b(?:nicht|not)\b)[^\S\n]*)?"
+    r"\b(?:ohne|kein\w*|weder|no|without)[^\S\n]+"
+    rf"{_NAMED}"
+    r"(?:(?:[^\S\n]+(?:or|oder|und|and|noch)[^\S\n]+|[^\S\n]*[/&][^\S\n]*)"
+    rf"{_NAMED}(?![^\S\n]*:)){{0,3}}"
+)
+
+
 def parse_box_papers(text: str) -> Tuple[Optional[bool], Optional[bool]]:
     """
     Parse box and papers status from text.
@@ -310,6 +335,21 @@ def parse_box_papers(text: str) -> Tuple[Optional[bool], Optional[bool]]:
 
     text_lower = text.lower()
 
+    # Cut out what the listing says is missing. What the rest states to be
+    # there counts first, then what was said to be missing, and a mere mention
+    # last: "Ohne Papiere, die Papiere hat der Vorbesitzer" has no papers. A
+    # full set said to be missing leaves open which of the two is
+    missing = []
+
+    def cut(said):
+        if said.group("not_of_them"):
+            return said.group(0)
+        missing.append(said.group(0))
+        return " | "
+
+    rest = _SAID_ABSENT.sub(cut, text_lower)
+    said_absent = " ".join(missing)
+
     # Check for both together
     both_keywords = [
         "box and paper",
@@ -320,7 +360,7 @@ def parse_box_papers(text: str) -> Tuple[Optional[bool], Optional[bool]]:
         "box, papiere",
     ]
 
-    if any(kw in text_lower for kw in both_keywords):
+    if any(kw in rest for kw in both_keywords):
         return True, True
 
     # Check papers
@@ -338,21 +378,14 @@ def parse_box_papers(text: str) -> Tuple[Optional[bool], Optional[bool]]:
         "service karte",
         "garantiekarte",
         "certificate",
-        "papiere",
-        "papers",
     ]
 
-    papers_no = [
-        "papers: no",
-        "papiere: nein",
-        "ohne papiere",
-        "original-papiere: nein",
-    ]
-
-    if any(kw in text_lower for kw in papers_yes):
+    if any(kw in rest for kw in papers_yes):
         has_papers = True
-    elif any(kw in text_lower for kw in papers_no):
+    elif re.search(_PAPERS_WORD, said_absent):
         has_papers = False
+    elif "papiere" in rest or "papers" in rest:
+        has_papers = True  # Default to yes if papers are mentioned
 
     # Check box
     has_box = None
@@ -369,11 +402,11 @@ def parse_box_papers(text: str) -> Tuple[Optional[bool], Optional[bool]]:
 
     box_no = ["box: no", "box: nein", "ohne box", "original-box: nein"]
 
-    if any(kw in text_lower for kw in box_yes):
+    if any(kw in rest for kw in box_yes):
         has_box = True
-    elif any(kw in text_lower for kw in box_no):
+    elif re.search(_BOX_WORD, said_absent) or any(kw in text_lower for kw in box_no):
         has_box = False
-    elif "box" in text_lower:
+    elif "box" in rest:
         has_box = True  # Default to yes if "box" is mentioned
 
     # Check for "no accessories"

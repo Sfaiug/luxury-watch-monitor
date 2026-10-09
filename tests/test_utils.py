@@ -2,6 +2,7 @@
 
 import pytest
 import asyncio
+import time
 import json
 import aiohttp
 from decimal import Decimal, InvalidOperation
@@ -368,6 +369,96 @@ class TestBoxPapersParsing:
         papers, box = parse_box_papers(None)
         assert papers is None
         assert box is None
+
+    @pytest.mark.parametrize(
+        "text, expected",
+        [
+            # The negation right before the word
+            ("Ohne Papiere, mit Box", (False, True)),
+            ("ohne Box und ohne Papiere", (False, False)),
+            ("keine Papiere vorhanden", (False, None)),
+            ("keine originalen Papiere", (False, None)),
+            ("keinerlei Papiere", (False, None)),
+            ("Kein Zertifikat", (False, None)),
+            ("ohne Garantiekarte", (False, None)),
+            ("Ohne Originalbox", (None, False)),
+            ("without papers", (False, None)),
+            ("no original box", (None, False)),
+            # ... reaching a second word named with it
+            ("Nur Uhr, keine Papiere oder Box vorhanden.", (False, False)),
+            ("no box or papers", (False, False)),
+            ("Uhr ohne Box/Papiere", (False, False)),
+            ("Keine Box & Papiere", (False, False)),
+            ("Weder Box noch Papiere", (False, False)),
+            ("Weder Originalbox noch Garantiekarte", (False, False)),
+            # A comma, another word, a field of its own or the line's end ends it
+            ("Ohne Box, Papiere vorhanden", (True, False)),
+            ("No box, papers included", (True, False)),
+            ("Ohne Box Papiere vorhanden", (True, False)),
+            ("Keine Papiere Box vorhanden", (False, True)),
+            ("Ohne Box / Papiere: vorhanden", (True, False)),
+            ("Ohne Box und Papiere: vorhanden", (True, False)),
+            ("Sehr gut ohne Kratzer Box, Papiere", (True, True)),
+            ("Ungetragen keine Kratzer Box und Papiere", (True, True)),
+            ("No reserve box and papers", (True, True)),
+            ("ohne\nBox", (None, True)),
+            # A negation that is a field's own value says nothing of what follows
+            ("Kratzer: keine\nBox: ja\nPapiere: ja", (True, True)),
+            ("Polished: no\nBox: yes\nPapers: yes", (True, True)),
+            ("Kratzer: keine Box und Papiere dabei", (True, True)),
+            ("Kratzer:  keine Box und Papiere dabei", (True, True)),
+            ("Polished: no Box and papers included", (True, True)),
+            ("Gebrauchsspuren: ohne Box: ja", (None, True)),
+            # ... and one that is itself negated does not say they are missing
+            ("Natürlich nicht ohne Papiere", (True, None)),
+            ("Not without box and papers", (True, True)),
+            # Said to be missing and named again: still missing
+            ("Uhr ohne Papiere. Die Papiere liegen beim Vorbesitzer.", (False, None)),
+            ("Uhr ohne Box. Auf Wunsch liefern wir eine Uhrenbox gegen Aufpreis.", (None, False)),
+            ("Ohne Box (die Box ist leider verloren gegangen), Papiere: ja", (True, False)),
+            # ... unless the listing states that they are there
+            ("Ohne Box. Box: ja", (None, True)),
+            ("Keine Servicepapiere, aber Garantiekarte von 2015", (True, None)),
+            # What was read as missing before still is
+            ("Box: nein (Box beim Umzug verloren)", (None, False)),
+            ("Box: none included", (None, False)),
+            ("Box: no longer available", (None, False)),
+            ("Ohne Box: nur Uhr und Papiere", (True, False)),
+            ("Original-Box: nein, Box kann nachgekauft werden", (None, False)),
+            # A full set said to be missing leaves open which of the two is
+            ("Kein Fullset", (None, None)),
+            ("Kein Full Set, nur Box", (None, True)),
+            ("No full set, box only", (None, True)),
+            # A "no" about something else changes nothing
+            ("kein Kratzer, Box und Papiere dabei", (True, True)),
+            ("No scratches, box/papers", (True, True)),
+            ("Submariner No Date mit Box und Papieren", (True, True)),
+            # A dealer's offer on Kleinanzeigen
+            (
+                "Keine Papiere vorhanden, wir stellen ein eigenes Echtheitszertifikat aus"
+                " ⊛ Keine Originalbox vorhanden",
+                (False, False),
+            ),
+        ],
+    )
+    def test_parse_a_negation_right_before_the_word(self, text, expected):
+        """(papers, box) where the listing says "ohne", "keine", "weder", "no" or "without" before them."""
+        assert parse_box_papers(text) == expected
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "ohne " + "Box und " * 20000 + "Papiere",
+            "keine " * 50000 + "Box",
+            "original " * 50000 + "box",
+            "uhr box papiere ohne kratzer " * 18000,
+        ],
+    )
+    def test_a_long_text_of_such_words_is_read_at_once(self, text):
+        """Half a megabyte takes a fraction of a second; a scan never waits on one description."""
+        started = time.perf_counter()
+        parse_box_papers(text)
+        assert time.perf_counter() - started < 2
 
 
 class TestConditionParsing:
