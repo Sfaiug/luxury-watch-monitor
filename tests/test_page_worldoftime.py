@@ -6,10 +6,11 @@ from decimal import Decimal
 def test_every_priced_watch_has_its_price(listed_watches):
     watches = listed_watches("worldoftime")
 
-    # The eight newest in the section on top, sixteen in the list below it
-    assert len(watches) == 24
-    # The shop shows "Sold" in place of this one's price.
-    assert [w.reference for w in watches if w.price is None] == ["5167A-001"]
+    # The eight newest in the section on top, sixteen in the list below it;
+    # one of the 24, the Aquanaut 5167A-001, shows "Sold" in place of its price
+    assert len(watches) == 23
+    assert "5167A-001" not in [w.reference for w in watches]
+    assert all(w.price for w in watches)
     datejust = watches[8]
     assert (datejust.title, datejust.reference) == ("Rolex Datejust", "16014")
     assert datejust.price == Decimal("6250")

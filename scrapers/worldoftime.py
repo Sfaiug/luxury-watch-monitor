@@ -114,6 +114,9 @@ class WorldOfTimeScraper(BaseScraper):
         price = None
         if price_p_tag:
             price_text_raw = extract_text_from_element(price_p_tag)
+            # A sold watch stays on the page with "Sold" in place of its price
+            if price_text_raw.lower() == "sold":
+                return None
             if price_text_raw:
                 price = parse_price(price_text_raw, "EUR")
         
