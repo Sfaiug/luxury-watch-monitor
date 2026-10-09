@@ -63,17 +63,16 @@ class JuwelierExchangeScraper(BaseScraper):
             elif img_tag.has_attr('src'):
                 image_url = urljoin(self.config.base_url, img_tag['src'])
         
-        # The card's own data names the watch and has the price to pay; the
-        # visible price block of a reduced watch also holds the old price and
-        # the saving
+        # The card's own data has the price to pay; the visible price block of a
+        # reduced watch also holds the old price and the saving
         listed = json.loads(item_tag['data-product-information'])
         listed_price = listed.get('price')
         price = Decimal(str(listed_price)) if listed_price is not None else None
         
-        # The watch's own page adds the rest
-        return WatchData(
-            title=listed.get('name') or "Unknown Watch",
-            brand=listed.get('brand'),
+        # Made of price and address alone, as it was when the server learned the
+        # former id it remembers the watch under
+        watch = WatchData(
+            title="Unknown Watch",
             url=url,
             site_name=self.config.name,
             site_key=self.config.key,
@@ -81,13 +80,39 @@ class JuwelierExchangeScraper(BaseScraper):
             currency="EUR",
             image_url=image_url
         )
+        # The card names the watch, so its alert does too when the watch's own
+        # page cannot be read; that page adds the rest
+        if listed.get('name'):
+            watch.title = listed['name']
+            watch.brand = listed.get('brand')
+            watch.model = self._model(watch.title, watch.brand)
+        return watch
+    
+    @staticmethod
+    def _model(title: str, brand: Optional[str]) -> Optional[str]:
+        """The model as the watch's name gives it: what stands in quotes, else its first words."""
+        if not brand:
+            return None
+        model_candidate = re.sub(r"^(Herrenuhr|Damenuhr|Unisexuhr)\s+", "", title, flags=re.IGNORECASE).strip()
+        model_candidate = re.sub(fr"^{re.escape(brand)}\s*", "", model_candidate, flags=re.IGNORECASE).strip()
+        
+        quoted_model_match = re.search(r"'(.*?)'", model_candidate)
+        if quoted_model_match and len(quoted_model_match.group(1).strip()) > 1:
+            model = quoted_model_match.group(1).strip()
+        else:  # Fallback: remove common terms
+            temp_model = re.sub(r'\s*(Automatik|Quarz|Chrono|GMT|Date)$', '', model_candidate, flags=re.IGNORECASE).strip(" ,")
+            model = " ".join(temp_model.split()[:3]).strip()
+        
+        if len(model) < 2 or model.lower() == brand.lower():
+            return None
+        return model
     
     async def _extract_watch_details(self, watch: WatchData, soup: BeautifulSoup):
         """Extract additional details from Juwelier Exchange detail page - matching original exactly."""
         
-        # The watch has its name and brand from the listing card
+        # The watch has its name, brand and model from the listing card
         details = {
-            "model": None, "reference": None, "year": None,
+            "reference": None, "year": None,
             "condition_text": None, "case_material": None, "diameter": None,
             "box_status": None, "papers_status": None
         }
@@ -162,29 +187,7 @@ class JuwelierExchangeScraper(BaseScraper):
                     else:
                         details["case_material"] = mat_text_raw.title()
         
-        # Refine model extraction from title
-        if watch.brand:
-            model_candidate = watch.title
-            model_candidate = re.sub(r"^(Herrenuhr|Damenuhr|Unisexuhr)\s+", "", model_candidate, flags=re.IGNORECASE).strip()
-            model_candidate = re.sub(fr"^{re.escape(watch.brand)}\s*", "", model_candidate, flags=re.IGNORECASE).strip()
-            
-            # Try to extract from single quotes
-            quoted_model_match = re.search(r"'(.*?)'", model_candidate)
-            if quoted_model_match and len(quoted_model_match.group(1).strip()) > 1:
-                details["model"] = quoted_model_match.group(1).strip()
-            else:  # Fallback: remove reference and common terms
-                temp_model = model_candidate
-                if details.get("reference") and details["reference"] in temp_model:
-                    temp_model = temp_model.replace(details["reference"], "").strip(" |,-")
-                temp_model = re.sub(r'\s*(Automatik|Quarz|Chrono|GMT|Date)$', '', temp_model, flags=re.IGNORECASE).strip(" ,")
-                details["model"] = " ".join(temp_model.split()[:3]).strip() if temp_model else None
-            
-            if not details["model"] or details["model"].lower() == watch.brand.lower() or len(details["model"]) < 2:
-                details["model"] = None
-        
         # Update watch object with extracted details
-        if details["model"]:
-            watch.model = details["model"]
         if details["reference"]:
             watch.reference = details["reference"]
         if details["year"]:

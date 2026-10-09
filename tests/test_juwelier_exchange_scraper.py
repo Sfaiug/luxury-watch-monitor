@@ -464,27 +464,14 @@ class TestJuwelierExchangeScraper:
         assert watch.has_box is True
         assert watch.has_papers is True
 
-    @pytest.mark.asyncio
     @pytest.mark.xfail(
         strict=True,
         reason="the name 'Rolex Submariner Date Ref. 116610LN' gives the model 'Submariner Date Ref.': "
-        "the reference is cut out but its 'Ref.' stays",
+        "its first three words, 'Ref.' among them",
     )
-    async def test_extract_watch_details_model_before_a_reference(self, juwelier_exchange_scraper, juwelier_exchange_detail_html):
+    def test_model_before_a_reference(self, juwelier_exchange_scraper):
         """A name that ends in "Ref. <reference>" gives the model without it."""
-        watch = WatchData(
-            title="Rolex Submariner Date Ref. 116610LN",
-            brand="Rolex",
-            url="https://juwelier-exchange.de/uhren/test",
-            site_name="Juwelier Exchange",
-            site_key="juwelier_exchange"
-        )
-
-        soup = BeautifulSoup(juwelier_exchange_detail_html, 'html.parser')
-
-        await juwelier_exchange_scraper._extract_watch_details(watch, soup)
-
-        assert watch.model == "Submariner"
+        assert juwelier_exchange_scraper._model("Rolex Submariner Date Ref. 116610LN", "Rolex") == "Submariner"
 
     @pytest.mark.asyncio
     @pytest.mark.xfail(
