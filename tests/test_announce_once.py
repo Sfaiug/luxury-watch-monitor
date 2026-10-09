@@ -59,17 +59,42 @@ async def test_a_link_that_changes_with_the_page_is_the_same_listing(test_site_c
     assert await scan(shop, watch("/watches/a?surroundingwotids=C,D,E")) == []
 
 
-async def test_a_shop_remembered_under_the_old_ids_is_not_announced_whole(test_site_config):
+async def test_a_watch_remembered_under_its_former_id_is_not_announced_again(test_site_config):
     shop = Shop(test_site_config, None, logging.getLogger("test"))
-    remembered = {"0123456789abcdef0123456789abcdef", "fedcba9876543210fedcba9876543210"}
-    shop.set_seen_ids(remembered)
+    a, b = watch("/watches/a"), watch("/watches/b")
+    shop.set_seen_ids({a.former_id})  # announced before the ids changed
 
-    # Everything listed looks new against the old ids: stock is taken, nothing announced
-    assert await scan(shop, watch("/watches/a"), watch("/watches/b")) == []
-    assert all(WatchData.is_id_of(seen, "test_site") for seen in remembered)
-    assert len(remembered) == 2  # the outdated ids are gone, the two listings are in
-
-    # From then on the shop announces its news
-    assert await scan(shop, watch("/watches/a"), watch("/watches/c")) == [
-        "https://example.com/watches/c"
+    # A page without listings changes nothing
+    assert await scan(shop) == []
+    assert await scan(shop, a, b) == ["https://example.com/watches/b"]
+    assert await scan(shop, a, b) == []
+    # Its new price is still news
+    assert await scan(shop, watch("/watches/a", price="4500")) == [
+        "https://example.com/watches/a"
     ]
+
+
+def test_the_former_id_is_the_one_the_server_remembers():
+    """Two ids as the code before this change made them."""
+    hashed = WatchData(
+        title="Rolex Datejust",
+        url="https://www.grimmeissen.de/de/uhren/rolex/datejust/1017001",
+        site_name="Grimmeissen",
+        site_key="grimmeissen",
+        brand="Rolex",
+        model="Datejust",
+        reference="16234",
+        year="1995",
+        price=Decimal("6900"),
+        case_material="Stahl",
+    )
+    by_link = WatchData(
+        title="Unknown Watch",
+        url="https://www.juwelier-exchange.de/uhren/herrenuhren/978973/herrenuhr-rolex-gmt-master-ii-automatik",
+        site_name="Juwelier Exchange",
+        site_key="juwelier_exchange",
+        price=Decimal("15750"),
+    )
+
+    assert hashed.former_id == "1db30a63397ba5f2636170d6d4563843"
+    assert by_link.former_id == "1cface00f8114163f5a3ba58f3b852ee"
