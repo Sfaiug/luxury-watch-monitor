@@ -11,5 +11,4 @@ Wants=network-online.target
 Type=oneshot
 User=info
 Group=info
-WorkingDirectory=/home/info/luxury-watch-monitor
 ExecStart=/home/info/luxury-watch-monitor/deploy/auto_deploy.sh
