@@ -9,6 +9,7 @@ from html import escape
 
 from aiohttp import web
 
+from agent import OPENING
 from config import APP_CONFIG
 from prices import Prices
 from utils import parse_price
@@ -126,7 +127,7 @@ shipping and the margin tax. Your price, once set, is the limit in its place; an
             )
         return (
             "<h2>Kleinanzeigen matches</h2><p>What the agent read in each match, and whether it would contact the seller,"
-            " opening at 88&nbsp;% of the lower of asking price and limit. Nothing is sent to sellers yet.</p>"
+            f" opening at {round(OPENING * 100)}&nbsp;% of the lower of asking price and limit. Nothing is sent to sellers yet.</p>"
             "<div class=table><table><thead><tr><th>Judged</th><th>Offer</th><th>Read</th><th>Asking</th><th>Worth</th>"
             f"<th>Limit</th><th>Opening</th><th>Verdict</th></tr></thead><tbody>{''.join(rows)}</tbody></table></div>"
             "<h2>Watches</h2>"

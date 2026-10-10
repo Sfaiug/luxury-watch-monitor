@@ -20,7 +20,8 @@ from pydantic import BaseModel, Field
 from config import APP_CONFIG
 from models import WatchData
 from prices import Prices, reference_key
-from utils import extract_text_from_element, parse_price
+from scrapers.kleinanzeigen import asking_price
+from utils import extract_text_from_element
 from worth import buy_limit, worth
 
 PHOTOS = 6  # photos the AI looks at, the first ones the seller chose
@@ -133,9 +134,9 @@ def decide(reading: Reading, asking: Optional[Decimal], prices: Prices) -> Verdi
     if not asking:
         return Verdict(False, "no price")
     value, limit = worth(prices, reading.reference), buy_limit(prices, reading.reference)
-    if value is None or limit is None:
-        return Verdict(False, f"too few Chrono24 offers for {reading.reference} yet", value, limit)
-    if asking < value * TOO_CHEAP:
+    if limit is None:  # no worth and no price of the owner's
+        return Verdict(False, f"too few Chrono24 offers for {reading.reference} yet")
+    if value is not None and asking < value * TOO_CHEAP:
         return Verdict(False, "too cheap to be what it says", value, limit)
     if asking > limit * TOO_DEAR:
         return Verdict(False, "asks too much above the limit", value, limit)
@@ -209,7 +210,7 @@ class Agent:
             try:
                 offer = offer_page(await self.fetch(watch.url))
                 # The price on the offer's own page is the one asked now
-                asking = parse_price(offer.price_text.replace("VB", "")) or watch.price
+                asking = asking_price(offer.price_text) or watch.price
                 reading = await read(self.client, offer)
                 if reading is None:
                     verdict = Verdict(False, "the AI declined to read it")

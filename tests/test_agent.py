@@ -167,6 +167,14 @@ def test_the_owner_s_buy_price_moves_the_limit(prices):
     assert (verdict.contact, verdict.limit, verdict.opening) == (True, Decimal("10000"), Decimal("8800"))
 
 
+def test_the_owner_s_buy_price_is_the_limit_before_chrono24_has_enough_offers(prices):
+    prices.set_buy_price("126610LN", 10000, SEARCHED)
+
+    verdict = decide(reading(reference="126610LN"), Decimal("9000"), prices)
+
+    assert (verdict.contact, verdict.worth, verdict.limit, verdict.opening) == (True, None, Decimal("10000"), Decimal("7900"))
+
+
 async def test_a_match_is_judged_from_its_own_page_and_the_verdict_kept(prices, deals):
     claude = Claude(reading(reference="116610LV", model="Submariner Date Hulk").model_dump_json())
     pages = AsyncMock(return_value=OFFER)
