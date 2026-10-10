@@ -13,10 +13,11 @@ from notifications import NotificationManager
 from logging_config import setup_logging, PerformanceLogger
 from scrapers.base import BaseScraper
 from memory_monitor import MemoryMonitor
-from utils import clear_exchange_rate_cache
+from utils import clear_exchange_rate_cache, fetch_page
 from action_store import ActionStore
 import chrono24
 from prices import Prices
+from agent import Agent, Deals
 from prices_page import PricesPage
 from discord_interactions import DiscordInteractionServer, discord_route_enabled
 from muv_service import MUVActionService
@@ -65,6 +66,9 @@ class WatchMonitor:
         self.notification_manager: Optional[NotificationManager] = None
         self.action_store: Optional[ActionStore] = None
         self.prices: Optional[Prices] = None
+        self.deals: Optional[Deals] = None
+        self.agent: Optional[Agent] = None
+        self._judging: Set[asyncio.Task] = set()
         self.muv_service: Optional[MUVActionService] = None
         self.discord_interaction_server: Optional[DiscordInteractionServer] = None
         self.memory_monitor = MemoryMonitor()
@@ -130,6 +134,11 @@ class WatchMonitor:
             await self.muv_service.register_configured_offer_links()
 
         self.prices = Prices(APP_CONFIG.prices_file)
+        if APP_CONFIG.agent_model and os.getenv("ANTHROPIC_API_KEY"):
+            from anthropic import AsyncAnthropic
+
+            self.deals = Deals(APP_CONFIG.deals_file)
+            self.agent = Agent(AsyncAnthropic(), self._page, self.prices, self.deals, self.logger)
 
         # Initialize notification manager
         self.notification_manager = NotificationManager(
@@ -161,7 +170,7 @@ class WatchMonitor:
                 self.muv_service,
                 self.logger,
                 self.filter_flow,
-                [PricesPage(self.prices, APP_CONFIG.action_token_secret)],
+                [PricesPage(self.prices, APP_CONFIG.action_token_secret, self.deals)],
             )
             await self.discord_interaction_server.start()
 
@@ -251,6 +260,13 @@ class WatchMonitor:
                 if self.action_store:
                     self.action_store.close()
                     self.action_store = None
+
+                for judging in self._judging:
+                    judging.cancel()
+                self.agent = None
+                if self.deals:
+                    self.deals.close()
+                    self.deals = None
 
                 if self.prices:
                     self.prices.close()
@@ -609,9 +625,21 @@ class WatchMonitor:
             if self.prices and scraper.config.eu:
                 self.prices.saw(scraper.last_scan)
 
+            # A member's Kleinanzeigen matches go to the buying agent, beside the scans
+            if self.agent and new_watches and site_key in self.filter_keys:
+                judging = asyncio.create_task(self.agent.consider(new_watches))
+                self._judging.add(judging)
+                judging.add_done_callback(self._judging.discard)
+
         except Exception as e:
             self.logger.exception(f"Error scraping {site_key}: {e}")
             session.add_site_result(site_key, 0, 0, 0, errors=1)
+
+    async def _page(self, url: str) -> str:
+        page = await fetch_page(self.session, url, self.logger)
+        if page is None:
+            raise RuntimeError(f"{url} could not be read")
+        return page
 
     async def _monitor_muv_offer_links(self, *, force: bool = False) -> int:
         """Poll stored MUV offer links and post changed states to Discord."""
