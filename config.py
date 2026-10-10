@@ -151,6 +151,7 @@ class AppConfig:
     # an empty AGENT_EFFORT is for a model that takes no effort at all
     agent_model: str = os.getenv("AGENT_MODEL", "")
     agent_effort: str = os.getenv("AGENT_EFFORT", "xhigh")
+    deals_file: str = os.getenv("DEALS_FILE", "deals.sqlite3")
 
     # MUV / Discord interaction actions
     enable_muv_actions: bool = _env_bool("ENABLE_MUV_ACTIONS", "false")

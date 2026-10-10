@@ -13,8 +13,9 @@ tests: scripts/test.sh
 - `chrono24.keep_up` runs beside the scans and searches Chrono24 inside the EU for every reference in `prices.Prices`, again once a week, keeping its offers there too. Chrono24 lets only a real Chrome through, and from the server's own address not even that: each search is a page in Google Chrome (`google-chrome-stable` and `xvfb` on the server) through the next proxy in `proxies.txt`.
 - `worth.worth` is what a watch is worth: the price a quarter of its Chrono24 offers inside the EU ask less than, from five offers up. `worth.most_to_pay` is the most to pay for it so that selling it at that worth still leaves the least profit, after Chrono24's fee, insured shipping and the margin tax; the shares and amounts are server settings in `config.py`.
 - `prices_page.PricesPage` is the owner's page at `/muv/prices?key=…` (the key is `prices_page.key(ACTION_TOKEN_SECRET)`): each reference's Chrono24 offers, worth, most to pay and the owner's own buy price, which `worth.buy_limit` puts in place of the worked-out one.
+- `agent.Agent` takes each new match of a member's Kleinanzeigen filter: the AI (`AGENT_MODEL` at `AGENT_EFFORT`, with `ANTHROPIC_API_KEY`; off without them) reads the offer's own page into an `agent.Reading`, `agent.decide` puts the owner's numbers to it in code, and the verdict is kept in `deals.sqlite3` and shown on the prices page. Nothing is sent to sellers yet.
 - Whatever calls Discord as the bot does it through `discord_api.DiscordApi.call`: alerts, the filter flow, the MUV result messages.
-- Not in git, on the server only: `.env` (webhooks, bot token), `proxies.txt` (the owner's proxies, one `host:port:user:password` per line), `filters.json` (the members' filters) and `prices.sqlite3` (the offers seen), all in the checkout.
+- Not in git, on the server only: `.env` (webhooks, bot token), `proxies.txt` (the owner's proxies, one `host:port:user:password` per line), `filters.json` (the members' filters) `prices.sqlite3` (the offers seen and the owner's buy prices) and `deals.sqlite3` (the agent's verdicts), all in the checkout.
 
 ## Owner rules
 

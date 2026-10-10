@@ -2,6 +2,7 @@
 
 import json
 import re
+from decimal import Decimal
 from typing import List, Optional, Sequence
 from urllib.parse import quote
 
@@ -39,6 +40,11 @@ def search_url(
     )
 
 
+def asking_price(price_text: str) -> Optional[Decimal]:
+    """The euros an offer asks, as its card or its own page writes them."""
+    return parse_price(price_text.replace("VB", ""), "EUR")
+
+
 class KleinanzeigenScraper(BaseScraper):
     """Reads the result page of a Kleinanzeigen search (config.url)."""
 
@@ -74,7 +80,7 @@ class KleinanzeigenScraper(BaseScraper):
             url=f"{BASE_URL}/s-anzeige/{card['data-adid']}",
             site_name=self.config.name,
             site_key=self.config.key,
-            price=parse_price(price_text.replace("VB", ""), "EUR"),
+            price=asking_price(price_text),
             currency="EUR",
             image_url=json.loads(ad.string).get("contentUrl") if ad else None,
         )
