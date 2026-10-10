@@ -15,7 +15,7 @@ tests: scripts/test.sh
 - `prices_page.PricesPage` is the owner's page at `/muv/prices?key=…` (the key is `prices_page.key(ACTION_TOKEN_SECRET)`): each reference's Chrono24 offers, worth, most to pay and the owner's own buy price, which `worth.buy_limit` puts in place of the worked-out one.
 - `agent.Agent` takes each new match of a member's Kleinanzeigen filter: `agent.offer_page` reads the offer's own page, `agent.read` has the AI read it into an `agent.Reading` (the model is `AGENT_MODEL` at `AGENT_EFFORT` in `config.py`, with `ANTHROPIC_API_KEY`; off without them), `agent.decide` puts the owner's numbers to it in code, and the verdict is kept in `deals.sqlite3` and shown on the prices page. Nothing is sent to sellers yet.
 - Whatever calls Discord as the bot does it through `discord_api.DiscordApi.call`: alerts, the filter flow, the MUV result messages.
-- Not in git, on the server only: `.env` (webhooks, bot token), `proxies.txt` (the owner's proxies, one `host:port:user:password` per line), `filters.json` (the members' filters) `prices.sqlite3` (the offers seen and the owner's buy prices) and `deals.sqlite3` (the agent's verdicts), all in the checkout.
+- Not in git, on the server only: `.env` (webhooks, bot token), `proxies.txt` (the owner's proxies, one `host:port:user:password` per line), `filters.json` (the members' filters), `prices.sqlite3` (the offers seen and the owner's buy prices) and `deals.sqlite3` (the agent's verdicts), all in the checkout.
 
 ## Owner rules
 
