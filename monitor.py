@@ -15,6 +15,7 @@ from scrapers.base import BaseScraper
 from memory_monitor import MemoryMonitor
 from utils import clear_exchange_rate_cache
 from action_store import ActionStore
+import chrono24
 from prices import Prices
 from discord_interactions import DiscordInteractionServer, discord_route_enabled
 from muv_service import MUVActionService
@@ -636,11 +637,22 @@ class WatchMonitor:
 
     async def run_continuous(self) -> bool:
         """
-        Run continuous monitoring with configured interval.
+        Run continuous monitoring with configured interval, and keep the
+        Chrono24 offers of the watches the shops show up to date beside it.
 
         Returns:
             bool: True if restart is requested, False otherwise
         """
+        market = asyncio.create_task(chrono24.keep_up(self.prices, self.logger)) if self.prices else None
+        try:
+            return await self._run_cycles()
+        finally:
+            # Its Chrome and screen close with it
+            if market:
+                market.cancel()
+                await asyncio.gather(market, return_exceptions=True)
+
+    async def _run_cycles(self) -> bool:
         self.running = True
         self.logger.info(
             f"Starting continuous monitoring with {APP_CONFIG.check_interval_seconds}s interval"
