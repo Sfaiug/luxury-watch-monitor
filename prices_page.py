@@ -37,7 +37,7 @@ input[type=search] { width: 100%; box-sizing: border-box; padding: 8px; margin: 
 .table { overflow-x: auto; }
 table { border-collapse: collapse; width: 100%; }
 th, td { padding: 6px 8px; border-bottom: 1px solid var(--line); text-align: left; }
-th, td.n { white-space: nowrap; }
+th, td.n, time { white-space: nowrap; }
 td.n { text-align: right; font-variant-numeric: tabular-nums; }
 tr.own td.limit { color: var(--own); font-weight: 600; }
 form { display: flex; gap: 4px; margin: 0; }
@@ -79,7 +79,7 @@ class PricesPage:
             own = self.prices.buy_price(reference)
             market = f"{found} offers" if found is not None else "not searched yet"
             if searched:
-                market += f", {searched[:10]}"
+                market += f", <time>{searched[:10]}</time>"
             rows.append(
                 f'<tr id="{escape(reference)}" class="{"own" if own is not None else ""}">'
                 f"<td>{escape(brand or '')}</td><td>{escape(model or '')}</td><td>{escape(reference)}</td>"
