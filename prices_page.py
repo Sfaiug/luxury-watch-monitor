@@ -143,7 +143,7 @@ shipping and the margin tax. Your price, once set, is the limit in its place; an
         given = str(form.get("price", "")).strip()
         # Checked as it is kept: "1e400" is a finite Decimal and an infinite float
         parsed = parse_price(given) if given else None
-        price = float(parsed) if parsed is not None else None
+        price = float(parsed) if parsed is not None and parsed.is_finite() else None
         if not reference or (given and not (price and math.isfinite(price) and price > 0)):
             return web.Response(status=400, text="A buy price is a number of euros above nothing, or nothing.")
 
