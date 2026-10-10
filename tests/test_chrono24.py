@@ -146,6 +146,15 @@ async def test_references_never_searched_come_before_the_ones_searched_longest_a
     ]
 
 
+async def test_a_search_that_found_offers_but_kept_none_is_due_again(prices):
+    prices.saw([shop_offer("116610LN"), shop_offer("99999XYZ")])
+    # As searches were noted before they kept the offers they read
+    prices.searched("116610LN", 192, [], SEEN)
+    prices.searched("99999XYZ", 0, [], SEEN)
+
+    assert prices.due(SEEN - chrono24.FRESH, 20) == [("Rolex", "116610LN")]
+
+
 async def test_a_page_that_is_no_search_result_ends_the_round_and_leaves_its_reference_due(prices):
     prices.saw([shop_offer("116610LN"), shop_offer("126610LN")])
     chrome = Chrome({"Rolex 116610LN": "chrono24_human_check.html"})

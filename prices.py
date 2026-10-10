@@ -104,11 +104,17 @@ class Prices:
                     )
 
     def due(self, before: datetime, limit: int) -> List[Tuple[Optional[str], str]]:
-        """Brand and reference of offered watches the market was not searched for since `before`, never searched first."""
+        """Brand and reference of offered watches the market was not searched for since `before`, never searched first.
+
+        A search that found offers but kept none of them (as searches did
+        before they kept what they read) is no search to go by.
+        """
         return self._db.execute(
             "SELECT MAX(offers.brand), offers.reference FROM offers "
             "LEFT JOIN searches ON searches.reference = offers.reference "
             "WHERE searches.searched IS NULL OR searches.searched < ? "
+            "OR (searches.found > 0 AND NOT EXISTS "
+            "(SELECT 1 FROM searched_offers WHERE searched_offers.reference = offers.reference)) "
             "GROUP BY offers.reference "
             "ORDER BY MAX(searches.searched) IS NOT NULL, MAX(searches.searched), offers.reference "
             "LIMIT ?",
