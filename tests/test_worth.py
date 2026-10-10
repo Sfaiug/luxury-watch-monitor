@@ -22,8 +22,7 @@ def prices(tmp_path):
 
 
 def searched(prices, found, offers, at=SEARCHED, reference="116610LN"):
-    prices.saw(offers)
-    prices.searched(reference, found, at)
+    prices.searched(reference, found, offers, at)
 
 
 def chrono24_offers(*asked, at=SEARCHED, reference="116610LN"):
@@ -76,11 +75,21 @@ def test_only_the_offers_its_last_search_still_found_count(prices):
     assert worth(prices, "116610LN") == Decimal("9500")
 
 
+def test_the_offers_a_search_read_count_whichever_reference_read_them_first(prices):
+    earlier = SEARCHED - timedelta(hours=1)
+    searched(prices, 4, chrono24_offers("9000", "9100", "9200", "9300", at=earlier), at=earlier, reference="116610")
+    searched(prices, 8, chrono24_offers(*(str(9000 + 100 * n) for n in range(8))))
+
+    assert worth(prices, "116610LN") == Decimal("9100")
+    assert prices.market("116610") == (4, [9000, 9100, 9200, 9300])
+
+
 def test_a_shop_s_offers_are_not_the_market(prices):
     shop = chrono24_offers("5000", "5100", "5200", "5300", "5400")
     for offer in shop:
         offer.site_key = "worldoftime"
-    searched(prices, 5, shop + chrono24_offers("9000", "9500", "9800", "12000", "12500"))
+    prices.saw(shop)
+    searched(prices, 5, chrono24_offers("9000", "9500", "9800", "12000", "12500"))
 
     assert worth(prices, "116610LN") == Decimal("9500")
 

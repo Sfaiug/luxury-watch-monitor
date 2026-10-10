@@ -156,8 +156,7 @@ async def search_round(prices: Prices, chrome, now=datetime.now) -> int:
                 await asyncio.sleep(PAUSE)
             seen = now()
             found, offers = read(await browser.page(search_url(brand, reference)), brand, reference, seen)
-            prices.saw(offers)
-            prices.searched(reference, found, seen)
+            prices.searched(reference, found, offers, seen)
     return len(due)
 
 

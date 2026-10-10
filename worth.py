@@ -17,7 +17,7 @@ def worth(prices: Prices, reference: str) -> Optional[Decimal]:
     A search reads the cheapest 120 offers: for a watch offered more than 480
     times the dearest of those stands in for the quarter, which only lowers it.
     """
-    found, asked = prices.market("chrono24", reference)
+    found, asked = prices.market(reference)
     if found < FEWEST or not asked:
         return None
     return Decimal(str(asked[min(math.ceil(found / 4), len(asked)) - 1]))

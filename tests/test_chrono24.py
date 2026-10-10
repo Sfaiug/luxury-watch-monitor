@@ -135,8 +135,8 @@ async def test_a_reference_is_searched_again_once_its_offers_are_a_week_old(pric
 
 async def test_references_never_searched_come_before_the_ones_searched_longest_ago(prices):
     prices.saw([shop_offer("116610LN"), shop_offer("126610LN")])
-    prices.searched("116610LN", 192, SEEN - timedelta(days=9))
-    prices.searched("126610LN", 309, SEEN - timedelta(days=8))
+    prices.searched("116610LN", 192, [], SEEN - timedelta(days=9))
+    prices.searched("126610LN", 309, [], SEEN - timedelta(days=8))
     prices.saw([shop_offer("5711/1A-010", brand="Patek Philippe")])
 
     assert prices.due(SEEN - chrono24.FRESH, 20) == [
