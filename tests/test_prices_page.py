@@ -58,7 +58,7 @@ async def test_each_watch_shows_its_market_worth_and_most_to_pay(client):
     page = await (await client.get(PATH, params={"key": key(SECRET)})).text()
 
     rolex = page[page.index('id="116610LN"'):].split("</tr>")[0]
-    assert "192 offers, 2026-10-10" in rolex
+    assert "192 offers, <time>2026-10-10</time>" in rolex  # a date kept whole on its line
     assert "10.800 €" in rolex  # worth: the 48th cheapest of 192
     assert "8.608 €" in rolex  # most to pay, and the limit while the owner sets none
 
