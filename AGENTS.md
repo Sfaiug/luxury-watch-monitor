@@ -10,6 +10,7 @@ tests: scripts/test.sh
 - Live: `ssh live`, checkout `/home/info/luxury-watch-monitor`, service `extras-luxury-watch-monitor`, log `/home/info/logs/extras-luxury-watch-monitor.log`. A merge to `main` is live within about two minutes: `luxury-watch-monitor-deploy.timer` runs `deploy/auto_deploy.sh` there.
 - A member's filter is one more source: a search on a marketplace (one entry in `filters.STORES`) whose matches go to a channel of its own. `filter_flow.py` is the Discord conversation that makes one, from the "New filter" button in `#new-filter`; deleting the channel ends the filter.
 - `prices.Prices` remembers what every watch listed by a shop in the EU is offered for, one row per offer from its first sighting to its last: the start of the price database a watch's worth is to come from.
+- `chrono24.keep_up` runs beside the scans and searches Chrono24 inside the EU for every reference in `prices.Prices`, again once a week, keeping its offers there too. Chrono24 lets only a real Chrome through, and from the server's own address not even that: each search is a page in Google Chrome (`google-chrome-stable` and `xvfb` on the server) through the next proxy in `proxies.txt`.
 - Whatever calls Discord as the bot does it through `discord_api.DiscordApi.call`: alerts, the filter flow, the MUV result messages.
 - Not in git, on the server only: `.env` (webhooks, bot token), `proxies.txt` (the owner's proxies, one `host:port:user:password` per line), `filters.json` (the members' filters) and `prices.sqlite3` (the offers seen), all in the checkout.
 

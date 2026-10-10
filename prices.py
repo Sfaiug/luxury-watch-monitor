@@ -2,7 +2,8 @@
 
 import re
 import sqlite3
-from typing import Iterable
+from datetime import datetime
+from typing import Iterable, List, Optional, Tuple
 
 from models import WatchData
 
@@ -36,6 +37,14 @@ class Prices:
                 )
             """)
             self._db.execute("CREATE INDEX IF NOT EXISTS offers_reference ON offers (reference)")
+            # When the market was last searched for a reference, and how many offers it found
+            self._db.execute("""
+                CREATE TABLE IF NOT EXISTS searches (
+                    reference TEXT PRIMARY KEY,
+                    found INTEGER NOT NULL,
+                    searched TEXT NOT NULL
+                )
+            """)
 
     def close(self):
         self._db.close()
@@ -76,3 +85,23 @@ class Prices:
                             seen,
                         ),
                     )
+
+    def due(self, before: datetime, limit: int) -> List[Tuple[Optional[str], str]]:
+        """Brand and reference of offered watches the market was not searched for since `before`, never searched first."""
+        return self._db.execute(
+            "SELECT MAX(offers.brand), offers.reference FROM offers "
+            "LEFT JOIN searches ON searches.reference = offers.reference "
+            "WHERE searches.searched IS NULL OR searches.searched < ? "
+            "GROUP BY offers.reference "
+            "ORDER BY MAX(searches.searched) IS NOT NULL, MAX(searches.searched), offers.reference "
+            "LIMIT ?",
+            (before.isoformat(timespec="seconds"), limit),
+        ).fetchall()
+
+    def searched(self, reference: str, found: int, at: datetime):
+        """Note that the market was searched for the reference and found this many offers in all."""
+        with self._db:
+            self._db.execute(
+                "INSERT OR REPLACE INTO searches VALUES (?, ?, ?)",
+                (reference_key(reference), found, at.isoformat(timespec="seconds")),
+            )
