@@ -136,6 +136,15 @@ class AppConfig:
         "ENABLE_EXCHANGE_RATE_CONVERSION", "true"
     ).lower() in ("true", "1", "yes")
 
+    # What buying a watch must leave once it is sold again on Chrono24: the
+    # least profit is a share of its worth and never less than a floor (owner
+    # rule, 10 Oct 2026: 10 % and at least 500 EUR, which the owner moves),
+    # after Chrono24's fee on the sale and insured shipping
+    least_profit_share: float = float(os.getenv("LEAST_PROFIT_SHARE", "0.10"))
+    least_profit_eur: float = float(os.getenv("LEAST_PROFIT_EUR", "500"))
+    sale_fee_share: float = float(os.getenv("SALE_FEE_SHARE", "0.065"))
+    sale_shipping_eur: float = float(os.getenv("SALE_SHIPPING_EUR", "60"))
+
     # MUV / Discord interaction actions
     enable_muv_actions: bool = _env_bool("ENABLE_MUV_ACTIONS", "false")
     action_store_file: str = os.getenv("ACTION_STORE_FILE", "muv_actions.sqlite3")

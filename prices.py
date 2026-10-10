@@ -45,6 +45,15 @@ class Prices:
                     searched TEXT NOT NULL
                 )
             """)
+            # The offers the last search for a reference read
+            self._db.execute("""
+                CREATE TABLE IF NOT EXISTS searched_offers (
+                    reference TEXT NOT NULL,
+                    site_key TEXT NOT NULL,
+                    address TEXT NOT NULL,
+                    PRIMARY KEY (reference, site_key, address)
+                )
+            """)
 
     def close(self):
         self._db.close()
@@ -98,10 +107,30 @@ class Prices:
             (before.isoformat(timespec="seconds"), limit),
         ).fetchall()
 
-    def searched(self, reference: str, found: int, at: datetime):
-        """Note that the market was searched for the reference and found this many offers in all."""
+    def searched(self, reference: str, found: int, offers: List[WatchData], at: datetime):
+        """Note that the market was searched for the reference, found this many offers in all and read these."""
+        key = reference_key(reference)
+        self.saw(offers)
         with self._db:
             self._db.execute(
                 "INSERT OR REPLACE INTO searches VALUES (?, ?, ?)",
-                (reference_key(reference), found, at.isoformat(timespec="seconds")),
+                (key, found, at.isoformat(timespec="seconds")),
             )
+            self._db.execute("DELETE FROM searched_offers WHERE reference = ?", (key,))
+            self._db.executemany(
+                "INSERT OR IGNORE INTO searched_offers VALUES (?, ?, ?)",
+                [(key, offer.site_key, offer.address) for offer in offers],
+            )
+
+    def market(self, reference: str) -> Tuple[int, List[float]]:
+        """How many offers the last search of the market found for a reference, and the prices of those it read, cheapest first."""
+        key = reference_key(reference)
+        search = self._db.execute("SELECT found FROM searches WHERE reference = ?", (key,)).fetchone()
+        if not search:
+            return 0, []
+        read = self._db.execute(
+            "SELECT price FROM searched_offers JOIN offers USING (site_key, address) "
+            "WHERE searched_offers.reference = ? ORDER BY price",
+            (key,),
+        )
+        return search[0], [price for (price,) in read]
