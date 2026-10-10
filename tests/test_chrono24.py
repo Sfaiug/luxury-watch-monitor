@@ -146,6 +146,23 @@ async def test_references_never_searched_come_before_the_ones_searched_longest_a
     ]
 
 
+async def test_the_searches_noted_before_they_kept_what_they_read_are_due_once_more(tmp_path):
+    before = Prices(tmp_path / "prices.sqlite3")
+    before.saw([shop_offer("116610LN"), shop_offer("99999XYZ")])
+    before.searched("116610LN", 192, [], SEEN)
+    before.searched("99999XYZ", 0, [], SEEN)
+    before._db.execute("PRAGMA user_version = 0")  # a file from before
+    before.close()
+
+    prices = Prices(tmp_path / "prices.sqlite3")
+    assert prices.due(SEEN - chrono24.FRESH, 20) == [("Rolex", "116610LN")]
+
+    # A search that keeps none now, of offers with no price, stands for its week
+    prices.searched("116610LN", 192, [], SEEN)
+    prices.close()
+    assert Prices(tmp_path / "prices.sqlite3").due(SEEN - chrono24.FRESH, 20) == []
+
+
 async def test_a_page_that_is_no_search_result_ends_the_round_and_leaves_its_reference_due(prices):
     prices.saw([shop_offer("116610LN"), shop_offer("126610LN")])
     chrome = Chrome({"Rolex 116610LN": "chrono24_human_check.html"})

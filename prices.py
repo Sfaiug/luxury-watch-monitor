@@ -62,6 +62,12 @@ class Prices:
                     PRIMARY KEY (reference, site_key, address)
                 )
             """)
+            # Searches noted before they kept the offers they read count as none, once
+            if not self._db.execute("PRAGMA user_version").fetchone()[0]:
+                self._db.execute(
+                    "DELETE FROM searches WHERE found > 0 AND reference NOT IN (SELECT reference FROM searched_offers)"
+                )
+                self._db.execute("PRAGMA user_version = 1")
 
     def close(self):
         self._db.close()
