@@ -19,6 +19,9 @@ tests: scripts/test.sh
 - Every alert has the same structure whatever its source, shop, eBay or Kleinanzeigen (9 Oct 2026: "Notification structure should be the same everywhere. Should all look the same. Want consistency and ultimate simplicity").
 - eBay and Kleinanzeigen arrive through filters the member makes in Discord (9 Oct 2026): a widget with a "New filter" button starts a guided flow, the member picks the store and goes through the filter questions, and at the end a channel only that member can see is created. Only watches matching that filter go to that channel.
 - "The best part is no part, the best process is no process. Delete what is not truly necessary." (9 Oct 2026)
+- A filter is to end in a purchase, not in a stream of alerts (10 Oct 2026): "the rule based system first filters out, if something goes through the AI inspects, and if potentially profitable when checked against our data, the agent will message the seller, and negotiate with him until the desired price is reached, and only then do I get a notification on discord. This way only thing I do, is set the filter, and receive notifications when payment is to be done."
+- What a watch is worth comes from a price database of our own, "a large matrix of watch prices in conditions and everything, so the AI agent has a reference point", fed first by Chrono24 (10 Oct 2026: "I think chrono is the most accurate, as there is also most times a price graph").
+- The agent runs on the latest Haiku model at `xhigh` effort (10 Oct 2026: "For the agent I always want to use the latest haiku model in xhigh"). Which model that is today is a setting on the server, not a name in the code.
 
 ## Lessons
 
