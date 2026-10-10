@@ -105,3 +105,16 @@ class Prices:
                 "INSERT OR REPLACE INTO searches VALUES (?, ?, ?)",
                 (reference_key(reference), found, at.isoformat(timespec="seconds")),
             )
+
+    def market(self, site_key: str, reference: str) -> Tuple[int, List[float]]:
+        """How many offers the last search of a market found for a reference, and the prices of those it read and still lists, cheapest first."""
+        key = reference_key(reference)
+        search = self._db.execute("SELECT found, searched FROM searches WHERE reference = ?", (key,)).fetchone()
+        if not search:
+            return 0, []
+        found, searched = search
+        listed = self._db.execute(
+            "SELECT price FROM offers WHERE site_key = ? AND reference = ? AND last_seen >= ? ORDER BY price",
+            (site_key, key, searched),
+        )
+        return found, [price for (price,) in listed]
