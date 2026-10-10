@@ -6,6 +6,7 @@ requests>=2.31.0  # For synchronous fallback
 psutil>=5.9.0  # For memory monitoring
 PyNaCl>=1.5.0  # For Discord interaction Ed25519 signature verification
 playwright>=1.44.0  # Optional VM-side browser submitter for MUV
+anthropic>=1.13.0  # The buying agent's AI
 
 # Testing
 pytest>=7.4.0
