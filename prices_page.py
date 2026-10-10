@@ -4,6 +4,7 @@ inside the EU, the worth and the most to pay worked out from that, and the owner
 import hashlib
 import hmac
 import json
+import math
 from datetime import datetime
 from html import escape
 
@@ -140,9 +141,11 @@ shipping and the margin tax. Your price, once set, is the limit in its place; an
         form = await request.post()
         reference = str(form.get("reference", "")).strip()
         given = str(form.get("price", "")).strip()
-        price = parse_price(given) if given else None
-        if not reference or (given and not (price and price.is_finite() and price > 0)):
+        # Checked as it is kept: "1e400" is a finite Decimal and an infinite float
+        parsed = parse_price(given) if given else None
+        price = float(parsed) if parsed is not None else None
+        if not reference or (given and not (price and math.isfinite(price) and price > 0)):
             return web.Response(status=400, text="A buy price is a number of euros above nothing, or nothing.")
 
-        self.prices.set_buy_price(reference, float(price) if price else None, datetime.now())
+        self.prices.set_buy_price(reference, price, datetime.now())
         raise web.HTTPSeeOther(f"{PATH}?key={key(self.secret)}#{reference}")

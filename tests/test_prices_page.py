@@ -86,7 +86,7 @@ async def test_the_owner_s_price_is_the_limit_in_place_of_the_worked_out_one(cli
     assert buy_limit(prices, "116610LN") == Decimal("8608")
 
 
-@pytest.mark.parametrize("given", ["cheap", "-500", "0", "nan"])
+@pytest.mark.parametrize("given", ["cheap", "-500", "0", "nan", "1e400", "1e-400"])
 async def test_a_buy_price_is_a_number_of_euros_above_nothing(client, prices, given):
     answer = await client.post(PATH, params={"key": key(SECRET)}, data={"reference": "116610LN", "price": given})
 
