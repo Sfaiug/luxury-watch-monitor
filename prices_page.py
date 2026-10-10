@@ -33,7 +33,8 @@ p { margin: 4px 0 12px; color: var(--muted); }
 input[type=search] { width: 100%; box-sizing: border-box; padding: 8px; margin: 8px 0; font: inherit; }
 .table { overflow-x: auto; }
 table { border-collapse: collapse; width: 100%; }
-th, td { padding: 6px 8px; border-bottom: 1px solid var(--line); text-align: left; white-space: nowrap; }
+th, td { padding: 6px 8px; border-bottom: 1px solid var(--line); text-align: left; }
+th, td.n { white-space: nowrap; }
 td.n { text-align: right; font-variant-numeric: tabular-nums; }
 tr.own td.limit { color: var(--own); font-weight: 600; }
 form { display: flex; gap: 4px; margin: 0; }
