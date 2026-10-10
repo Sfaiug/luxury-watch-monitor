@@ -2,7 +2,7 @@
 
 from base64 import b64encode
 from pathlib import Path
-from typing import Any, Dict, List, Set
+from typing import Any, Dict, List, Set, Tuple
 
 from config import APP_CONFIG
 
@@ -12,19 +12,37 @@ from config import APP_CONFIG
 Proxy = Dict[str, Any]
 
 
-def load(path: str) -> List[Proxy]:
-    """The proxies in a file of `host:port:user:password` (or `host:port`) lines; none without the file."""
+def _listed(path: str) -> List[Tuple[str, List[str]]]:
+    """Each proxy in a file of `host:port:user:password` (or `host:port`) lines: its address and its login, if any."""
     file = Path(path)
     if not file.exists():
         return []
-
     listed = []
     for line in file.read_text(encoding="utf-8").split():
         host, port, *login = line.split(":", 3)
-        proxy: Proxy = {"proxy": f"http://{host}:{port}"}
+        listed.append((f"http://{host}:{port}", login))
+    return listed
+
+
+def load(path: str) -> List[Proxy]:
+    """The proxies in the file, as aiohttp takes them; none without the file."""
+    listed = []
+    for address, login in _listed(path):
+        proxy: Proxy = {"proxy": address}
         if login:
             basic = b64encode(":".join(login).encode("utf-8")).decode("ascii")
             proxy["proxy_headers"] = {"Proxy-Authorization": f"Basic {basic}"}
+        listed.append(proxy)
+    return listed
+
+
+def for_browser(path: str) -> List[Dict[str, str]]:
+    """The proxies in the file, as a Playwright browser takes them; none without the file."""
+    listed = []
+    for address, login in _listed(path):
+        proxy = {"server": address}
+        if login:
+            proxy["username"], proxy["password"] = login[0], ":".join(login[1:])
         listed.append(proxy)
     return listed
 

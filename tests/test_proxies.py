@@ -63,7 +63,12 @@ def test_the_file_has_one_proxy_per_line_as_the_provider_lists_them(tmp_path):
         },
         {"proxy": "http://10.0.0.2:2222"},
     ]
+    assert proxies.for_browser(listed) == [
+        {"server": "http://10.0.0.1:1111", "username": "user", "password": "se:cret"},
+        {"server": "http://10.0.0.2:2222"},
+    ]
     assert proxies.load(tmp_path / "missing.txt") == []
+    assert proxies.for_browser(tmp_path / "missing.txt") == []
 
 
 async def test_a_refused_request_is_made_again_through_a_proxy(monkeypatch, mock_logger):
