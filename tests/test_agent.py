@@ -190,6 +190,15 @@ async def test_a_match_is_judged_from_its_own_page_and_the_verdict_kept(prices, 
     assert ("Rolex", "116610LV") in prices.due(SEARCHED, 20)
 
 
+async def test_what_is_no_watch_for_sale_stays_out_of_the_price_database(prices, deals):
+    box_only = Claude(reading(is_watch_for_sale=False, model="Submariner box only").model_dump_json())
+
+    await Agent(box_only, AsyncMock(return_value=OFFER), prices, deals, logging.getLogger("test")).consider([match()])
+
+    assert [row["why"] for row in deals.latest(10)] == ["not a watch for sale"]
+    assert prices._db.execute("SELECT COUNT(*) FROM offers WHERE site_key = 'filter:42'").fetchone() == (0,)
+
+
 async def test_a_match_that_cannot_be_read_is_left_for_the_log(prices, deals):
     logger = Mock()
 
