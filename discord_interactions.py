@@ -50,12 +50,13 @@ class DiscordInteractionServer:
     """Small aiohttp server for Discord application interactions."""
 
     def __init__(
-        self, store: ActionStore, muv_service: MUVActionService, logger, filter_flow=None
+        self, store: ActionStore, muv_service: MUVActionService, logger, filter_flow=None, pages=()
     ):
         self.store = store
         self.muv_service = muv_service
         self.logger = logger
         self.filter_flow = filter_flow
+        self.pages = pages  # the owner's pages served beside the actions
         self._runner: Optional[web.AppRunner] = None
         self._site: Optional[web.TCPSite] = None
         self._tasks: Set[asyncio.Task] = set()
@@ -80,6 +81,8 @@ class DiscordInteractionServer:
                 action_path + "/{custom_id}", self.handle_muv_action_link
             )
         app.router.add_post(APP_CONFIG.muv_offer_webhook_path, self.handle_muv_offer)
+        for page in self.pages:
+            page.add_to(app)
 
         self._runner = web.AppRunner(app)
         await self._runner.setup()

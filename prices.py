@@ -37,6 +37,14 @@ class Prices:
                 )
             """)
             self._db.execute("CREATE INDEX IF NOT EXISTS offers_reference ON offers (reference)")
+            # The owner's own buy price for a reference, in place of the one worked out
+            self._db.execute("""
+                CREATE TABLE IF NOT EXISTS buy_prices (
+                    reference TEXT PRIMARY KEY,
+                    price REAL NOT NULL,
+                    set_at TEXT NOT NULL
+                )
+            """)
             # When the market was last searched for a reference, and how many offers it found
             self._db.execute("""
                 CREATE TABLE IF NOT EXISTS searches (
@@ -134,3 +142,27 @@ class Prices:
             (key,),
         )
         return search[0], [price for (price,) in read]
+
+    def references(self) -> List[Tuple[str, Optional[str], Optional[str], Optional[int], Optional[str]]]:
+        """Every reference offered: its brand and model, and the market's last search for it, offers found and when."""
+        return self._db.execute(
+            "SELECT offers.reference, MAX(offers.brand), MAX(offers.model), searches.found, searches.searched "
+            "FROM offers LEFT JOIN searches ON searches.reference = offers.reference "
+            "GROUP BY offers.reference ORDER BY MAX(offers.brand) IS NULL, MAX(offers.brand), offers.reference"
+        ).fetchall()
+
+    def buy_price(self, reference: str) -> Optional[float]:
+        """The owner's own buy price for a reference, if they set one."""
+        row = self._db.execute("SELECT price FROM buy_prices WHERE reference = ?", (reference_key(reference),)).fetchone()
+        return row[0] if row else None
+
+    def set_buy_price(self, reference: str, price: Optional[float], at: datetime):
+        """Set the owner's buy price for a reference; None takes it away."""
+        with self._db:
+            if price is None:
+                self._db.execute("DELETE FROM buy_prices WHERE reference = ?", (reference_key(reference),))
+            else:
+                self._db.execute(
+                    "INSERT OR REPLACE INTO buy_prices VALUES (?, ?, ?)",
+                    (reference_key(reference), price, at.isoformat(timespec="seconds")),
+                )
