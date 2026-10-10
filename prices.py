@@ -62,6 +62,12 @@ class Prices:
                     PRIMARY KEY (reference, site_key, address)
                 )
             """)
+            # Searches noted before they kept the offers they read count as none, once
+            if not self._db.execute("PRAGMA user_version").fetchone()[0]:
+                self._db.execute(
+                    "DELETE FROM searches WHERE found > 0 AND reference NOT IN (SELECT reference FROM searched_offers)"
+                )
+                self._db.execute("PRAGMA user_version = 1")
 
     def close(self):
         self._db.close()
@@ -104,17 +110,11 @@ class Prices:
                     )
 
     def due(self, before: datetime, limit: int) -> List[Tuple[Optional[str], str]]:
-        """Brand and reference of offered watches the market was not searched for since `before`, never searched first.
-
-        A search that found offers but kept none of them (as searches did
-        before they kept what they read) is no search to go by.
-        """
+        """Brand and reference of offered watches the market was not searched for since `before`, never searched first."""
         return self._db.execute(
             "SELECT MAX(offers.brand), offers.reference FROM offers "
             "LEFT JOIN searches ON searches.reference = offers.reference "
             "WHERE searches.searched IS NULL OR searches.searched < ? "
-            "OR (searches.found > 0 AND NOT EXISTS "
-            "(SELECT 1 FROM searched_offers WHERE searched_offers.reference = offers.reference)) "
             "GROUP BY offers.reference "
             "ORDER BY MAX(searches.searched) IS NOT NULL, MAX(searches.searched), offers.reference "
             "LIMIT ?",
