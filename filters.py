@@ -1,7 +1,7 @@
 """Members' filters: a search on a marketplace whose matches go to a channel of its own."""
 
 import json
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Callable, Dict, List, Optional, Type
 
@@ -43,6 +43,7 @@ class Filter:
     words: str
     min_price: Optional[int] = None
     max_price: Optional[int] = None
+    conditions: List[str] = field(default_factory=list)  # none: any condition
 
     @property
     def key(self) -> str:
@@ -51,7 +52,7 @@ class Filter:
     @property
     def search_url(self) -> str:
         return STORES[self.store].search_url(
-            self.words, self.min_price, self.max_price, self.seller
+            self.words, self.min_price, self.max_price, self.seller, self.conditions
         )
 
     def scraper(self, session, logger) -> BaseScraper:
