@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from decimal import Decimal
 from typing import Optional, List, Dict, Any
-from urllib.parse import quote_plus, urlsplit
+from urllib.parse import urlsplit
 
 from config import APP_CONFIG
 
@@ -178,9 +178,9 @@ class WatchData:
         if not query_parts:
             query_parts.append(self.title)
 
-        # URL encode the query
-        query = quote_plus(" ".join(query_parts))
-        return f"https://www.chrono24.de/search/index.htm?dosearch=true&query={query}&sortorder=1"
+        import chrono24  # here, since chrono24 reads its pages into WatchData
+
+        return chrono24.search(" ".join(query_parts))
 
     def to_discord_embed(self, color: int) -> Dict[str, Any]:
         """Convert to Discord embed format."""
