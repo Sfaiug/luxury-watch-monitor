@@ -17,6 +17,7 @@ from utils import clear_exchange_rate_cache
 from action_store import ActionStore
 import chrono24
 from prices import Prices
+from prices_page import PricesPage
 from discord_interactions import DiscordInteractionServer, discord_route_enabled
 from muv_service import MUVActionService
 from filters import Filter, FilterStore
@@ -160,6 +161,7 @@ class WatchMonitor:
                 self.muv_service,
                 self.logger,
                 self.filter_flow,
+                [PricesPage(self.prices, APP_CONFIG.action_token_secret)],
             )
             await self.discord_interaction_server.start()
 

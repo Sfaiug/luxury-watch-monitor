@@ -40,3 +40,12 @@ def most_to_pay(worth: Decimal) -> Decimal:
     taxed = MARGIN_TAX / (1 + MARGIN_TAX)
     paid = (worth * (1 - taxed) - fee - shipping - least_profit(worth)) / (1 - taxed)
     return max(paid, Decimal(0)).quantize(Decimal(1), rounding=ROUND_FLOOR)
+
+
+def buy_limit(prices: Prices, reference: str) -> Optional[Decimal]:
+    """The most to pay for a watch: the owner's own buy price, or else the one worked out from its worth."""
+    own = prices.buy_price(reference)
+    if own is not None:
+        return Decimal(str(own))
+    value = worth(prices, reference)
+    return most_to_pay(value) if value is not None else None
