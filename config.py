@@ -146,10 +146,11 @@ class AppConfig:
     sale_shipping_eur: float = float(os.getenv("SALE_SHIPPING_EUR", "60"))
 
     # The buying agent: which model reads the offers and how hard it thinks
-    # (owner rule, 10 Oct 2026: the latest Haiku at xhigh); an effort only for
-    # a model that takes one, which Haiku 4.5, the latest on 10 Oct 2026, does not
+    # (owner rule, 10 Oct 2026: the latest Haiku at xhigh). The latest Haiku
+    # then, Claude Haiku 5.5, takes xhigh and would otherwise think at medium;
+    # an empty AGENT_EFFORT is for a model that takes no effort at all
     agent_model: str = os.getenv("AGENT_MODEL", "")
-    agent_effort: str = os.getenv("AGENT_EFFORT", "")
+    agent_effort: str = os.getenv("AGENT_EFFORT", "xhigh")
 
     # MUV / Discord interaction actions
     enable_muv_actions: bool = _env_bool("ENABLE_MUV_ACTIONS", "false")
