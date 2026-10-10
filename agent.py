@@ -215,8 +215,9 @@ class Agent:
                 if reading is None:
                     verdict = Verdict(False, "the AI declined to read it")
                 else:
-                    if reading.reference:
-                        # Its reference joins the ones Chrono24 is searched for
+                    if reading.is_watch_for_sale and reading.reference:
+                        # A watch offered: its price is one more, and its
+                        # reference joins the ones Chrono24 is searched for
                         self.prices.saw([_as_offer(watch, reading)])
                     verdict = decide(reading, asking, self.prices)
                 self.deals.judged(watch, asking, reading, verdict, datetime.now())
