@@ -38,6 +38,23 @@ def test_filters_outlive_the_process(tmp_path):
     assert [f.channel_id for f in FilterStore(tmp_path / "filters.json").all()] == ["222"]
 
 
+def test_a_filter_made_before_conditions_could_be_chosen_takes_any(tmp_path):
+    kept = asdict(SUBMARINER)
+    del kept["conditions"]
+    (tmp_path / "filters.json").write_text(json.dumps([kept]), encoding="utf-8")
+
+    assert FilterStore(tmp_path / "filters.json").all() == [SUBMARINER]
+
+
+def test_a_filter_s_conditions_outlive_the_process(tmp_path):
+    store = FilterStore(tmp_path / "filters.json")
+    mint = Filter("333", "42", "kleinanzeigen", "any", "Rolex", conditions=["new", "very_good"])
+    store.add(mint)
+
+    assert FilterStore(tmp_path / "filters.json").all() == [mint]
+    assert mint.search_url.endswith("/rolex/k0c157+global.zustand:new,like_new")
+
+
 def test_a_filter_searches_its_marketplace():
     assert SUBMARINER.search_url == (
         "https://www.kleinanzeigen.de/s-uhren-schmuck/anzeige:angebote/"

@@ -2,7 +2,7 @@
 
 import json
 import re
-from typing import List, Optional
+from typing import List, Optional, Sequence
 from urllib.parse import quote
 
 from bs4 import BeautifulSoup
@@ -13,6 +13,8 @@ from utils import parse_price, extract_text_from_element
 
 BASE_URL = "https://www.kleinanzeigen.de"
 SELLERS = {"private": "anbieter:privat/", "dealer": "anbieter:gewerblich/", "any": ""}
+# The site's own names for Neu, Sehr Gut, Gut and In Ordnung
+CONDITIONS = {"new": "new", "very_good": "like_new", "good": "ok", "okay": "alright"}
 
 
 def search_url(
@@ -20,6 +22,7 @@ def search_url(
     min_price: Optional[int] = None,
     max_price: Optional[int] = None,
     seller: str = "any",
+    conditions: Sequence[str] = (),
 ) -> str:
     """The newest watch offers for these words, filtered by the site itself."""
     price = ""
@@ -27,7 +30,13 @@ def search_url(
         price = f"preis:{min_price or ''}:{max_price or ''}/"
     # A slash would start a new part of the address: it separates words like a space
     slug = "-".join(quote(word) for word in re.split(r"[\s/]+", words.lower()) if word)
-    return f"{BASE_URL}/s-uhren-schmuck/anzeige:angebote/{SELLERS[seller]}{price}{slug}/k0c157"
+    condition = ""
+    if conditions:
+        condition = "+global.zustand:" + ",".join(CONDITIONS[c] for c in conditions)
+    return (
+        f"{BASE_URL}/s-uhren-schmuck/anzeige:angebote/{SELLERS[seller]}{price}{slug}/k0c157"
+        + condition
+    )
 
 
 class KleinanzeigenScraper(BaseScraper):

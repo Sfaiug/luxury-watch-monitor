@@ -15,6 +15,7 @@ from filters import STORES, Filter, FilterStore
 from utils import parse_price
 
 SELLERS = {"private": "Private sellers", "dealer": "Dealers", "any": "Both"}
+CONDITIONS = {"new": "New", "very_good": "Very good", "good": "Good", "okay": "Okay"}
 WIDGET_CHANNEL = "new-filter"
 WIDGET_TEXT = (
     "**Filters**\n"
@@ -40,8 +41,10 @@ def _buttons(*buttons: Tuple[str, str]) -> list:
 
 
 def describe(new: Filter) -> str:
-    """The filter in a line: "Kleinanzeigen · Private sellers · 5000 to 9000 €"."""
+    """The filter in a line: "Kleinanzeigen · Private sellers · New, Very good · 5000 to 9000 €"."""
     parts = [STORES[new.store].name, SELLERS[new.seller]]
+    if new.conditions:
+        parts.append(", ".join(CONDITIONS[condition] for condition in new.conditions))
     if new.min_price and new.max_price:
         parts.append(f"{new.min_price} to {new.max_price} €")
     elif new.min_price:
@@ -52,7 +55,7 @@ def describe(new: Filter) -> str:
 
 
 class FilterFlow:
-    """Asks a member where to look, who sells and for what, then makes the filter and its channel."""
+    """Asks a member where to look, who sells, in which condition and for what, then makes the filter and its channel."""
 
     def __init__(
         self,
@@ -83,31 +86,50 @@ class FilterFlow:
                 return self._ask(
                     RESPONSE_CHANNEL_MESSAGE,
                     "Where should I look?",
-                    [(store.name, f"filter:store:{key}") for key, store in STORES.items()],
+                    _buttons(*((store.name, f"filter:store:{key}") for key, store in STORES.items())),
                 )
             return self._ask_seller(RESPONSE_CHANNEL_MESSAGE, next(iter(STORES)))
         if step == "store":
             return self._ask_seller(RESPONSE_UPDATE_MESSAGE, *answers)
         if step == "seller":
-            return self._form(*answers)
+            return self._ask_condition(*answers)
+        if step == "condition":
+            # The "Any condition" button names none
+            return self._form(*answers[:2], *data.get("values", []))
         if step == "form":
             return self._create(payload, *answers)
         return None
 
-    def _ask(self, kind: int, question: str, buttons: list) -> Dict[str, Any]:
+    def _ask(self, kind: int, question: str, components: list) -> Dict[str, Any]:
         return {
             "type": kind,
-            "data": {"content": question, "flags": EPHEMERAL_FLAG, "components": _buttons(*buttons)},
+            "data": {"content": question, "flags": EPHEMERAL_FLAG, "components": components},
         }
 
     def _ask_seller(self, kind: int, store: str) -> Dict[str, Any]:
         return self._ask(
             kind,
             "Who is selling?",
-            [(label, f"filter:seller:{store}:{seller}") for seller, label in SELLERS.items()],
+            _buttons(*((label, f"filter:seller:{store}:{seller}") for seller, label in SELLERS.items())),
         )
 
-    def _form(self, store: str, seller: str) -> Dict[str, Any]:
+    def _ask_condition(self, store: str, seller: str) -> Dict[str, Any]:
+        step = f"filter:condition:{store}:{seller}"
+        several = {
+            "type": 3,
+            "custom_id": step,
+            "placeholder": "Choose one or more",
+            "min_values": 1,
+            "max_values": len(CONDITIONS),
+            "options": [{"label": label, "value": key} for key, label in CONDITIONS.items()],
+        }
+        return self._ask(
+            RESPONSE_UPDATE_MESSAGE,
+            "In which condition?",
+            [{"type": 1, "components": [several]}, *_buttons(("Any condition", f"{step}:any"))],
+        )
+
+    def _form(self, store: str, seller: str, *conditions: str) -> Dict[str, Any]:
         def line(custom_id, label, required=False, placeholder=""):
             field = {
                 "type": 4,
@@ -123,7 +145,7 @@ class FilterFlow:
         return {
             "type": RESPONSE_MODAL,
             "data": {
-                "custom_id": f"filter:form:{store}:{seller}",
+                "custom_id": ":".join(("filter", "form", store, seller, *conditions)),
                 "title": "New filter",
                 "components": [
                     line("words", "What are you looking for?", True, "Rolex Submariner 16610"),
@@ -133,7 +155,9 @@ class FilterFlow:
             },
         }
 
-    def _create(self, payload: Dict[str, Any], store: str, seller: str) -> Dict[str, Any]:
+    def _create(
+        self, payload: Dict[str, Any], store: str, seller: str, *conditions: str
+    ) -> Dict[str, Any]:
         answers = {
             field["custom_id"]: field["value"].strip()
             for row in payload["data"]["components"]
@@ -157,6 +181,7 @@ class FilterFlow:
                     words=answers["words"],
                     min_price=lowest,
                     max_price=highest,
+                    conditions=list(conditions),
                 ),
             )
         )

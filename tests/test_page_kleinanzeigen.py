@@ -42,6 +42,13 @@ def test_the_search_address_lets_the_site_do_the_filtering():
     assert search_url("omega speedmaster") == SEARCH + "omega-speedmaster/k0c157"
     # A slash separates words like a space; in the address it would start a new part
     assert search_url("Rolex 16613 Stahl/Gold") == SEARCH + "rolex-16613-stahl-gold/k0c157"
+    # Conditions as the site names them, several at once
+    assert search_url("rolex", conditions=["very_good"]) == (
+        SEARCH + "rolex/k0c157+global.zustand:like_new"
+    )
+    assert search_url("rolex", 5000, 9000, "private", ["new", "very_good", "good", "okay"]) == (
+        SEARCH + "anbieter:privat/preis:5000:9000/rolex/k0c157+global.zustand:new,like_new,ok,alright"
+    )
 
 
 def test_an_offer_is_read_like_a_shop_s_watch():

@@ -100,13 +100,14 @@ def press(custom_id, **data):
     }
 
 
-def form(store, seller, words, min_price="", max_price=""):
+def form(store, seller, words, min_price="", max_price="", conditions=()):
     fields = {"words": words, "min_price": min_price, "max_price": max_price}
+    custom_id = ":".join(("filter", "form", store, seller, *conditions))
     return {
-        **press(f"filter:form:{store}:{seller}"),
+        **press(custom_id),
         "type": 5,
         "data": {
-            "custom_id": f"filter:form:{store}:{seller}",
+            "custom_id": custom_id,
             "components": [
                 {"type": 1, "components": [{"type": 4, "custom_id": name, "value": value}]}
                 for name, value in fields.items()
@@ -120,6 +121,7 @@ def choices(reply):
         (button["label"], button["custom_id"])
         for row in reply["data"]["components"]
         for button in row["components"]
+        if button["type"] == 2
     ]
 
 
@@ -138,24 +140,50 @@ async def test_from_the_button_to_a_channel_only_the_member_sees(flow, discord, 
     ]
 
     asked = flow.handle(press("filter:seller:kleinanzeigen:private"))
-    assert asked["type"] == 9 and asked["data"]["custom_id"] == "filter:form:kleinanzeigen:private"
+    assert asked["type"] == 7 and asked["data"]["content"] == "In which condition?"
+    several = asked["data"]["components"][0]["components"][0]
+    assert several["custom_id"] == "filter:condition:kleinanzeigen:private"
+    assert (several["min_values"], several["max_values"]) == (1, 4)  # one or more at once
+    assert [(option["label"], option["value"]) for option in several["options"]] == [
+        ("New", "new"),
+        ("Very good", "very_good"),
+        ("Good", "good"),
+        ("Okay", "okay"),
+    ]
+    assert choices(asked) == [("Any condition", "filter:condition:kleinanzeigen:private:any")]
+
+    asked = flow.handle(
+        press("filter:condition:kleinanzeigen:private", values=["new", "very_good"])
+    )
+    assert asked["type"] == 9
+    assert asked["data"]["custom_id"] == "filter:form:kleinanzeigen:private:new:very_good"
     assert [row["components"][0]["custom_id"] for row in asked["data"]["components"]] == [
         "words",
         "min_price",
         "max_price",
     ]
 
-    reply = flow.handle(form("kleinanzeigen", "private", "Rolex Submariner", "5.000 €", "9000"))
+    reply = flow.handle(
+        form(
+            "kleinanzeigen", "private", "Rolex Submariner", "5.000 €", "9000", ["new", "very_good"]
+        )
+    )
     assert reply == {"type": 5, "data": {"flags": 64}}
     await finish(flow)
 
-    made = Filter("101", MEMBER_ID, "kleinanzeigen", "private", "Rolex Submariner", 5000, 9000)
+    made = Filter(
+        "101", MEMBER_ID, "kleinanzeigen", "private", "Rolex Submariner", 5000, 9000,
+        ["new", "very_good"],
+    )
+    assert made.search_url.endswith("/k0c157+global.zustand:new,like_new")
     assert flow.store.all() == [made]
     assert scanned == [made]  # scanned at once
 
     (channel,) = discord.said("POST", f"/guilds/{GUILD}/channels")
     assert channel["name"] == "Rolex Submariner"
-    assert channel["topic"] == f"Kleinanzeigen · Private sellers · 5000 to 9000 € · {made.search_url}"
+    assert channel["topic"] == (
+        f"Kleinanzeigen · Private sellers · New, Very good · 5000 to 9000 € · {made.search_url}"
+    )
     assert channel["parent_id"] == CATEGORY  # beside the button's channel
     everyone, member, bot = channel["permission_overwrites"]
     assert (everyone["id"], everyone["deny"]) == (GUILD, str(1 << 10))  # nobody else sees it
@@ -181,6 +209,18 @@ async def test_with_two_marketplaces_the_first_question_is_where(flow, monkeypat
     asked = flow.handle(press("filter:store:ebay"))
     assert asked["type"] == 7  # the same message moves on to the next question
     assert choices(asked)[0] == ("Private sellers", "filter:seller:ebay:private")
+
+
+async def test_any_condition_is_one_press(flow):
+    asked = flow.handle(press("filter:condition:kleinanzeigen:dealer:any"))
+
+    assert asked["type"] == 9 and asked["data"]["custom_id"] == "filter:form:kleinanzeigen:dealer"
+    flow.handle(form("kleinanzeigen", "dealer", "Cartier Tank"))
+    await finish(flow)
+
+    (made,) = flow.store.all()
+    assert made.conditions == []
+    assert made.search_url.endswith("/cartier-tank/k0c157")
 
 
 async def test_prices_are_optional_and_put_in_order(flow, discord):
