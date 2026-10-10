@@ -3,6 +3,7 @@
 from dataclasses import dataclass
 from typing import List, Literal, Optional
 
+from anthropic import transform_schema
 from bs4 import BeautifulSoup
 from pydantic import BaseModel, Field
 
@@ -79,15 +80,14 @@ async def read(client, offer: Offer) -> Optional[Reading]:
         + ["Description:", offer.description]
     )
     photos = [{"type": "image", "source": {"type": "url", "url": url}} for url in offer.photos[:PHOTOS]]
-    settings = {"output_config": {"effort": APP_CONFIG.agent_effort}} if APP_CONFIG.agent_effort else {}
-    answer = await client.messages.parse(
+    effort = {"effort": APP_CONFIG.agent_effort} if APP_CONFIG.agent_effort else {}
+    answer = await client.messages.create(
         model=APP_CONFIG.agent_model,
         max_tokens=16000,
         system=INSTRUCTIONS,
         messages=[{"role": "user", "content": photos + [{"type": "text", "text": text}]}],
-        output_format=Reading,
-        **settings,
+        output_config={"format": {"type": "json_schema", "schema": transform_schema(Reading)}, **effort},
     )
-    if answer.stop_reason == "refusal":
+    if answer.stop_reason == "refusal":  # its words are no reading
         return None
-    return answer.parsed_output
+    return Reading.model_validate_json(next(block.text for block in answer.content if block.type == "text"))

@@ -1,9 +1,11 @@
 """What the buying agent's AI reads from a Kleinanzeigen offer's own page."""
 
+import json
 from pathlib import Path
-from types import SimpleNamespace
 
+import httpx2
 import pytest
+from anthropic import AsyncAnthropic
 
 from agent import Reading, offer_page, read
 from config import APP_CONFIG
@@ -27,17 +29,22 @@ def reading(**read):
     return Reading(**stated)
 
 
-class Claude:
-    """The API as the agent calls it: remembers each request and answers with one reading."""
+class Claude(AsyncAnthropic):
+    """The API as the agent calls it: remembers each request and answers with one text."""
 
-    def __init__(self, answer, stop_reason="end_turn"):
+    def __init__(self, text, stop_reason="end_turn"):
+        transport = httpx2.MockTransport(self.answer)
+        super().__init__(api_key="test", max_retries=0, http_client=httpx2.AsyncClient(transport=transport))
         self.requests = []
-        self.messages = SimpleNamespace(parse=self.parse)
-        self.answer, self.stop_reason = answer, stop_reason
+        self.text, self.stop_reason = text, stop_reason
 
-    async def parse(self, **request):
-        self.requests.append(request)
-        return SimpleNamespace(stop_reason=self.stop_reason, parsed_output=self.answer)
+    def answer(self, request):
+        self.requests.append(json.loads(request.content))
+        return httpx2.Response(200, json={
+            "id": "msg", "type": "message", "role": "assistant", "model": "the-latest-haiku",
+            "stop_reason": self.stop_reason, "stop_sequence": None, "usage": {"input_tokens": 1, "output_tokens": 1},
+            "content": [{"type": "text", "text": self.text}],
+        })
 
 
 def test_an_offer_page_gives_the_seller_s_words_and_photos():
@@ -53,13 +60,13 @@ def test_an_offer_page_gives_the_seller_s_words_and_photos():
 
 
 async def test_the_ai_reads_the_offer_with_its_first_photos_on_the_model_the_server_names():
-    claude = Claude(reading())
+    claude = Claude(reading().model_dump_json())
 
     assert await read(claude, offer_page(OFFER)) == reading()
 
     request = claude.requests[0]
-    assert (request["model"], request["output_config"], request["output_format"]) == (
-        "the-latest-haiku", {"effort": "xhigh"}, Reading
+    assert (request["model"], request["output_config"]["effort"], request["output_config"]["format"]["type"]) == (
+        "the-latest-haiku", "xhigh", "json_schema"
     )
     content = request["messages"][0]["content"]
     assert [part["type"] for part in content] == ["image"] * 6 + ["text"]
@@ -69,12 +76,12 @@ async def test_the_ai_reads_the_offer_with_its_first_photos_on_the_model_the_ser
 
 async def test_without_an_effort_the_request_names_none(monkeypatch):
     monkeypatch.setattr(APP_CONFIG, "agent_effort", "")
-    claude = Claude(reading())
+    claude = Claude(reading().model_dump_json())
 
     await read(claude, offer_page(OFFER))
 
-    assert "output_config" not in claude.requests[0]
+    assert "effort" not in claude.requests[0]["output_config"]
 
 
 async def test_an_offer_the_ai_declines_to_read_has_no_reading():
-    assert await read(Claude(None, stop_reason="refusal"), offer_page(OFFER)) is None
+    assert await read(Claude("I cannot help with that.", stop_reason="refusal"), offer_page(OFFER)) is None
