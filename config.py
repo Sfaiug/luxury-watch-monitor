@@ -145,6 +145,11 @@ class AppConfig:
     sale_fee_share: float = float(os.getenv("SALE_FEE_SHARE", "0.065"))
     sale_shipping_eur: float = float(os.getenv("SALE_SHIPPING_EUR", "60"))
 
+    # The buying agent: which model reads the offers and how hard it thinks
+    # (owner rule, 10 Oct 2026: the latest Haiku at xhigh)
+    agent_model: str = os.getenv("AGENT_MODEL", "")
+    agent_effort: str = os.getenv("AGENT_EFFORT", "xhigh")
+
     # MUV / Discord interaction actions
     enable_muv_actions: bool = _env_bool("ENABLE_MUV_ACTIONS", "false")
     action_store_file: str = os.getenv("ACTION_STORE_FILE", "muv_actions.sqlite3")
