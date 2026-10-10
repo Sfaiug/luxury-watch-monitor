@@ -21,6 +21,8 @@ tests: scripts/test.sh
 - "The best part is no part, the best process is no process. Delete what is not truly necessary." (9 Oct 2026)
 - A filter is to end in a purchase, not in a stream of alerts (10 Oct 2026): "the rule based system first filters out, if something goes through the AI inspects, and if potentially profitable when checked against our data, the agent will message the seller, and negotiate with him until the desired price is reached, and only then do I get a notification on discord. This way only thing I do, is set the filter, and receive notifications when payment is to be done."
 - What a watch is worth comes from a price database of our own, "a large matrix of watch prices in conditions and everything, so the AI agent has a reference point", fed first by Chrono24 (10 Oct 2026: "I think chrono is the most accurate, as there is also most times a price graph").
+- Prices from Chrono24 count only when the offer is from the EU (10 Oct 2026: "On chrono price comparison we need to make sure to only look at EU offers because of VAT").
+- The least profit a watch must bring starts at 10% of what it is worth and at least 500 €, and the owner moves it (10 Oct 2026, to that suggestion: "Min Profit sounds good, maybe even higher. It also kind of depends on volume, its hard to quantify").
 - The agent runs on the latest Haiku model at `xhigh` effort (10 Oct 2026: "For the agent I always want to use the latest haiku model in xhigh"). Which model that is today is a setting on the server, not a name in the code.
 
 ## Lessons
