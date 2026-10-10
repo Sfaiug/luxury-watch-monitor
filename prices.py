@@ -1,0 +1,78 @@
+"""What the watches the monitor reads are offered for: one row per offer, for as long as it is listed."""
+
+import re
+import sqlite3
+from typing import Iterable
+
+from models import WatchData
+
+
+def reference_key(reference: str) -> str:
+    """A reference as every source writes it alike: "5711/1A-010" and "5711 1a 010" are one watch."""
+    return re.sub(r"[^A-Z0-9]", "", reference.upper())
+
+
+class Prices:
+    """The offers seen, in one SQLite file."""
+
+    def __init__(self, path: str):
+        self._db = sqlite3.connect(str(path))
+        with self._db:
+            self._db.execute("""
+                CREATE TABLE IF NOT EXISTS offers (
+                    site_key TEXT NOT NULL,
+                    address TEXT NOT NULL,
+                    reference TEXT NOT NULL,
+                    price REAL NOT NULL,
+                    brand TEXT,
+                    model TEXT,
+                    year TEXT,
+                    condition TEXT,
+                    has_box INTEGER,
+                    has_papers INTEGER,
+                    first_seen TEXT NOT NULL,
+                    last_seen TEXT NOT NULL,
+                    PRIMARY KEY (site_key, address)
+                )
+            """)
+            self._db.execute("CREATE INDEX IF NOT EXISTS offers_reference ON offers (reference)")
+
+    def close(self):
+        self._db.close()
+
+    def saw(self, watches: Iterable[WatchData]):
+        """Note that these offers are listed now, at the price they show.
+
+        An offer is known by its shop and its address there. It is kept from the
+        sighting that names its reference and a price in euros: most shops name
+        the reference only on the offer's own page, which is read once, so a
+        later sighting says no more than that the offer still stands, and at
+        what price.
+        """
+        with self._db:
+            for watch in watches:
+                price = float(watch.price) if watch.price and watch.currency == "EUR" else None
+                seen = watch.scraped_at.isoformat(timespec="seconds")
+                known = self._db.execute(
+                    "UPDATE offers SET last_seen = ?, price = COALESCE(?, price) "
+                    "WHERE site_key = ? AND address = ?",
+                    (seen, price, watch.site_key, watch.address),
+                ).rowcount
+                if not known and watch.reference and price:
+                    self._db.execute(
+                        "INSERT INTO offers VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                        (
+                            watch.site_key,
+                            watch.address,
+                            reference_key(watch.reference),
+                            price,
+                            watch.brand,
+                            watch.model,
+                            watch.year,
+                            watch.condition,
+                            watch.has_box,
+                            watch.has_papers,
+                            seen,
+                            seen,
+                        ),
+                    )

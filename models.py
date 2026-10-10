@@ -110,8 +110,7 @@ class WatchData:
     def _generate_composite_id(self) -> str:
         """Shop, the listing's address there and its listed price: the same
         listing is announced once, and again only when its price changes."""
-        path = urlsplit(self.url).path
-        return f"{self.site_key}:{path}:{self._price_for_hash or ''}"
+        return f"{self.site_key}:{self.address}:{self._price_for_hash or ''}"
 
     def _generate_former_id(self) -> str:
         """The id watches were remembered under until 9 Oct 2026: a hash of
@@ -142,6 +141,12 @@ class WatchData:
     def composite_id(self) -> str:
         """Get the composite ID for duplicate detection."""
         return self._composite_id
+
+    @property
+    def address(self) -> str:
+        """The listing's address at its shop: the path of its link, the query
+        left out, as World of Time's changes with the cards around it."""
+        return urlsplit(self.url).path
 
     @property
     def former_id(self) -> str:

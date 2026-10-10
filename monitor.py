@@ -15,6 +15,7 @@ from scrapers.base import BaseScraper
 from memory_monitor import MemoryMonitor
 from utils import clear_exchange_rate_cache
 from action_store import ActionStore
+from prices import Prices
 from discord_interactions import DiscordInteractionServer, discord_route_enabled
 from muv_service import MUVActionService
 from filters import Filter, FilterStore
@@ -61,6 +62,7 @@ class WatchMonitor:
         self.session: Optional[aiohttp.ClientSession] = None
         self.notification_manager: Optional[NotificationManager] = None
         self.action_store: Optional[ActionStore] = None
+        self.prices: Optional[Prices] = None
         self.muv_service: Optional[MUVActionService] = None
         self.discord_interaction_server: Optional[DiscordInteractionServer] = None
         self.memory_monitor = MemoryMonitor()
@@ -124,6 +126,8 @@ class WatchMonitor:
                 self.session, self.action_store, self.logger
             )
             await self.muv_service.register_configured_offer_links()
+
+        self.prices = Prices(APP_CONFIG.prices_file)
 
         # Initialize notification manager
         self.notification_manager = NotificationManager(
@@ -244,6 +248,10 @@ class WatchMonitor:
                 if self.action_store:
                     self.action_store.close()
                     self.action_store = None
+
+                if self.prices:
+                    self.prices.close()
+                    self.prices = None
 
                 # Clear module-level caches
                 self.logger.debug("Clearing exchange rate cache...")
@@ -593,6 +601,10 @@ class WatchMonitor:
 
             # Save seen items after each site
             self.persistence.save_seen_items(self.seen_items)
+
+            # After the alerts, so that a price that cannot be kept delays none
+            if self.prices and scraper.config.eu:
+                self.prices.saw(scraper.last_scan)
 
         except Exception as e:
             self.logger.exception(f"Error scraping {site_key}: {e}")

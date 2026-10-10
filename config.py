@@ -23,6 +23,8 @@ class SiteConfig:
     channel_env_var: Optional[str] = None
     # A member's filter: its matches go to the channel made for it
     channel_id: Optional[str] = None
+    # Sold from inside the EU: its prices can be compared with one another, VAT and all
+    eu: bool = True
 
     # Selectors for scraping (to be customized per site)
     watch_container_selector: str = ""
@@ -66,6 +68,7 @@ class AppConfig:
     )
     proxies_file: str = os.getenv("PROXIES_FILE", "proxies.txt")
     filters_file: str = os.getenv("FILTERS_FILE", "filters.json")
+    prices_file: str = os.getenv("PRICES_FILE", "prices.sqlite3")
 
     # Monitoring - PRODUCTION SAFE DEFAULTS
     check_interval_seconds: int = int(
@@ -273,6 +276,7 @@ SITE_CONFIGS = {
         webhook_env_var="TROPICALWATCH_WEBHOOK_URL",
         color=0x008080,
         base_url="https://tropicalwatch.com",
+        eu=False,
         watch_container_selector="div.one_fourth",
         link_selector="a[href*='/watches/']",
         price_selector="span.price",

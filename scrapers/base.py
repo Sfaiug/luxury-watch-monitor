@@ -38,6 +38,8 @@ class BaseScraper(ABC):
         self.session = session
         self.logger = ContextLogger(logger, {"site": config.key})
         self.seen_ids = SeenIds()
+        # Every watch the last scan found listed, the known ones too
+        self.last_scan: List[WatchData] = []
 
     def set_seen_ids(self, seen_ids: SeenIds):
         """Update the set of seen watch IDs."""
@@ -52,6 +54,7 @@ class BaseScraper(ABC):
         """
         with PerformanceLogger(self.logger.logger, f"scraping {self.config.name}"):
             soup = None
+            self.last_scan = []
             try:
                 # Fetch listing page
                 self.logger.info(f"Fetching listing page: {self.config.url}")
@@ -89,6 +92,7 @@ class BaseScraper(ABC):
                             f"ID: {watch.composite_id[:12]}..."
                         )
 
+                self.last_scan = watches
                 new_watches = self._new_watches(watches)
 
                 # Fetch details for new watches
