@@ -3,7 +3,6 @@
 import re
 import sqlite3
 from typing import Iterable
-from urllib.parse import urlsplit
 
 from models import WatchData
 
@@ -52,20 +51,19 @@ class Prices:
         """
         with self._db:
             for watch in watches:
-                address = urlsplit(watch.url).path
                 price = float(watch.price) if watch.price and watch.currency == "EUR" else None
                 seen = watch.scraped_at.isoformat(timespec="seconds")
                 known = self._db.execute(
                     "UPDATE offers SET last_seen = ?, price = COALESCE(?, price) "
                     "WHERE site_key = ? AND address = ?",
-                    (seen, price, watch.site_key, address),
+                    (seen, price, watch.site_key, watch.address),
                 ).rowcount
                 if not known and watch.reference and price:
                     self._db.execute(
                         "INSERT INTO offers VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                         (
                             watch.site_key,
-                            address,
+                            watch.address,
                             reference_key(watch.reference),
                             price,
                             watch.brand,
