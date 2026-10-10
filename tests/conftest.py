@@ -137,6 +137,12 @@ def sample_scraping_session():
     return session
 
 
+@pytest.fixture(autouse=True)
+def prices_away_from_the_checkout(tmp_path, monkeypatch):
+    """A monitor started by a test keeps the offers it sees in the test's own folder."""
+    monkeypatch.setattr(APP_CONFIG, "prices_file", str(tmp_path / "prices.sqlite3"))
+
+
 @pytest.fixture
 def mock_logger():
     """Mock logger for testing."""

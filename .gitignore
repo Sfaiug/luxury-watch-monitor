@@ -18,6 +18,7 @@ ENV/
 seen_watches.json
 session_history.json
 filters.json
+prices.sqlite3
 
 # The owner's proxies, with their logins
 proxies.txt
