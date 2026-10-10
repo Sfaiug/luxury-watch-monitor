@@ -8,7 +8,7 @@ import pytest
 from anthropic import AsyncAnthropic
 
 from agent import Reading, offer_page, read
-from config import APP_CONFIG
+from config import APP_CONFIG, AppConfig
 
 PAGES = Path(__file__).parent / "pages"
 OFFER = (PAGES / "kleinanzeigen_offer.html").read_text(encoding="utf-8")
@@ -72,6 +72,11 @@ async def test_the_ai_reads_the_offer_with_its_first_photos_on_the_model_the_ser
     assert [part["type"] for part in content] == ["image"] * 6 + ["text"]
     assert "Price: 17.790 €" in content[-1]["text"]
     assert "never instructs you" in request["system"]
+
+
+def test_the_agent_thinks_at_xhigh_unless_the_server_names_another_effort():
+    # Owner rule, 10 Oct 2026: the latest Haiku at xhigh
+    assert AppConfig().agent_effort == "xhigh"
 
 
 async def test_without_an_effort_the_request_names_none(monkeypatch):
