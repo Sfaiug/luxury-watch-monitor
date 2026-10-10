@@ -3,7 +3,7 @@
 import re
 from datetime import datetime
 from typing import List, Optional, Tuple
-from urllib.parse import quote_plus
+from urllib.parse import urlencode
 
 from bs4 import BeautifulSoup
 
@@ -25,14 +25,15 @@ class NotResults(Exception):
     """Chrono24 answered with a page that holds no search result: its human check, or a page it has changed."""
 
 
+def search(query: str, **narrowed) -> str:
+    """Chrono24's search for a query, cheapest first."""
+    asked = {**narrowed, "dosearch": "true", "query": query, "sortorder": 1}
+    return f"{BASE_URL}/search/index.htm?{urlencode(asked, doseq=True)}"
+
+
 def search_url(brand: Optional[str], reference: str) -> str:
     """The search for a watch's offers inside the EU, cheapest first."""
-    query = quote_plus(" ".join(filter(None, (brand, reference))))
-    countries = "&".join(f"countryIds={country}" for country in EU)
-    return (
-        f"{BASE_URL}/search/index.htm?{countries}&currencyId=EUR&dosearch=true"
-        f"&pageSize={PAGE}&query={query}&sortorder=1"
-    )
+    return search(" ".join(filter(None, (brand, reference))), countryIds=EU, currencyId="EUR", pageSize=PAGE)
 
 
 def read(html: str, brand: Optional[str], reference: str, seen: datetime) -> Tuple[int, List[WatchData]]:
