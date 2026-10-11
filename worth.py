@@ -1,26 +1,42 @@
-"""What a watch is worth, and the most to pay for it, from what it is offered for on Chrono24 inside the EU."""
+"""What a watch is worth, and the most to pay for it, from what it is offered for on Chrono24 inside the EU
+and what the business itself bought and sold it for."""
 
 import math
+import statistics
+from datetime import date, timedelta
 from decimal import ROUND_FLOOR, Decimal
-from typing import Optional
+from typing import Optional, Tuple
 
+from chrono24 import FULL_SET
 from config import APP_CONFIG
 from prices import Prices
 
 FEWEST = 5  # offers below which the market says too little to go by
+TRADED_WITHIN = timedelta(days=365)  # the business's own trades that count, prices changing as they do
 MARGIN_TAX = Decimal("0.19")  # VAT on a used watch's margin (Differenzbesteuerung, § 25a UStG)
 
 
-def worth(prices: Prices, reference: str, kind: str) -> Optional[Decimal]:
-    """The price a quarter of the Chrono24 offers inside the EU for this kind of the watch ask less than; None from fewer than five.
+def ours(prices: Prices, reference: str, kind: str, sold: bool = True) -> Tuple[int, Optional[Decimal]]:
+    """How many of this kind of the watch the business sold within the last year, or bought if not sold, and the
+    middle of their prices: of full sets for a full set (owner rule, 11 Oct 2026: the controlling tool's prices are
+    price data)."""
+    amounts = prices.traded_for(reference, kind == FULL_SET, date.today() - TRADED_WITHIN, sold)
+    return len(amounts), Decimal(str(statistics.median(amounts))) if amounts else None
 
-    A search reads the cheapest 120 offers: for a watch offered more than 480
-    times the dearest of those stands in for the quarter, which only lowers it.
+
+def worth(prices: Prices, reference: str, kind: str) -> Optional[Decimal]:
+    """What this kind of the watch is worth: the lower of what the market asks and what the business sold it for.
+
+    The market: the price a quarter of the Chrono24 offers of this kind inside
+    the EU ask less than, from five offers up. A search reads the cheapest 120:
+    for a watch offered more than 480 times the dearest of those stands in for
+    the quarter, which only lowers it. The business: the middle of its own
+    sales of the watch within the last year.
     """
     found, asked = prices.market(reference, kind)
-    if found < FEWEST or not asked:
-        return None
-    return Decimal(str(asked[min(math.ceil(found / 4), len(asked)) - 1]))
+    market = Decimal(str(asked[min(math.ceil(found / 4), len(asked)) - 1])) if found >= FEWEST and asked else None
+    known = [value for value in (market, ours(prices, reference, kind)[1]) if value is not None]
+    return min(known) if known else None
 
 
 def least_profit(worth: Decimal) -> Decimal:
@@ -43,9 +59,13 @@ def most_to_pay(worth: Decimal) -> Decimal:
 
 
 def buy_limit(prices: Prices, reference: str, kind: str) -> Optional[Decimal]:
-    """The most to pay for this kind of a watch: the owner's own buy price, or else the one worked out from its worth."""
+    """The most to pay for this kind of a watch: the owner's own buy price, or else the one worked out from its worth,
+    no more than the middle of what the business paid for it within the last year."""
     own = prices.buy_price(reference)
     if own is not None:
         return Decimal(str(own))
     value = worth(prices, reference, kind)
-    return most_to_pay(value) if value is not None else None
+    if value is None:
+        return None
+    paid = ours(prices, reference, kind, sold=False)[1]
+    return most_to_pay(value) if paid is None else min(most_to_pay(value), paid)

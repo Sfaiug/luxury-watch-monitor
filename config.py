@@ -69,6 +69,8 @@ class AppConfig:
     proxies_file: str = os.getenv("PROXIES_FILE", "proxies.txt")
     filters_file: str = os.getenv("FILTERS_FILE", "filters.json")
     prices_file: str = os.getenv("PRICES_FILE", "prices.sqlite3")
+    # The owner's controlling tool, exported by hand: what the business bought and sold watches for
+    controlling_file: str = os.getenv("CONTROLLING_FILE", "controlling.csv")
 
     # Monitoring - PRODUCTION SAFE DEFAULTS
     check_interval_seconds: int = int(

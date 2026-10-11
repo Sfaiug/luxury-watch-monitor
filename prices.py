@@ -2,7 +2,7 @@
 
 import re
 import sqlite3
-from datetime import datetime
+from datetime import date, datetime
 from typing import Iterable, List, Optional, Sequence, Tuple
 
 from models import WatchData
@@ -43,6 +43,17 @@ class Prices:
                     reference TEXT PRIMARY KEY,
                     price REAL NOT NULL,
                     set_at TEXT NOT NULL
+                )
+            """)
+            # What the business itself bought and sold watches for, from the owner's controlling tool
+            self._db.execute("""
+                CREATE TABLE IF NOT EXISTS trades (
+                    reference TEXT NOT NULL,
+                    full_set INTEGER NOT NULL,
+                    bought TEXT,
+                    paid REAL,
+                    sold TEXT,
+                    sold_for REAL
                 )
             """)
             # Searches made before they asked for one kind of watch held new ones too: they count as none
@@ -163,6 +174,32 @@ class Prices:
             "FROM offers LEFT JOIN searches ON searches.reference = offers.reference "
             "GROUP BY offers.reference ORDER BY MAX(offers.brand) IS NULL, MAX(offers.brand), offers.reference"
         ).fetchall()
+
+    def traded(self, trades: Iterable):
+        """Keep these trades, the controlling tool's latest export, in place of the ones kept before."""
+        with self._db:
+            self._db.execute("DELETE FROM trades")
+            self._db.executemany(
+                "INSERT INTO trades VALUES (?, ?, ?, ?, ?, ?)",
+                [
+                    (t.reference, t.full_set, t.bought and t.bought.isoformat(), t.paid and float(t.paid),
+                     t.sold and t.sold.isoformat(), t.sold_for and float(t.sold_for))
+                    for t in trades
+                ],
+            )
+
+    def traded_for(self, reference: str, full_sets_only: bool, since: date, sold: bool) -> List[float]:
+        """What the business sold the watch for since that day, or paid for it if not sold, the full sets only if asked,
+        cheapest first."""
+        day, amount = ("sold", "sold_for") if sold else ("bought", "paid")
+        return [
+            price
+            for (price,) in self._db.execute(
+                f"SELECT {amount} FROM trades WHERE reference = ? AND {day} >= ? AND {amount} IS NOT NULL "
+                f"AND (full_set OR NOT ?) ORDER BY {amount}",
+                (reference_key(reference), since.isoformat(), full_sets_only),
+            )
+        ]
 
     def buy_price(self, reference: str) -> Optional[float]:
         """The owner's own buy price for a reference, if they set one."""

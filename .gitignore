@@ -27,6 +27,9 @@ proxies.txt
 # The owner's Kleinanzeigen login
 kleinanzeigen_session.json
 
+# The owner's controlling tool: it names sellers
+controlling.csv
+
 # Logs
 logs/
 *.log
