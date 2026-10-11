@@ -99,6 +99,8 @@ TITLE = "Rolex Submariner Date 126610LN"
     ("Ich biete [BETRAG], notfalls auch 8 000.", None),  # thousands apart by a space
     ("Ich biete [BETRAG], notfalls auch 8\u202f000.", None),
     ("Ich biete [BETRAG], notfalls auch 8'000.", None),
+    ("Ich biete [BETRAG], notfalls auch 8 000,00.", None),
+    ("Ich biete [BETRAG], notfalls auch 8'000.00.", None),
     ("Einverstanden!", None),  # the amount nowhere
     ("[BETRAG] oder [BETRAG]", None),
 ])
