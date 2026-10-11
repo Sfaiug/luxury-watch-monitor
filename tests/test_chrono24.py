@@ -111,8 +111,8 @@ def test_the_search_asks_for_used_watches_and_for_used_ones_with_their_box_and_p
     full_set = parse_qs(urlsplit(search_url("Rolex", "116610LN", FULL_SET)).query)
 
     assert (used["usedOrNew"], "specials" in used) == (["used"], False)
-    # Chrono24's own "Uhr mit Original-Box" and "Uhr mit Original-Papieren"
-    assert (full_set["usedOrNew"], full_set["specials"]) == (["used"], ["103", "104"])
+    # Chrono24's own "original box and papers", not its "original box" and "original papers", which find either
+    assert (full_set["usedOrNew"], full_set["specials"]) == (["used"], ["102"])
 
 
 async def test_a_reference_the_shops_offer_is_searched_for_each_kind_and_its_eu_offers_kept(prices):

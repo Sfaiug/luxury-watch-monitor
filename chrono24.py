@@ -45,7 +45,8 @@ USED, FULL_SET = "used", "full set"
 # used ones with the original box and papers. New and unworn ones would raise the price of a used one
 KINDS = {
     USED: {"usedOrNew": "used"},
-    FULL_SET: {"usedOrNew": "used", "specials": ["103", "104"]},  # Uhr mit Original-Box, mit Original-Papieren
+    # Original box and papers, both: 103 (box) and 104 (papers) asked together find either
+    FULL_SET: {"usedOrNew": "used", "specials": "102"},
 }
 
 
