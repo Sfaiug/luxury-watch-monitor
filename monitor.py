@@ -3,6 +3,7 @@
 import asyncio
 import signal
 import os
+from decimal import Decimal
 from typing import Dict, Set, Optional, Type
 import aiohttp
 
@@ -18,8 +19,9 @@ from action_store import ActionStore
 import chrono24
 import controlling
 from prices import Prices
-from agent import Agent, Deals, Verdict
-from negotiation import Negotiation, Negotiations, Negotiator, keep_talking
+from agent import Agent, Deals, Verdict, opening
+from negotiation import Negotiation, Negotiations, Negotiator, euros, keep_talking
+from scrapers.kleinanzeigen import offer_url
 from prices_page import PricesPage
 from discord_interactions import DiscordInteractionServer, discord_route_enabled
 from muv_service import MUVActionService
@@ -81,7 +83,7 @@ class WatchMonitor:
         self.seen_items: Dict[str, Set[str]] = {}
         self.scrapers: Dict[str, BaseScraper] = {}
         self.filter_store = FilterStore(APP_CONFIG.filters_file)
-        self.filter_keys: Set[str] = set()
+        self.filters: Dict[str, Filter] = {}  # as last read
         self._trades_read: Optional[float] = None  # when the controlling export read last was written
         self.filter_flow: Optional[FilterFlow] = None
         self.running = False
@@ -181,6 +183,7 @@ class WatchMonitor:
                 self.logger,
                 self.filter_flow,
                 [PricesPage(self.prices, APP_CONFIG.action_token_secret, self.deals)],
+                self._negotiate_pressed if self.negotiator else None,
             )
             await self.discord_interaction_server.start()
 
@@ -554,10 +557,10 @@ class WatchMonitor:
             self.logger.error(f"Filters could not be read: {e}")
             return
 
-        for key in self.filter_keys - set(filters):
+        for key in self.filters.keys() - filters.keys():
             self.scrapers.pop(key, None)
             self.seen_items.pop(key, None)
-        for key in set(filters) - self.filter_keys:
+        for key in filters.keys() - self.filters.keys():
             try:
                 scraper = filters[key].scraper(self.session, self.logger)
             except Exception as e:
@@ -567,7 +570,7 @@ class WatchMonitor:
                 continue
             scraper.set_seen_ids(self.seen_items.setdefault(key, SeenIds()))
             self.scrapers[key] = scraper
-        self.filter_keys = set(filters)
+        self.filters = filters
 
     def _read_trades(self):
         """The controlling tool's export into the price database, and again whenever the owner sends a newer one."""
@@ -583,18 +586,61 @@ class WatchMonitor:
 
     def _negotiate_if_asked(self, watch: WatchData, verdict: Verdict):
         """A match worth contacting is negotiated on where its filter says so (owner rule, 11 Oct 2026)."""
-        asked = next((f for f in self.filter_store.all() if f.key == watch.site_key), None)
+        asked = self.filters.get(watch.site_key)
         if self.negotiator and verdict.contact and asked and asked.negotiate:
-            self.negotiator.ask_to_start(
-                Negotiation(
-                    ad_id=watch.url.rsplit("/", 1)[1],
-                    channel=watch.site_key,
-                    title=watch.title,
-                    address=watch.url,
-                    limit=int(verdict.limit),
-                    offered=int(verdict.opening),
-                )
-            )
+            self._ask_to_negotiate(watch, verdict.limit, verdict.opening)
+
+    def _negotiates_by_hand(self, key: str) -> bool:
+        """A filter whose matches the agent negotiates on only when the member presses their button."""
+        asked = self.filters.get(key)
+        return bool(self.negotiator and asked and not asked.negotiate)
+
+    def _ask_to_negotiate(self, watch: WatchData, limit: Decimal, offered: Decimal) -> Optional[Negotiation]:
+        """Have the agent negotiate on a match, in its filter's channel: the negotiation, None where it does already."""
+        asked = Negotiation(
+            ad_id=watch.url.rsplit("/", 1)[1],
+            channel=watch.site_key,
+            title=watch.title,
+            address=watch.url,
+            limit=int(limit),
+            offered=int(offered),
+        )
+        return asked if self.negotiator.ask_to_start(asked) else None
+
+    @staticmethod
+    def _negotiate_button(watch: WatchData) -> dict:
+        return {"type": 2, "style": 1, "label": "Negotiate", "custom_id": f"negotiate:{watch.url.rsplit('/', 1)[1]}"}
+
+    def _negotiate_pressed(self, payload: dict) -> str:
+        """A match's "Negotiate" button: the agent reads the offer afresh in the background; the reply at once."""
+        ad_id = payload["data"]["custom_id"].split(":", 1)[1]
+        alert = ((payload.get("message") or {}).get("embeds") or [{}])[0]
+        watch = WatchData(
+            title=alert.get("title") or offer_url(ad_id),
+            url=offer_url(ad_id),
+            site_name="Kleinanzeigen",
+            site_key=f"filter:{payload.get('channel_id') or payload['channel']['id']}",
+        )
+        pressed = asyncio.create_task(self._negotiate_by_hand(watch))
+        self._judging.add(pressed)
+        pressed.add_done_callback(self._judging.discard)
+        return "The agent reads the offer again and says here how it goes."
+
+    async def _negotiate_by_hand(self, watch: WatchData):
+        """The member chose this match: the agent negotiates on it wherever it has a limit, whatever the asking price."""
+        judged = await self.agent.judge(watch)
+        if not judged:
+            return await self._tell_owner(watch.site_key, f"The agent could not read {watch.url}.")
+        asking, verdict = judged
+        if verdict.limit is None:
+            return await self._tell_owner(watch.site_key, f"The agent leaves {watch.url} alone: {verdict.why}.")
+        asked = self._ask_to_negotiate(watch, verdict.limit, opening(asking or verdict.limit, verdict.limit))
+        if not asked:
+            return await self._tell_owner(watch.site_key, f"The agent negotiates on {watch.url} already.")
+        await self._tell_owner(
+            watch.site_key,
+            f"The agent negotiates on {watch.url}: it opens at {euros(asked.offered)} and pays {euros(asked.limit)} at most.",
+        )
 
     async def _tell_owner(self, channel: str, text: str):
         """Say something in a filter's channel, its key's channel id; raises unless it was posted."""
@@ -637,7 +683,9 @@ class WatchMonitor:
                     f"[{site_key}] Sending {len(new_watches)} notifications..."
                 )
                 notifications_sent = await self.notification_manager.send_notifications(
-                    new_watches, scraper.config
+                    new_watches,
+                    scraper.config,
+                    button=self._negotiate_button if self._negotiates_by_hand(site_key) else None,
                 )
                 if notifications_sent < len(new_watches):
                     self.logger.warning(
@@ -675,7 +723,7 @@ class WatchMonitor:
                 self.prices.saw(scraper.last_scan)
 
             # A member's Kleinanzeigen matches go to the buying agent, beside the scans
-            if self.agent and new_watches and site_key in self.filter_keys:
+            if self.agent and new_watches and site_key in self.filters:
                 judging = asyncio.create_task(self.agent.consider(new_watches))
                 self._judging.add(judging)
                 judging.add_done_callback(self._judging.discard)

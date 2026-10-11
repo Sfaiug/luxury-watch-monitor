@@ -18,6 +18,7 @@ import chrono24
 from agent import Agent, Deals, Reading, decide, offer_page, read
 from chrono24 import FULL_SET, USED
 from config import APP_CONFIG, SITE_CONFIGS, AppConfig
+from filters import Filter
 from models import ScrapingSession, WatchData
 from monitor import WatchMonitor
 from prices import Prices
@@ -253,7 +254,7 @@ async def test_a_filter_s_new_matches_go_to_the_agent_and_a_shop_s_do_not(prices
     monitor.notification_manager = AsyncMock()
     monitor.notification_manager.send_notifications.return_value = 1
     monitor.agent = Mock(consider=AsyncMock())
-    monitor.filter_keys = {"filter:42"}
+    monitor.filters = {"filter:42": Filter("42", "1", "kleinanzeigen", "private", "Rolex")}
 
     class Source:
         def __init__(self, key, config):

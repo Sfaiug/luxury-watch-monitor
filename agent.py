@@ -11,7 +11,7 @@ import sqlite3
 from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal
-from typing import List, Literal, Optional, Type, TypeVar
+from typing import List, Literal, Optional, Tuple, Type, TypeVar
 
 from anthropic import transform_schema
 from bs4 import BeautifulSoup
@@ -169,8 +169,12 @@ def decide(reading: Reading, asking: Optional[Decimal], prices: Prices) -> Verdi
         return Verdict(False, "too cheap to be what it says", value, limit)
     if asking > limit * TOO_DEAR:
         return Verdict(False, "asks too much above the limit", value, limit)
-    opening = Decimal(math.floor(min(asking, limit) * OPENING / STEP) * STEP)
-    return Verdict(True, "worth contacting", value, limit, opening)
+    return Verdict(True, "worth contacting", value, limit, opening(asking, limit))
+
+
+def opening(asking: Decimal, limit: Decimal) -> Decimal:
+    """The first offer: a share of the lower of asking price and limit, STEP euros at a time, downwards."""
+    return Decimal(math.floor(min(asking, limit) * OPENING / STEP) * STEP)
 
 
 class Deals:
@@ -236,25 +240,35 @@ class Agent:
 
     async def consider(self, watches: List[WatchData]):
         for watch in watches:
+            judged = await self.judge(watch)
             try:
-                offer = offer_page(await self.fetch(watch.url))
-                # The price on the offer's own page is the one asked now
-                asking = asking_price(offer.price_text) or watch.price
-                reading = await read(self.client, offer)
-                if reading is None:
-                    verdict = Verdict(False, "the AI declined to read it")
-                else:
-                    if reading.is_watch_for_sale and reading.reference:
-                        # A watch offered: its price is one more, and its
-                        # reference joins the ones Chrono24 is searched for
-                        self.prices.saw([_as_offer(watch, reading)])
-                    verdict = decide(reading, asking, self.prices)
-                self.deals.judged(watch, asking, reading, verdict, datetime.now())
-                self.logger.info(f"Agent: {watch.title[:60]}: {verdict.why}")
-                if self.on_verdict:
-                    self.on_verdict(watch, verdict)
+                if judged and self.on_verdict:
+                    self.on_verdict(watch, judged[1])
             except Exception as e:
-                self.logger.warning(f"Agent could not judge {watch.url}: {e}")
+                self.logger.warning(f"Agent could not follow up on {watch.url}: {e}")
+
+    async def judge(self, watch: WatchData) -> Optional[Tuple[Optional[Decimal], Verdict]]:
+        """Read the offer's own page, have the AI read it and decide, keep the verdict; the asking price and the
+        verdict, None when the page could not be read."""
+        try:
+            offer = offer_page(await self.fetch(watch.url))
+            # The price on the offer's own page is the one asked now
+            asking = asking_price(offer.price_text) or watch.price
+            reading = await read(self.client, offer)
+            if reading is None:
+                verdict = Verdict(False, "the AI declined to read it")
+            else:
+                if reading.is_watch_for_sale and reading.reference:
+                    # A watch offered: its price is one more, and its
+                    # reference joins the ones Chrono24 is searched for
+                    self.prices.saw([_as_offer(watch, reading)])
+                verdict = decide(reading, asking, self.prices)
+            self.deals.judged(watch, asking, reading, verdict, datetime.now())
+            self.logger.info(f"Agent: {watch.title[:60]}: {verdict.why}")
+            return asking, verdict
+        except Exception as e:
+            self.logger.warning(f"Agent could not judge {watch.url}: {e}")
+            return None
 
 
 def _as_offer(watch: WatchData, reading: Reading) -> WatchData:

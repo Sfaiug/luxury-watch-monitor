@@ -70,7 +70,7 @@ def monitor(tmp_path):
     monitor.persistence = Mock()
     monitor.notification_manager = AsyncMock()
     monitor.notification_manager.send_notifications.side_effect = (
-        lambda watches, source: len(watches)
+        lambda watches, source, button=None: len(watches)
     )
     return monitor
 

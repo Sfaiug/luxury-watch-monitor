@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from decimal import Decimal
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 
 import httpx2
 import pytest
@@ -317,6 +317,7 @@ def test_a_match_worth_contacting_is_negotiated_where_its_filter_says_so(tmp_pat
     monitor.filter_store = FilterStore(tmp_path / "filters.json")
     monitor.filter_store.add(Filter("42", "1", "kleinanzeigen", "private", "Rolex", negotiate=True))
     monitor.filter_store.add(Filter("43", "1", "kleinanzeigen", "private", "Omega"))
+    monitor._sync_filters()
     monitor.negotiator = negotiator(Claude(), kept)
 
     def match(key, ad_id):
@@ -569,3 +570,51 @@ async def test_a_farewell_asks_for_nothing_more(kept):
     task = json.loads(claude.requests[-1])["messages"][0]["content"][0]["text"]
     assert "ask once more" not in task and kept.get("3535834511").status == "ended"
 
+
+@pytest.fixture
+def by_hand(tmp_path, kept):
+    """The monitor with one filter the member negotiates by hand and one the agent negotiates on throughout."""
+    monitor = WatchMonitor(log_level="ERROR")
+    monitor.filter_store = FilterStore(tmp_path / "filters.json")
+    monitor.filter_store.add(Filter("42", "1", "kleinanzeigen", "private", "Rolex", negotiate=True))
+    monitor.filter_store.add(Filter("43", "1", "kleinanzeigen", "private", "Omega"))
+    monitor._sync_filters()
+    monitor.negotiator = negotiator(Claude(), kept)
+    monitor._tell_owner = AsyncMock()
+    return monitor
+
+
+async def press(monitor, judged):
+    monitor.agent = Mock(judge=AsyncMock(return_value=judged))
+    button = monitor._negotiate_button(WatchData(title="Omega", url="https://www.kleinanzeigen.de/s-anzeige/3519758108",
+                                                 site_name="Kleinanzeigen", site_key="filter:43"))
+    monitor._negotiate_pressed({"data": {"custom_id": button["custom_id"]}, "channel_id": "43",
+                                "message": {"embeds": [{"title": "Omega Speedmaster"}]}})
+    await asyncio.gather(*monitor._judging)
+
+
+async def test_only_a_filter_negotiated_by_hand_has_the_button(by_hand):
+    assert by_hand._negotiates_by_hand("filter:43")
+    assert not by_hand._negotiates_by_hand("filter:42") and not by_hand._negotiates_by_hand("worldoftime")
+
+
+async def test_the_button_starts_a_chosen_match_up_to_its_limit_whatever_it_asks(by_hand, kept):
+    await press(by_hand, (Decimal("17790"), Verdict(False, "asks too much above the limit", Decimal("10800"), Decimal("8608"))))
+
+    (asked,) = kept.with_status("pending")
+    assert (asked.ad_id, asked.channel, asked.title, asked.limit, asked.offered) == (
+        "3519758108", "filter:43", "Omega Speedmaster", 8608, 7550
+    )
+    by_hand._tell_owner.assert_awaited_once_with(
+        "filter:43", "The agent negotiates on https://www.kleinanzeigen.de/s-anzeige/3519758108: "
+        "it opens at 7.550 € and pays 8.608 € at most."
+    )
+
+
+async def test_the_button_says_why_the_agent_leaves_a_match_without_a_limit(by_hand, kept):
+    await press(by_hand, (Decimal("9000"), Verdict(False, "red flags: signs of a replica")))
+
+    assert kept.with_status("pending") == []
+    by_hand._tell_owner.assert_awaited_once_with(
+        "filter:43", "The agent leaves https://www.kleinanzeigen.de/s-anzeige/3519758108 alone: red flags: signs of a replica."
+    )
