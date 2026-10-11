@@ -9,6 +9,7 @@ from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
 
 import chrono24
+from chrono24 import FULL_SET, USED
 from models import WatchData
 from prices import Prices
 from prices_page import PATH, PricesPage, key
@@ -23,7 +24,8 @@ PAGE = (Path(__file__).parent / "pages" / "chrono24.html").read_text(encoding="u
 def prices(tmp_path):
     kept = Prices(tmp_path / "prices.sqlite3")
     found, offers = chrono24.read(PAGE, "Rolex", "116610LN", SEARCHED)
-    kept.searched("116610LN", found, offers, SEARCHED)
+    kept.searched("116610LN", USED, found, offers, SEARCHED)
+    kept.searched("116610LN", FULL_SET, 0, [], SEARCHED)
     kept.saw([
         WatchData(
             title="Patek Philippe Nautilus",
@@ -58,9 +60,10 @@ async def test_each_watch_shows_its_market_worth_and_most_to_pay(client):
     page = await (await client.get(PATH, params={"key": key(SECRET)})).text()
 
     rolex = page[page.index('id="116610LN"'):].split("</tr>")[0]
-    assert "192 offers, <time>2026-10-10</time>" in rolex  # a date kept whole on its line
-    assert "10.800 €" in rolex  # worth: the 48th cheapest of 192
-    assert "8.608 €" in rolex  # most to pay, and the limit while the owner sets none
+    assert "192 used, 0 of them full sets, <time>2026-10-10</time>" in rolex  # a date kept whole on its line
+    used, full_set = rolex.split("<td class=n>")[1:3]
+    assert "10.800 €" in used and "8.608 €" in used  # worth, the 48th cheapest of 192, and most to pay
+    assert full_set.count("–") == 2  # no full set offered: no worth, no most to pay
 
     patek = page[page.index('id="57111A010"'):].split("</tr>")[0]
     assert "Patek Philippe" in patek
@@ -74,7 +77,7 @@ async def test_the_owner_s_price_is_the_limit_in_place_of_the_worked_out_one(cli
     assert answer.status == 303
     assert answer.headers["Location"] == f"{PATH}?key={key(SECRET)}#116610LN"
     assert prices.buy_price("116610LN") == 8200
-    assert buy_limit(prices, "116610LN") == Decimal("8200")
+    assert buy_limit(prices, "116610LN", USED) == buy_limit(prices, "116610LN", FULL_SET) == Decimal("8200")
 
     page = await (await client.get(PATH, params={"key": key(SECRET)})).text()
     rolex = page[page.index('id="116610LN"'):].split("</tr>")[0]
@@ -83,7 +86,7 @@ async def test_the_owner_s_price_is_the_limit_in_place_of_the_worked_out_one(cli
 
     await client.post(PATH, params={"key": key(SECRET)}, data={"reference": "116610LN", "price": ""})
     assert prices.buy_price("116610LN") is None
-    assert buy_limit(prices, "116610LN") == Decimal("8608")
+    assert buy_limit(prices, "116610LN", USED) == Decimal("8608")
 
 
 @pytest.mark.parametrize("given", ["cheap", "-500", "0", "nan", "snan", "1e400", "1e-400"])
@@ -95,7 +98,7 @@ async def test_a_buy_price_is_a_number_of_euros_above_nothing(client, prices, gi
 
 
 def test_a_watch_without_enough_offers_has_no_limit_until_the_owner_sets_one(prices):
-    assert buy_limit(prices, "5711/1A-010") is None
+    assert buy_limit(prices, "5711/1A-010", USED) is None
 
     prices.set_buy_price("5711/1A-010", 95000, SEARCHED)
-    assert buy_limit(prices, "57111A010") == Decimal("95000")
+    assert buy_limit(prices, "57111A010", USED) == Decimal("95000")
