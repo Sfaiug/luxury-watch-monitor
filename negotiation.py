@@ -209,7 +209,9 @@ class Negotiation:
     conversation: str = ""
     terms: Terms = field(default_factory=Terms)
     sent: List[str] = field(default_factory=list)  # the agent's messages, sent or on their way: any other is the owner's
-    status: str = "pending"  # pending, opening (its first message on its way), talking, agreed, ended, or owner
+    status: str = "pending"  # pending, opening (its first message on its way), talking, closing (its last on its way),
+    # agreed, ended, or owner
+    ends: str = ""  # what a closing negotiation ends as once its last message reached the seller: agreed or ended
     tries: int = 0  # looks at which its offer's page took no first message
     why: str = ""
     notice: str = ""  # what the owner is still to hear of it
@@ -308,8 +310,8 @@ class Negotiator:
         self.logger.info(f"Negotiation: opened at {euros(negotiation.offered)} for {negotiation.title[:60]}")
 
     async def follow_up(self, messages):
-        """Answer every seller who wrote since the agent last did."""
-        for negotiation in self.negotiations.with_status("talking"):
+        """Answer every seller who wrote since the agent last did, and close what said its last word."""
+        for negotiation in self.negotiations.with_status("talking") + self.negotiations.with_status("closing"):
             try:
                 await self._answer(messages, negotiation)
             except Exception as e:
@@ -324,7 +326,11 @@ class Negotiator:
         unshown = [text for text in negotiation.sent if plain(text) not in shown]
         if unshown:
             # Its last answer did not reach the seller: that one, not another
-            return await messages.reply(negotiation.conversation, unshown[-1])
+            await messages.reply(negotiation.conversation, unshown[-1])
+        if negotiation.status == "closing":
+            return self._close(negotiation)
+        if unshown:
+            return
         if not said or said[-1].outbound:
             return
         says = await ask(self.client, READ, [{"type": "text", "text": transcript(negotiation, said)}], SellerSays)
@@ -344,19 +350,25 @@ class Negotiator:
         negotiation.sent.append(text)
         if answer.kind in ("offer", "final"):
             negotiation.offered = answer.price
-        if answer.kind == "farewell":
-            self._end(negotiation, "ended", answer.why)
-        elif answer.kind == "done":
-            terms = negotiation.terms
-            self._end(
-                negotiation, "agreed", answer.why,
-                f"Agreed: {negotiation.title} for {euros(terms.price)}, {terms.delivery}, by bank transfer. "
-                f"The seller agreed to the purchase contract and sent a picture of their ID card. "
-                f"Send the Kaufvertrag and pay: {negotiation.address}",
-            )
-        else:
-            self.negotiations.save(negotiation)
+        if answer.kind in ("done", "farewell"):
+            # It ends once this, its last message, has reached the seller: the owner pays no one it has not
+            negotiation.status, negotiation.why = "closing", answer.why
+            negotiation.ends = "agreed" if answer.kind == "done" else "ended"
+        self.negotiations.save(negotiation)
         await messages.reply(negotiation.conversation, text)
+        if negotiation.status == "closing":
+            self._close(negotiation)
+
+    def _close(self, negotiation: Negotiation):
+        if negotiation.ends == "ended":
+            return self._end(negotiation, "ended", negotiation.why)
+        terms = negotiation.terms
+        self._end(
+            negotiation, "agreed", negotiation.why,
+            f"Agreed: {negotiation.title} for {euros(terms.price)}, {terms.delivery}, by bank transfer. "
+            f"The seller agreed to the purchase contract and sent a picture of their ID card. "
+            f"Send the Kaufvertrag and pay: {negotiation.address}",
+        )
 
     async def tell_owner(self):
         """Tell the owner what they are still to hear, again at each call until it reaches them."""
