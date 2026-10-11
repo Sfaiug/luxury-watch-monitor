@@ -11,7 +11,7 @@ import sqlite3
 from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal
-from typing import List, Literal, Optional
+from typing import List, Literal, Optional, Type, TypeVar
 
 from anthropic import transform_schema
 from bs4 import BeautifulSoup
@@ -102,6 +102,24 @@ def offer_page(html: str) -> Offer:
     )
 
 
+Form = TypeVar("Form", bound=BaseModel)
+
+
+async def ask(client, instructions: str, content: list, form: Type[Form]) -> Optional[Form]:
+    """The AI's answer in the given form, on the model and effort the server names; None when it declines."""
+    effort = {"effort": APP_CONFIG.agent_effort} if APP_CONFIG.agent_effort else {}
+    answer = await client.messages.create(
+        model=APP_CONFIG.agent_model,
+        max_tokens=16000,
+        system=instructions,
+        messages=[{"role": "user", "content": content}],
+        output_config={"format": {"type": "json_schema", "schema": transform_schema(form)}, **effort},
+    )
+    if answer.stop_reason == "refusal":  # its words are no answer
+        return None
+    return form.model_validate_json(next(block.text for block in answer.content if block.type == "text"))
+
+
 async def read(client, offer: Offer) -> Optional[Reading]:
     """The AI's reading of an offer; None when it declines to read it."""
     text = "\n".join(
@@ -110,17 +128,7 @@ async def read(client, offer: Offer) -> Optional[Reading]:
         + ["Description:", offer.description]
     )
     photos = [{"type": "image", "source": {"type": "url", "url": url}} for url in offer.photos[:PHOTOS]]
-    effort = {"effort": APP_CONFIG.agent_effort} if APP_CONFIG.agent_effort else {}
-    answer = await client.messages.create(
-        model=APP_CONFIG.agent_model,
-        max_tokens=16000,
-        system=INSTRUCTIONS,
-        messages=[{"role": "user", "content": photos + [{"type": "text", "text": text}]}],
-        output_config={"format": {"type": "json_schema", "schema": transform_schema(Reading)}, **effort},
-    )
-    if answer.stop_reason == "refusal":  # its words are no reading
-        return None
-    return Reading.model_validate_json(next(block.text for block in answer.content if block.type == "text"))
+    return await ask(client, INSTRUCTIONS, photos + [{"type": "text", "text": text}], Reading)
 
 
 @dataclass
