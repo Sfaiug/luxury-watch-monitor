@@ -9,7 +9,8 @@ contact form. A message counts as sent once its conversation shows it.
 from dataclasses import dataclass
 from typing import List, Optional
 
-BASE_URL = "https://www.kleinanzeigen.de"
+from scrapers.kleinanzeigen import offer_url
+
 GATEWAY = "https://gateway.kleinanzeigen.de"
 
 # The message box's own call (bffstatic/messagebox-web, 11 Oct 2026): a token from the session, then the gateway
@@ -98,7 +99,7 @@ class Messages:
 
     async def contact(self, ad_id: str, text: str) -> str:
         """Write the first message to an offer's seller through its contact form; the conversation it starts."""
-        await self._page.goto(f"{BASE_URL}/s-anzeige/{ad_id}", wait_until="domcontentloaded")
+        await self._page.goto(offer_url(ad_id), wait_until="domcontentloaded")
         await self._page.fill("#viewad-contact-message", text)
         await self._page.click("#viewad-contact-form button.viewad-contact-submit")
         await self._page.wait_for_selector(".j-viewad-contact-success", state="visible", timeout=30_000)

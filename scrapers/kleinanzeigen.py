@@ -18,6 +18,12 @@ SELLERS = {"private": "anbieter:privat/", "dealer": "anbieter:gewerblich/", "any
 CONDITIONS = {"new": "new", "very_good": "like_new", "good": "ok", "okay": "alright"}
 
 
+def offer_url(ad_id) -> str:
+    """An offer's page by its number alone: the site's own link holds the title,
+    and a seller who edits the title would make it a new offer."""
+    return f"{BASE_URL}/s-anzeige/{ad_id}"
+
+
 def search_url(
     words: str,
     min_price: Optional[int] = None,
@@ -75,9 +81,7 @@ class KleinanzeigenScraper(BaseScraper):
 
         watch = WatchData(
             title=extract_text_from_element(card.select_one("h3")),
-            # By its number alone: the site's own link holds the title, and a
-            # seller who edits the title would make it a new offer
-            url=f"{BASE_URL}/s-anzeige/{card['data-adid']}",
+            url=offer_url(card["data-adid"]),
             site_name=self.config.name,
             site_key=self.config.key,
             price=asking_price(price_text),
