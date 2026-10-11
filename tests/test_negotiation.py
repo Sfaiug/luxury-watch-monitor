@@ -84,9 +84,8 @@ def test_all_is_agreed_once_the_id_card_is_shown_not_only_promised():
 
 
 def test_the_amounts_a_message_names():
-    assert amounts("Wäre bei 9.200 € dabei, oder 9200€, 9.200,- Euro, € 9200, 9.200,-, VB 9.200 oder 9200? "
-                   "Abholung am 15.10. um 14 Uhr, 41 mm, 126610LN.") == {9200}
-    assert amounts("Die Datejust 41 126334 von 2021") == {126334, 2021}
+    assert amounts("Wäre bei 9.200 € dabei, oder 9200€, 9.200,- Euro, € 9.200,00, VB 9.200 oder 9200?") == {9200}
+    assert amounts("Die Datejust 41 126334LN von 2021 für 8,5k, 9 Tsd. oder neuntausend?") == {41, 126334, 2021, 8, 5, 9, None}
 
 
 @dataclass
