@@ -15,7 +15,7 @@ from models import WatchData
 from monitor import WatchMonitor
 from prices import Prices
 from prices_page import PATH, PricesPage, key
-from worth import worth
+from worth import buy_limit, most_to_pay, worth
 
 # The export's own header (11 Oct 2026); the rows are made up, the seller column as full as in the real one
 HEADER = (
@@ -85,24 +85,42 @@ def test_a_watch_is_worth_the_lower_of_the_market_and_the_middle_of_our_sales_wi
     assert worth(prices, "116610LN", FULL_SET) == Decimal("9900")  # ours lower
 
 
+def test_the_most_to_pay_is_no_more_than_the_middle_of_what_we_paid_within_a_year(tmp_path, export):
+    prices = Prices(tmp_path / "prices.sqlite3")
+    prices.traded(controlling.read(export))
+    # Paid 7.200, 8.100 and 8.500 within the year: more than selling at 9.350 leaves room for
+    assert buy_limit(prices, "116610LN", USED) == most_to_pay(Decimal("9350"))
+
+    export.write_text("\n".join([
+        HEADER,
+        row("126610LN", "x", "x", day(90), "€6.000,00", day(60), "11.000,00 €"),
+        row("126610LN", "x", "x", day(20), "€6.400,00"),
+        row("126610LN", "-", "-", day(10), "€5.000,00"),
+    ]), encoding="utf-8-sig")
+    prices.traded(controlling.read(export))
+    assert most_to_pay(Decimal("11000")) > Decimal("6400")
+    assert buy_limit(prices, "126610LN", USED) == Decimal("6000")  # the middle of all three
+    assert buy_limit(prices, "126610LN", FULL_SET) == Decimal("6200")  # of the two full sets
+
+
 def test_a_newer_export_takes_the_place_of_the_last_one(tmp_path, export, monkeypatch):
     monkeypatch.setattr(APP_CONFIG, "controlling_file", str(export))
     monitor = WatchMonitor(log_level="ERROR")
     monitor.prices = Prices(tmp_path / "prices.sqlite3")
 
     monitor._read_trades()
-    assert len(monitor.prices.sales("116610LN", False, date.today() - timedelta(days=365))) == 2
+    assert len(monitor.prices.traded_for("116610LN", False, date.today() - timedelta(days=365), True)) == 2
 
     export.write_text("\n".join([HEADER, row("126610LN", "x", "x", day(9), "€9.000,00", day(3), "11.000,00 €")]),
                       encoding="utf-8-sig")
     os.utime(export, (export.stat().st_atime, export.stat().st_mtime + 60))
     monitor._read_trades()
 
-    assert monitor.prices.sales("116610LN", False, date(2000, 1, 1)) == []
-    assert monitor.prices.sales("126610LN", True, date(2000, 1, 1)) == [11000.0]
+    assert monitor.prices.traded_for("116610LN", False, date(2000, 1, 1), True) == []
+    assert monitor.prices.traded_for("126610LN", True, date(2000, 1, 1), True) == [11000.0]
 
 
-async def test_the_owner_sees_what_we_sold_a_watch_for_within_a_year(tmp_path, export):
+async def test_the_owner_sees_what_we_bought_and_sold_a_watch_for_within_a_year(tmp_path, export):
     prices = Prices(tmp_path / "prices.sqlite3")
     prices.saw([WatchData(title="Submariner", url="https://shop.example/1", site_name="Shop", site_key="worldoftime",
                           brand="Rolex", reference="116610LN", price=Decimal("9500"), scraped_at=datetime.now())])
@@ -114,4 +132,4 @@ async def test_the_owner_sees_what_we_sold_a_watch_for_within_a_year(tmp_path, e
         page = await (await client.get(PATH, params={"key": key("secret")})).text()
 
     rolex = page[page.index('id="116610LN"'):].split("</tr>")[0]
-    assert "2 for 9.350 €" in rolex
+    assert "3 for 8.100 €</td><td class=n>2 for 9.350 €" in rolex

@@ -184,13 +184,15 @@ class Prices:
                 ],
             )
 
-    def sales(self, reference: str, full_sets_only: bool, since: date) -> List[float]:
-        """What the business sold the watch for since that day, the full sets only if asked, cheapest first."""
+    def traded_for(self, reference: str, full_sets_only: bool, since: date, sold: bool) -> List[float]:
+        """What the business sold the watch for since that day, or paid for it if not sold, the full sets only if asked,
+        cheapest first."""
+        day, amount = ("sold", "sold_for") if sold else ("bought", "paid")
         return [
-            sold_for
-            for (sold_for,) in self._db.execute(
-                "SELECT sold_for FROM trades WHERE reference = ? AND sold >= ? AND sold_for IS NOT NULL "
-                "AND (full_set OR NOT ?) ORDER BY sold_for",
+            price
+            for (price,) in self._db.execute(
+                f"SELECT {amount} FROM trades WHERE reference = ? AND {day} >= ? AND {amount} IS NOT NULL "
+                f"AND (full_set OR NOT ?) ORDER BY {amount}",
                 (reference_key(reference), since.isoformat(), full_sets_only),
             )
         ]
