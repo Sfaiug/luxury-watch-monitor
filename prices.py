@@ -112,14 +112,16 @@ class Prices:
                     )
 
     def due(self, kinds: Sequence[str], before: datetime, limit: int) -> List[Tuple[Optional[str], str, str]]:
-        """Brand, reference and kind of offered watches the market was not searched for since `before`, never searched first."""
+        """Brand, reference and kind of offered watches the market was not searched for since `before`: never searched
+        first, the latest seen of them first, then the ones searched longest ago."""
         each = " UNION ALL ".join("SELECT ? AS kind, ? AS rank" for _ in kinds)
         return self._db.execute(
             f"SELECT MAX(offers.brand), offers.reference, kinds.kind FROM offers CROSS JOIN ({each}) AS kinds "
             "LEFT JOIN searches ON searches.reference = offers.reference AND searches.kind = kinds.kind "
             "WHERE searches.searched IS NULL OR searches.searched < ? "
             "GROUP BY offers.reference, kinds.kind "
-            "ORDER BY MAX(searches.searched) IS NOT NULL, MAX(searches.searched), offers.reference, kinds.rank "
+            "ORDER BY MAX(searches.searched) IS NOT NULL, MAX(searches.searched), MAX(offers.first_seen) DESC, "
+            "offers.reference, kinds.rank "
             "LIMIT ?",
             (*[value for rank, kind in enumerate(kinds) for value in (kind, rank)], before.isoformat(timespec="seconds"), limit),
         ).fetchall()

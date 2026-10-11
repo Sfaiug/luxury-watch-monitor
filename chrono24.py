@@ -34,7 +34,9 @@ EU = (
     "GR", "IT", "ES", "AT", "CY", "CZ", "PL", "RO", "NL",
 )
 PAGE = 120  # offers on a page, cheapest first: the cheapest quarter of up to 480
-FRESH = timedelta(days=7)  # a reference is searched again once its offers are this old
+# Searched around the clock, the oldest first (owner rule, 11 Oct 2026: prices "change all the time"):
+# a search is made again once all others are, and an hour after it at the earliest
+FRESH = timedelta(hours=1)
 ROUND = 20  # searches made with one Chrome before it is closed
 PAUSE = 60  # seconds from one search to the next
 IDLE = 600  # seconds to wait when no reference is due, or when Chrono24 refused
@@ -173,7 +175,7 @@ async def search_round(prices: Prices, chrome, now=datetime.now) -> int:
 
 
 async def keep_up(prices: Prices, logger: logging.Logger):
-    """Keep Chrono24's offers for every reference the shops show at most a week old, until cancelled."""
+    """Keep searching Chrono24 for every reference, the oldest search first, until cancelled."""
     # One proxy after the other, round after round; straight without any
     ways = itertools.cycle(proxies.for_browser(APP_CONFIG.proxies_file) or [None])
     while True:
