@@ -44,6 +44,7 @@ class Filter:
     min_price: Optional[int] = None
     max_price: Optional[int] = None
     conditions: List[str] = field(default_factory=list)  # none: any condition
+    negotiate: bool = False  # the agent negotiates on every match worth it (owner rule, 11 Oct 2026)
 
     @property
     def key(self) -> str:

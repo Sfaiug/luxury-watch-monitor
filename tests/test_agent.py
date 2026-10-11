@@ -217,6 +217,16 @@ async def test_a_match_is_judged_from_its_own_page_and_the_verdict_kept(prices, 
     assert ("Rolex", "116610LV", USED) in prices.due([USED], SEARCHED, 20)
 
 
+async def test_each_verdict_goes_on_to_what_follows_it(prices, deals):
+    follows = Mock()
+
+    await Agent(Claude(reading().model_dump_json()), AsyncMock(return_value=OFFER), prices, deals, logging.getLogger("test"),
+                follows).consider([match()])
+
+    ((watch, verdict),) = [call.args for call in follows.call_args_list]
+    assert (watch, verdict.contact, verdict.why) == (match(), False, "asks too much above the limit")
+
+
 async def test_what_is_no_watch_for_sale_stays_out_of_the_price_database(prices, deals):
     box_only = Claude(reading(is_watch_for_sale=False, model="Submariner box only").model_dump_json())
 

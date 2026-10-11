@@ -7,7 +7,7 @@ from typing import Dict, Set, Optional, Type
 import aiohttp
 
 from config import APP_CONFIG, SITE_CONFIGS
-from models import ScrapingSession
+from models import ScrapingSession, WatchData
 from persistence import PersistenceManager, SeenIds
 from notifications import NotificationManager
 from logging_config import setup_logging, PerformanceLogger
@@ -18,7 +18,8 @@ from action_store import ActionStore
 import chrono24
 import controlling
 from prices import Prices
-from agent import Agent, Deals
+from agent import Agent, Deals, Verdict
+from negotiation import Negotiation, Negotiations, Negotiator, keep_talking
 from prices_page import PricesPage
 from discord_interactions import DiscordInteractionServer, discord_route_enabled
 from muv_service import MUVActionService
@@ -69,6 +70,7 @@ class WatchMonitor:
         self.prices: Optional[Prices] = None
         self.deals: Optional[Deals] = None
         self.agent: Optional[Agent] = None
+        self.negotiator: Optional[Negotiator] = None
         self._judging: Set[asyncio.Task] = set()
         self.muv_service: Optional[MUVActionService] = None
         self.discord_interaction_server: Optional[DiscordInteractionServer] = None
@@ -140,8 +142,13 @@ class WatchMonitor:
         if APP_CONFIG.agent_model and os.getenv("ANTHROPIC_API_KEY"):
             from anthropic import AsyncAnthropic
 
+            client = AsyncAnthropic()
             self.deals = Deals(APP_CONFIG.deals_file)
-            self.agent = Agent(AsyncAnthropic(), self._page, self.prices, self.deals, self.logger)
+            self.agent = Agent(client, self._page, self.prices, self.deals, self.logger, self._negotiate_if_asked)
+            if os.path.exists(APP_CONFIG.kleinanzeigen_session_file):
+                self.negotiator = Negotiator(
+                    client, Negotiations(APP_CONFIG.deals_file), self._tell_owner, self.logger
+                )
 
         # Initialize notification manager
         self.notification_manager = NotificationManager(
@@ -267,6 +274,9 @@ class WatchMonitor:
                 for judging in self._judging:
                     judging.cancel()
                 self.agent = None
+                if self.negotiator:
+                    self.negotiator.negotiations.close()
+                    self.negotiator = None
                 if self.deals:
                     self.deals.close()
                     self.deals = None
@@ -571,6 +581,27 @@ class WatchMonitor:
         except Exception as e:
             self.logger.error(f"The controlling tool's export could not be read: {e!r}")
 
+    def _negotiate_if_asked(self, watch: WatchData, verdict: Verdict):
+        """A match worth contacting is negotiated on where its filter says so (owner rule, 11 Oct 2026)."""
+        asked = next((f for f in self.filter_store.all() if f.key == watch.site_key), None)
+        if self.negotiator and verdict.contact and asked and asked.negotiate:
+            self.negotiator.ask_to_start(
+                Negotiation(
+                    ad_id=watch.url.rsplit("/", 1)[1],
+                    channel=watch.site_key,
+                    title=watch.title,
+                    address=watch.url,
+                    limit=int(verdict.limit),
+                    offered=int(verdict.opening),
+                )
+            )
+
+    async def _tell_owner(self, channel: str, text: str):
+        """Say something in a filter's channel, its key's channel id."""
+        await DiscordApi(self.session, APP_CONFIG).call(
+            "POST", f"/channels/{channel.split(':', 1)[1]}/messages", {"content": text}
+        )
+
     async def _scan_new_filter(self, new: Filter):
         """A filter just made is scanned at once, not at the next cycle."""
         self._sync_filters()
@@ -689,14 +720,20 @@ class WatchMonitor:
         Returns:
             bool: True if restart is requested, False otherwise
         """
-        market = asyncio.create_task(chrono24.keep_up(self.prices, self.logger)) if self.prices else None
+        beside = []
+        if self.prices:
+            beside.append(asyncio.create_task(chrono24.keep_up(self.prices, self.logger)))
+        if self.negotiator:
+            beside.append(asyncio.create_task(
+                keep_talking(self.negotiator, APP_CONFIG.kleinanzeigen_session_file, self.logger)
+            ))
         try:
             return await self._run_cycles()
         finally:
-            # Its Chrome and screen close with it
-            if market:
-                market.cancel()
-                await asyncio.gather(market, return_exceptions=True)
+            # Their Chromes and screens close with them
+            for task in beside:
+                task.cancel()
+            await asyncio.gather(*beside, return_exceptions=True)
 
     async def _run_cycles(self) -> bool:
         self.running = True

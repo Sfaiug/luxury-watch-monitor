@@ -16,6 +16,7 @@ from utils import parse_price
 
 SELLERS = {"private": "Private sellers", "dealer": "Dealers", "any": "Both"}
 CONDITIONS = {"new": "New", "very_good": "Very good", "good": "Good", "okay": "Okay"}
+NEGOTIATE = {"yes": "Yes, every match", "no": "No, only the ones I choose"}
 WIDGET_CHANNEL = "new-filter"
 WIDGET_TEXT = (
     "**Filters**\n"
@@ -45,6 +46,8 @@ def describe(new: Filter) -> str:
     parts = [STORES[new.store].name, SELLERS[new.seller]]
     if new.conditions:
         parts.append(", ".join(CONDITIONS[condition] for condition in new.conditions))
+    if new.negotiate:
+        parts.append("the agent negotiates")
     if new.min_price and new.max_price:
         parts.append(f"{new.min_price} to {new.max_price} €")
     elif new.min_price:
@@ -55,7 +58,8 @@ def describe(new: Filter) -> str:
 
 
 class FilterFlow:
-    """Asks a member where to look, who sells, in which condition and for what, then makes the filter and its channel."""
+    """Asks a member where to look, who sells, in which condition, whether the agent negotiates on every match and
+    for what, then makes the filter and its channel."""
 
     def __init__(
         self,
@@ -95,7 +99,9 @@ class FilterFlow:
             return self._ask_condition(*answers)
         if step == "condition":
             # The "Any condition" button names none
-            return self._form(*answers[:2], *data.get("values", []))
+            return self._ask_negotiate(*answers[:2], *data.get("values", []))
+        if step == "negotiate":
+            return self._form(*answers)
         if step == "form":
             return self._create(payload, *answers)
         return None
@@ -129,7 +135,15 @@ class FilterFlow:
             [{"type": 1, "components": [several]}, *_buttons(("Any condition", f"{step}:any"))],
         )
 
-    def _form(self, store: str, seller: str, *conditions: str) -> Dict[str, Any]:
+    def _ask_negotiate(self, store: str, seller: str, *conditions: str) -> Dict[str, Any]:
+        return self._ask(
+            RESPONSE_UPDATE_MESSAGE,
+            "Should the agent negotiate on every match worth buying?",
+            _buttons(*((label, ":".join(("filter:negotiate", store, seller, answer, *conditions)))
+                       for answer, label in NEGOTIATE.items())),
+        )
+
+    def _form(self, store: str, seller: str, negotiate: str, *conditions: str) -> Dict[str, Any]:
         def line(custom_id, label, required=False, placeholder=""):
             field = {
                 "type": 4,
@@ -145,7 +159,7 @@ class FilterFlow:
         return {
             "type": RESPONSE_MODAL,
             "data": {
-                "custom_id": ":".join(("filter", "form", store, seller, *conditions)),
+                "custom_id": ":".join(("filter", "form", store, seller, negotiate, *conditions)),
                 "title": "New filter",
                 "components": [
                     line("words", "What are you looking for?", True, "Rolex Submariner 16610"),
@@ -156,7 +170,7 @@ class FilterFlow:
         }
 
     def _create(
-        self, payload: Dict[str, Any], store: str, seller: str, *conditions: str
+        self, payload: Dict[str, Any], store: str, seller: str, negotiate: str, *conditions: str
     ) -> Dict[str, Any]:
         answers = {
             field["custom_id"]: field["value"].strip()
@@ -182,6 +196,7 @@ class FilterFlow:
                     min_price=lowest,
                     max_price=highest,
                     conditions=list(conditions),
+                    negotiate=negotiate == "yes",
                 ),
             )
         )
