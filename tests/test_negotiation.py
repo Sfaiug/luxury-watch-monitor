@@ -317,6 +317,7 @@ def test_a_match_worth_contacting_is_negotiated_where_its_filter_says_so(tmp_pat
     monitor.filter_store = FilterStore(tmp_path / "filters.json")
     monitor.filter_store.add(Filter("42", "1", "kleinanzeigen", "private", "Rolex", negotiate=True))
     monitor.filter_store.add(Filter("43", "1", "kleinanzeigen", "private", "Omega"))
+    monitor._sync_filters()
     monitor.negotiator = negotiator(Claude(), kept)
 
     def match(key, ad_id):
@@ -577,6 +578,7 @@ def by_hand(tmp_path, kept):
     monitor.filter_store = FilterStore(tmp_path / "filters.json")
     monitor.filter_store.add(Filter("42", "1", "kleinanzeigen", "private", "Rolex", negotiate=True))
     monitor.filter_store.add(Filter("43", "1", "kleinanzeigen", "private", "Omega"))
+    monitor._sync_filters()
     monitor.negotiator = negotiator(Claude(), kept)
     monitor._tell_owner = AsyncMock()
     return monitor

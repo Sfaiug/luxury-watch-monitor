@@ -241,8 +241,11 @@ class Agent:
     async def consider(self, watches: List[WatchData]):
         for watch in watches:
             judged = await self.judge(watch)
-            if judged and self.on_verdict:
-                self.on_verdict(watch, judged[1])
+            try:
+                if judged and self.on_verdict:
+                    self.on_verdict(watch, judged[1])
+            except Exception as e:
+                self.logger.warning(f"Agent could not follow up on {watch.url}: {e}")
 
     async def judge(self, watch: WatchData) -> Optional[Tuple[Optional[Decimal], Verdict]]:
         """Read the offer's own page, have the AI read it and decide, keep the verdict; the asking price and the
