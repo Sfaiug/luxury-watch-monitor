@@ -6,7 +6,8 @@ import hashlib
 import hmac
 import json
 import math
-from datetime import datetime
+import statistics
+from datetime import date, datetime
 from html import escape
 
 from aiohttp import web
@@ -16,7 +17,7 @@ from chrono24 import FULL_SET, KINDS, USED
 from config import APP_CONFIG
 from prices import Prices
 from utils import parse_price
-from worth import buy_limit, worth
+from worth import SOLD_WITHIN, buy_limit, worth
 
 PATH = "/muv/prices"  # atlas.hopcomp.com hands /muv/ to the monitor
 
@@ -89,10 +90,12 @@ class PricesPage:
                 f'<td class="n limit">{euros(buy_limit(self.prices, reference, kind))}</td>'
                 for kind in KINDS
             )
+            sold = self.prices.sales(reference, False, date.today() - SOLD_WITHIN)
+            ours = f"{len(sold)} for {euros(statistics.median(sold))}" if sold else "–"
             rows.append(
                 f'<tr id="{escape(reference)}" class="{"own" if own is not None else ""}">'
                 f"<td>{escape(brand or '')}</td><td>{escape(model or '')}</td><td>{escape(reference)}</td>"
-                f"<td>{market}</td>{numbers}"
+                f"<td>{market}</td><td class=n>{ours}</td>{numbers}"
                 f'<td><form method=post action="{PATH}?key={key(self.secret)}">'
                 f'<input type=hidden name=reference value="{escape(reference)}">'
                 f'<input name=price inputmode=numeric placeholder="your price" value="{"" if own is None else f"{own:.0f}"}">'
@@ -105,11 +108,12 @@ class PricesPage:
 <meta name=viewport content="width=device-width, initial-scale=1"><title>Watch prices</title><style>{STYLE}</style></head>
 <body><h1>Watch prices</h1>
 <p>Worth: the price a quarter of a watch's used Chrono24 offers inside the EU ask less than, from five offers up;
-for a full set, a quarter of the used ones with their original box and papers.
+for a full set, a quarter of the used ones with their original box and papers. Where we sold the watch within the
+last year, the middle of those sales instead if lower (for a full set, of the full sets we sold).
 Most to pay: what still leaves {share}&nbsp;% and at least {euros(APP_CONFIG.least_profit_eur)} profit after Chrono24's fee,
 shipping and the margin tax. Your price, once set, is the most to pay in its place; an empty one gives it back.</p>
 {matches}<input type=search placeholder="Find a watch: brand, model or reference">
-<div class=table><table><thead><tr><th>Brand</th><th>Model</th><th>Reference</th><th>On Chrono24</th>
+<div class=table><table><thead><tr><th>Brand</th><th>Model</th><th>Reference</th><th>On Chrono24</th><th>We sold (a year)</th>
 <th>Worth used</th><th>Most to pay</th><th>Worth full set</th><th>Most to pay</th><th>Your price</th></tr></thead>
 <tbody>{"".join(rows)}</tbody></table></div>
 <script>{FILTER}</script></body></html>"""

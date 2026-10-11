@@ -61,7 +61,8 @@ async def test_each_watch_shows_its_market_worth_and_most_to_pay(client):
 
     rolex = page[page.index('id="116610LN"'):].split("</tr>")[0]
     assert "192 used, 0 of them full sets, <time>2026-10-10</time>" in rolex  # a date kept whole on its line
-    used, full_set = rolex.split("<td class=n>")[1:3]
+    sold, used, full_set = rolex.split("<td class=n>")[1:4]
+    assert sold.startswith("–")  # sold by us within the year: none
     assert "10.800 €" in used and "8.608 €" in used  # worth, the 48th cheapest of 192, and most to pay
     assert full_set.count("–") == 2  # no full set offered: no worth, no most to pay
 

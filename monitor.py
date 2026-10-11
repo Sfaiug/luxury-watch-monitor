@@ -16,6 +16,7 @@ from memory_monitor import MemoryMonitor
 from utils import clear_exchange_rate_cache, fetch_page
 from action_store import ActionStore
 import chrono24
+import controlling
 from prices import Prices
 from agent import Agent, Deals
 from prices_page import PricesPage
@@ -79,6 +80,7 @@ class WatchMonitor:
         self.scrapers: Dict[str, BaseScraper] = {}
         self.filter_store = FilterStore(APP_CONFIG.filters_file)
         self.filter_keys: Set[str] = set()
+        self._trades_read: Optional[float] = None  # when the controlling export read last was written
         self.filter_flow: Optional[FilterFlow] = None
         self.running = False
         self.shutdown_event = asyncio.Event()
@@ -134,6 +136,7 @@ class WatchMonitor:
             await self.muv_service.register_configured_offer_links()
 
         self.prices = Prices(APP_CONFIG.prices_file)
+        self._read_trades()
         if APP_CONFIG.agent_model and os.getenv("ANTHROPIC_API_KEY"):
             from anthropic import AsyncAnthropic
 
@@ -456,6 +459,7 @@ class WatchMonitor:
         if self.filter_flow:
             await self.filter_flow.tend()
         self._sync_filters()
+        self._read_trades()
 
         # Log memory usage at start of cycle
         memory_start = self.memory_monitor.get_current_usage_mb()
@@ -554,6 +558,18 @@ class WatchMonitor:
             scraper.set_seen_ids(self.seen_items.setdefault(key, SeenIds()))
             self.scrapers[key] = scraper
         self.filter_keys = set(filters)
+
+    def _read_trades(self):
+        """The controlling tool's export into the price database, and again whenever the owner sends a newer one."""
+        try:
+            changed = os.path.getmtime(APP_CONFIG.controlling_file)
+            if changed != self._trades_read:
+                self.prices.traded(controlling.read(APP_CONFIG.controlling_file))
+                self._trades_read = changed
+        except FileNotFoundError:
+            pass
+        except Exception as e:
+            self.logger.error(f"The controlling tool's export could not be read: {e!r}")
 
     async def _scan_new_filter(self, new: Filter):
         """A filter just made is scanned at once, not at the next cycle."""
