@@ -29,8 +29,8 @@ def test_an_offer_the_seller_accepts_is_the_price_and_the_rest_is_settled_next()
     answer = move(LIMIT, OPENING, terms, says(accepts_offer=True), pictures=False)
 
     assert (answer.kind, answer.price, terms.price) == ("settle", 7550, 7550)
-    assert terms.open() == ["payment by bank transfer", "insured shipping, or else pickup", "the purchase contract",
-                            "a picture of the seller's ID card"]
+    assert list(terms.open()) == ["payment by bank transfer", "insured shipping, or else pickup",
+                                  "the purchase contract", "a picture of the seller's ID card"]
 
 
 def test_a_seller_asking_a_little_more_is_met_at_their_price():
@@ -68,7 +68,7 @@ def test_a_term_the_seller_agreed_and_then_refuses_is_open_again():
     terms = Terms(price=OPENING, bank_transfer=True, delivery="shipping", contract=True, id_card=True)
 
     assert move(LIMIT, OPENING, terms, says(bank_transfer=False), False).kind == "settle"
-    assert terms.open() == ["payment by bank transfer"]
+    assert list(terms.open()) == ["payment by bank transfer"]
 
 
 def test_a_red_flag_or_a_sold_watch_ends_it_without_a_word():
@@ -237,4 +237,117 @@ async def test_a_first_message_that_never_left_is_sent_as_it_was_at_the_next_loo
     for _ in range(3):
         await again.start(refusing)
     assert kept.get("1").status == "owner" and "took no message" in kept.get("1").notice
+
+
+async def opened(kept, box):
+    talking = negotiator(Claude(writes=["Ich biete [BETRAG]."]), kept)
+    talking.ask_to_start(asked_for())
+    await talking.start(box)
+
+
+async def test_the_seller_s_counter_is_answered_and_nothing_new_asks_nothing(kept):
+    box = Box()
+    await opened(kept, box)
+    quiet = Claude()
+    await negotiator(quiet, kept).follow_up(box)
+    assert quiet.asked == []
+
+    box.seller("Unter 8.500 € geht nichts.")
+    await negotiator(Claude(reads=[says(price=8500)], writes=["Wie wäre es mit [BETRAG]?"]), kept).follow_up(box)
+
+    assert box.said[-1].text == "Wie wäre es mit 8.000 €?"
+    assert kept.get("3535834511").offered == 8000
+
+
+async def test_the_owner_hears_once_all_is_agreed_and_the_id_card_shown(kept):
+    box, notify = Box(), AsyncMock()
+    await opened(kept, box)
+    box.seller("Ok, 7.550 € passt. Überweisung, Versand und Kaufvertrag sind ok.")
+    await negotiator(Claude(reads=[says(accepts_offer=True, bank_transfer=True, delivery="shipping", contract=True)],
+                            writes=["Super, [BETRAG] passt! Schicken Sie mir noch ein Foto Ihres Ausweises für den Kaufvertrag?"]),
+                     kept).follow_up(box)
+    assert kept.get("3535834511").status == "talking"
+    assert box.said[-1].text.startswith("Super, 7.550 € passt!")  # an agreed price is named again with the rest
+
+    box.seller("Hier mein Ausweis.", pictures=1)
+    talking = negotiator(Claude(reads=[says(id_card=True)], writes=["Danke! Der Kaufvertrag kommt gleich, dann überweise ich [BETRAG]."]),
+                         kept, notify)
+    await talking.follow_up(box)
+    await talking.tell_owner()
+
+    assert box.said[-1].text == "Danke! Der Kaufvertrag kommt gleich, dann überweise ich 7.550 €."
+    assert kept.get("3535834511").status == "agreed"
+    channel, text = notify.await_args.args
+    assert channel == "filter:42" and "7.550 €" in text and "shipping" in text and "Kaufvertrag" in text
+
+
+async def test_an_answer_written_wrong_twice_goes_to_the_owner(kept):
+    box = Box()
+    await opened(kept, box)
+    box.seller("Was ist Ihr bestes Angebot?")
+
+    await negotiator(Claude(reads=[says()], writes=["Maximal 9.000 €.", "Bis neuntausend."]), kept).follow_up(box)
+
+    assert box.said[-1].text == "Was ist Ihr bestes Angebot?"
+    assert kept.get("3535834511").status == "owner" and kept.get("3535834511").notice
+
+
+async def test_once_the_owner_writes_in_the_conversation_the_agent_stays_out(kept):
+    box = Box()
+    await opened(kept, box)
+    box.seller("8.000?")
+    box.said.append(Said(True, "Passt, mache ich selbst."))
+    claude = Claude()
+
+    await negotiator(claude, kept).follow_up(box)
+
+    assert claude.asked == [] and kept.get("3535834511").status == "owner"
+
+
+async def test_its_own_answer_shown_after_a_failed_send_is_not_taken_for_the_owner_s(kept):
+    box = Box()
+    await opened(kept, box)
+    box.seller("Unter 8.500 € geht nichts.")
+
+    async def sent_but_answered_at_once(conversation_id, text):
+        box.said.append(Said(True, " ".join(text.split("\n"))))
+        box.seller("Und mit Versand?")
+        raise RuntimeError("conversation c1 does not end with the message written")
+
+    box.reply = sent_but_answered_at_once
+    await negotiator(Claude(reads=[says(price=8500)], writes=["Wie wäre es\nmit [BETRAG]?"]), kept).follow_up(box)
+    del box.reply
+    await negotiator(Claude(reads=[says(price=8500, question="Und mit Versand?")], writes=["Versichert, im Preis: [BETRAG]."]),
+                     kept).follow_up(box)
+
+    assert kept.get("3535834511").status == "talking"
+    assert box.said[-1].text == "Versichert, im Preis: 8.250 €."  # the next counter, the seller holding at 8.500 €
+
+
+async def test_an_answer_that_did_not_reach_the_seller_is_sent_again_not_decided_again(kept):
+    box = Box()
+    await opened(kept, box)
+    box.seller("Unter 8.500 € geht nichts.")
+    box.reply = AsyncMock(side_effect=RuntimeError("the site did not answer"))
+    await negotiator(Claude(reads=[says(price=8500)], writes=["Wie wäre es mit [BETRAG]?"]), kept).follow_up(box)
+    del box.reply
+    again = Claude()
+
+    await negotiator(again, kept).follow_up(box)
+
+    assert again.asked == [] and box.said[-1].text == "Wie wäre es mit 8.000 €?"
+
+
+async def test_a_message_settling_the_rest_names_every_term_still_open(kept):
+    box = Box()
+    await opened(kept, box)
+    box.seller("Ok, 7.550 € passt, Überweisung und Versand gehen klar.")
+
+    # The ID card left out of the first message, as the real model once waived it
+    await negotiator(Claude(reads=[says(accepts_offer=True, bank_transfer=True, delivery="shipping")],
+                            writes=["Super, [BETRAG] per Überweisung! Den Kaufvertrag schicke ich.",
+                                    "Super, [BETRAG]! Für den Kaufvertrag brauche ich noch ein Foto Ihres Ausweises."]),
+                     kept).follow_up(box)
+
+    assert box.said[-1].text == "Super, 7.550 €! Für den Kaufvertrag brauche ich noch ein Foto Ihres Ausweises."
 

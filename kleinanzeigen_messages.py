@@ -27,6 +27,11 @@ _CALL = """async ([method, path, body]) => {
 _USER = "async () => (await (await fetch('/messagebox-api/view', {credentials: 'include'})).json()).user.id"
 
 
+def plain(text: str) -> str:
+    """A message as both its writer and the site show it: the same words, however the lines break."""
+    return " ".join(text.split())
+
+
 class NotSent(Exception):
     """The site does not show the message as sent."""
 
@@ -126,5 +131,5 @@ class Messages:
     async def _shows(self, conversation_id: str, text: str, before: int):
         """Sent: the conversation has grown since it held `before` messages, and ends with this one."""
         said = (await self.conversation(conversation_id)).messages
-        if len(said) <= before or not said[-1].outbound or said[-1].text.strip() != text.strip():
+        if len(said) <= before or not said[-1].outbound or plain(said[-1].text) != plain(text):
             raise NotSent(f"conversation {conversation_id} does not end with the message written")
