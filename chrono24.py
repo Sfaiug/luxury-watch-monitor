@@ -27,11 +27,11 @@ from utils import parse_price
 
 BASE_URL = "https://www.chrono24.de"
 # Offers count only from inside the EU, VAT and all (owner rule, 10 Oct 2026):
-# the countries as the owner's auction scanner names them to Chrono24
+# the EU's VAT area, its 27 states and Monaco, which France's VAT covers
 EU = (
     "DE", "BE", "FI", "PT", "BG", "DK", "LT", "LU", "HR", "LV",
-    "FR", "HU", "SE", "MC", "SI", "SK", "IE", "EE", "MQ", "MT",
-    "GP", "GR", "IT", "ES", "AT", "RE", "CY", "CZ", "PL", "RO", "NL",
+    "FR", "HU", "SE", "MC", "SI", "SK", "IE", "EE", "MT",
+    "GR", "IT", "ES", "AT", "CY", "CZ", "PL", "RO", "NL",
 )
 PAGE = 120  # offers on a page, cheapest first: the cheapest quarter of up to 480
 FRESH = timedelta(days=7)  # a reference is searched again once its offers are this old

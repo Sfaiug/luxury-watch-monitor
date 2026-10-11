@@ -94,13 +94,14 @@ def test_cloudflare_s_human_check_is_no_search_result():
         read(page("chrono24_human_check.html"), "Rolex", "116610LN", SEEN)
 
 
-def test_the_search_asks_for_the_offers_inside_the_eu_cheapest_first():
+def test_the_search_asks_for_the_offers_inside_the_eu_vat_area_cheapest_first():
     asked = parse_qs(urlsplit(search_url("Patek Philippe", "57111A010")).query)
 
     assert asked["query"] == ["Patek Philippe 57111A010"]
-    assert asked["countryIds"] == list(chrono24.EU)
-    assert {"DE", "FR", "IT", "AT"} <= set(asked["countryIds"])
-    assert not {"CH", "GB", "US", "HK", "JP"} & set(asked["countryIds"])
+    # The 27 states and Monaco; not Martinique, Guadeloupe or Réunion, EU land outside its VAT
+    assert sorted(asked["countryIds"]) == sorted(
+        "AT BE BG CY CZ DE DK EE ES FI FR GR HR HU IE IT LT LU LV MT NL PL PT RO SE SI SK".split() + ["MC"]
+    )
     assert (asked["currencyId"], asked["sortorder"], asked["pageSize"]) == (["EUR"], ["1"], ["120"])
     assert parse_qs(urlsplit(search_url(None, "116610LN")).query)["query"] == ["116610LN"]
 
