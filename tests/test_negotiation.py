@@ -29,8 +29,8 @@ def test_an_offer_the_seller_accepts_is_the_price_and_the_rest_is_settled_next()
     answer = move(LIMIT, OPENING, terms, says(accepts_offer=True), pictures=False)
 
     assert (answer.kind, answer.price, terms.price) == ("settle", 7550, 7550)
-    assert terms.open() == ["payment by bank transfer", "insured shipping, or else pickup", "the purchase contract",
-                            "a picture of the seller's ID card"]
+    assert list(terms.open()) == ["payment by bank transfer", "insured shipping, or else pickup",
+                                  "the purchase contract", "a picture of the seller's ID card"]
 
 
 def test_a_seller_asking_a_little_more_is_met_at_their_price():
@@ -68,7 +68,7 @@ def test_a_term_the_seller_agreed_and_then_refuses_is_open_again():
     terms = Terms(price=OPENING, bank_transfer=True, delivery="shipping", contract=True, id_card=True)
 
     assert move(LIMIT, OPENING, terms, says(bank_transfer=False), False).kind == "settle"
-    assert terms.open() == ["payment by bank transfer"]
+    assert list(terms.open()) == ["payment by bank transfer"]
 
 
 def test_a_red_flag_or_a_sold_watch_ends_it_without_a_word():

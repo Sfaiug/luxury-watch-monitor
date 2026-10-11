@@ -105,6 +105,18 @@ async def test_a_reply_counts_as_sent_once_its_conversation_shows_it():
         )
 
 
+class JoiningLines(Site):
+    """The site showing a message with its lines broken otherwise than written."""
+
+    def _sent(self, conversation_id, text):
+        super()._sent(conversation_id, " ".join(text.split("\n")))
+
+
+async def test_a_message_counts_as_sent_however_the_site_breaks_its_lines():
+    await Messages(JoiningLines([conversation(("INBOUND", "Was bieten Sie?", 0))])).reply("abc:1:xyz", "Wie wäre es\nmit 8.000 €?")
+    assert await Messages(JoiningLines()).contact("3535834511", "Hallo,\nist die Uhr noch da?") == "abc:1:xyz"
+
+
 async def test_a_message_said_before_counts_only_once_it_shows_again():
     asked_before = Site([conversation(("OUTBOUND", "Ist die Uhr noch da?", 0), ("INBOUND", "Ja", 0))],
                         shows_what_is_sent=False)

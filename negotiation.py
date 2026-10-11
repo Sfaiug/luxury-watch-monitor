@@ -15,12 +15,12 @@ import re
 import sqlite3
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
-from typing import List, Literal, Optional
+from typing import Dict, List, Literal, Optional, Tuple
 
 from pydantic import BaseModel, Field
 
 from agent import STEP, RedFlag, ask, flagged
-from kleinanzeigen_messages import Unsent
+from kleinanzeigen_messages import Unsent, plain
 from prices_page import euros
 
 CLOSE = 0.02  # a seller asking this share or less above the offer is met at their price
@@ -51,17 +51,18 @@ class Terms:
     id_card: bool = False
     asked_again: List[str] = field(default_factory=list)  # terms the seller refused once and was asked again
 
-    def open(self) -> List[str]:
-        return [
-            name
-            for name, settled in (
-                ("payment by bank transfer", self.bank_transfer),
-                ("insured shipping, or else pickup", self.delivery),
-                ("the purchase contract", self.contract),
-                ("a picture of the seller's ID card", self.id_card),
+    def open(self) -> Dict[str, Tuple[str, ...]]:
+        """The terms not settled yet, each with the words a German message names it by."""
+        return {
+            name: words
+            for name, settled, words in (
+                ("payment by bank transfer", self.bank_transfer, ("überweis",)),
+                ("insured shipping, or else pickup", self.delivery, ("versand", "versend", "abhol")),
+                ("the purchase contract", self.contract, ("kaufvertrag",)),
+                ("a picture of the seller's ID card", self.id_card, ("ausweis",)),
             )
             if not settled
-        ]
+        }
 
 
 @dataclass
@@ -160,13 +161,6 @@ TASKS = {
     "done": "All is agreed at the amount: thank the seller; the buyer sends the purchase contract and pays shortly.",
     "farewell": "The buyer cannot meet the seller on this: say so kindly, with no new offer.",
 }
-# A message settling the open terms names each, in the words a German message would
-NAMED = {
-    "payment by bank transfer": ("überweis",),
-    "insured shipping, or else pickup": ("versand", "versend", "abhol"),
-    "the purchase contract": ("kaufvertrag",),
-    "a picture of the seller's ID card": ("ausweis",),
-}
 INSIST = (" The seller refuses {refused}: explain kindly that the buyer pays only by bank transfer and keeps a purchase"
           " contract with a picture of the seller's ID card for every watch he buys, and ask once more.")
 
@@ -253,11 +247,6 @@ class Negotiations:
         return [negotiation for negotiation in self.all() if negotiation.status == status]
 
 
-def _plain(text: str) -> str:
-    """A message as both its writer and the site show it: the same words, however the lines break."""
-    return " ".join(text.split())
-
-
 def transcript(negotiation: Negotiation, said) -> str:
     lines = [f"Offer: {negotiation.title}", f"The buyer's last offer: {euros(negotiation.offered)}", "Conversation:"]
     for message in said:
@@ -328,11 +317,11 @@ class Negotiator:
 
     async def _answer(self, messages, negotiation: Negotiation):
         said = (await messages.conversation(negotiation.conversation)).messages
-        shown = [_plain(message.text) for message in said if message.outbound]
-        if set(shown) - {_plain(text) for text in negotiation.sent}:
+        shown = [plain(message.text) for message in said if message.outbound]
+        if set(shown) - {plain(text) for text in negotiation.sent}:
             # Written from the account, not by the agent: the owner took over
             return self._end(negotiation, "owner", "the owner wrote in the conversation")
-        unshown = [text for text in negotiation.sent if _plain(text) not in shown]
+        unshown = [text for text in negotiation.sent if plain(text) not in shown]
         if unshown:
             # Its last answer did not reach the seller: that one, not another
             return await messages.reply(negotiation.conversation, unshown[-1])
@@ -384,17 +373,17 @@ class Negotiator:
 
     async def _write(self, negotiation: Negotiation, answer: Move, said, question: Optional[str]) -> Optional[str]:
         """The message for the move, its amount written in; None when the AI twice writes it otherwise."""
-        task = TASKS[answer.kind].format(open=", ".join(negotiation.terms.open()))
+        open_terms = negotiation.terms.open() if answer.kind == "settle" else {}
+        task = TASKS[answer.kind].format(open=", ".join(open_terms))
         if answer.refused:
             task += INSIST.format(refused=" and ".join(answer.refused))
         content = f"{transcript(negotiation, said)}\n\nTask: {task}"
-        open_terms = negotiation.terms.open() if answer.kind == "settle" else []
         if question:
             content += f"\nThe seller's open question: {question}"
         for _ in range(2):
             written = await ask(self.client, WRITE, [{"type": "text", "text": content}], Written)
             message = written and filled(written.message, answer.price, negotiation.title)
-            if message and all(any(word in message.lower() for word in NAMED[term]) for term in open_terms):
+            if message and all(any(word in message.lower() for word in words) for words in open_terms.values()):
                 return message
         return None
 
