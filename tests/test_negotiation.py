@@ -152,9 +152,10 @@ class Claude(AsyncAnthropic):
 
     def __init__(self, reads=(), writes=()):
         super().__init__(api_key="test", max_retries=0, http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(self.answer)))
-        self.reads, self.writes, self.asked = list(reads), list(writes), []
+        self.reads, self.writes, self.asked, self.requests = list(reads), list(writes), [], []
 
     def answer(self, request):
+        self.requests.append(request.content)
         asked = json.loads(request.content)
         writing = "message" in asked["output_config"]["format"]["schema"]["properties"]
         self.asked.append("write" if writing else "read")
@@ -289,7 +290,20 @@ async def test_an_answer_written_wrong_twice_goes_to_the_owner(kept):
     await negotiator(Claude(reads=[says()], writes=["Maximal 9.000 €.", "Bis neuntausend."]), kept).follow_up(box)
 
     assert box.said[-1].text == "Was ist Ihr bestes Angebot?"
-    assert kept.get("3535834511").status == "owner" and kept.get("3535834511").notice
+    assert kept.get("3535834511").status == "owner" and "amount decided alone" in kept.get("3535834511").notice
+
+
+async def test_a_settling_message_twice_leaving_a_term_unnamed_goes_to_the_owner_told_which(kept):
+    box = Box()
+    await opened(kept, box)
+    box.seller("Ok, 7.550 passt. Überweisung und Kaufvertrag gehen klar.")
+    unnamed = "Super, [BETRAG] passt! Schicken Sie mir noch ein Foto Ihres Ausweises?"
+
+    await negotiator(Claude(reads=[says(accepts_offer=True, bank_transfer=True, contract=True)], writes=[unnamed, unnamed]),
+                     kept).follow_up(box)
+
+    gone = kept.get("3535834511")
+    assert gone.status == "owner" and "the AI wrote no message naming insured shipping, or else pickup" in gone.notice
 
 
 async def test_once_the_owner_writes_in_the_conversation_the_agent_stays_out(kept):
@@ -374,3 +388,36 @@ async def test_the_owner_is_told_to_pay_only_once_the_seller_has_the_agreement(k
 
     assert box.said[-1].text == "Danke! Der Kaufvertrag kommt gleich, dann überweise ich 7.550 €."
     assert kept.get("3535834511").status == "agreed" and notify.await_count == 1
+
+
+@pytest.mark.parametrize("words", [
+    "Super, [BETRAG]! Können Sie die Uhr versichert verschicken? Für den Vertrag bitte noch ein Foto vom Perso.",
+    "Super, [BETRAG]! Abholung ginge auch. Den Kaufvertrag schicke ich, dazu bräuchte ich ein Foto Ihres Ausweises.",
+])
+async def test_a_settling_message_may_name_the_terms_as_people_do(kept, words):
+    box = Box()
+    await opened(kept, box)
+    box.seller("Ok, 7.550 € passt, Überweisung geht klar.")
+    claude = Claude(reads=[says(accepts_offer=True, bank_transfer=True)], writes=[words])
+
+    await negotiator(claude, kept).follow_up(box)
+
+    assert box.said[-1].text == words.replace("[BETRAG]", "7.550 €")
+    task = json.loads(claude.requests[-1])["messages"][0]["content"][0]["text"]
+    assert '("Versand")' in task and '("Kaufvertrag")' in task and '("Ausweis")' in task  # the AI is told the words
+
+
+async def test_a_farewell_asks_for_nothing_more(kept):
+    box = Box()
+    await opened(kept, box)
+    box.seller("Unter 12.000 € nicht, und nur bar.")
+    kept_now = kept.get("3535834511")
+    kept_now.offered = LIMIT
+    kept.save(kept_now)
+    claude = Claude(reads=[says(price=12000, bank_transfer=False)], writes=["Schade, da komme ich leider nicht mit."])
+
+    await negotiator(claude, kept).follow_up(box)
+
+    task = json.loads(claude.requests[-1])["messages"][0]["content"][0]["text"]
+    assert "ask once more" not in task and kept.get("3535834511").status == "ended"
+
