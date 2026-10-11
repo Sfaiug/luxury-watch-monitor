@@ -597,10 +597,12 @@ class WatchMonitor:
             )
 
     async def _tell_owner(self, channel: str, text: str):
-        """Say something in a filter's channel, its key's channel id."""
-        await DiscordApi(self.session, APP_CONFIG).call(
+        """Say something in a filter's channel, its key's channel id; raises unless it was posted."""
+        status, answer = await DiscordApi(self.session, APP_CONFIG).call(
             "POST", f"/channels/{channel.split(':', 1)[1]}/messages", {"content": text}
         )
+        if status not in (200, 201):
+            raise RuntimeError(f"Discord answered {status}: {answer}")
 
     async def _scan_new_filter(self, new: Filter):
         """A filter just made is scanned at once, not at the next cycle."""

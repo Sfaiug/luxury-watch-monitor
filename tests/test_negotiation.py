@@ -349,6 +349,45 @@ async def test_with_nothing_to_do_the_session_is_used_once_a_day_to_keep_the_log
     assert browser.kept == ["session.json", "session.json"]  # the first look, and a day on; not an hour on
 
 
+async def test_a_last_message_that_did_not_leave_is_sent_at_the_next_look_not_the_next_day(monkeypatch, kept):
+    box, browser, notify = Box(), Browser(), AsyncMock()
+    await opened(kept, box)
+    agreed = kept.get("3535834511")
+    agreed.terms = Terms(price=7550, bank_transfer=True, delivery="shipping", contract=True)
+    kept.save(agreed)
+    box.seller("Hier mein Ausweis.", pictures=1)
+    box.reply = AsyncMock(side_effect=RuntimeError("the site did not answer"))
+    clock = [datetime(2026, 10, 11, 10, tzinfo=negotiation.GERMANY)]
+
+    async def pause(seconds):  # five minutes on, the site answers again; then the end
+        if box.__dict__.pop("reply", None) is None:
+            raise asyncio.CancelledError
+        clock[0] += timedelta(seconds=seconds)
+
+    monkeypatch.setattr(negotiation.chrome, "Chrome", lambda: browser)
+    monkeypatch.setattr(negotiation, "Messages", lambda page: box)
+    monkeypatch.setattr(negotiation.asyncio, "sleep", pause)
+    talking = negotiator(Claude(reads=[says(id_card=True)], writes=["Danke! Der Kaufvertrag kommt gleich, dann überweise ich [BETRAG]."]),
+                         kept, notify)
+
+    with pytest.raises(asyncio.CancelledError):
+        await negotiation.keep_talking(talking, "session.json", logging.getLogger("test"), now=lambda: clock[0])
+
+    assert len(browser.opened) == 2 and box.said[-1].text == "Danke! Der Kaufvertrag kommt gleich, dann überweise ich 7.550 €."
+    assert kept.get("3535834511").status == "agreed" and notify.await_count == 1
+
+
+async def test_what_discord_did_not_post_the_owner_is_told_again(monkeypatch, kept):
+    told = asked_for()
+    told.status, told.notice = "agreed", "Agreed: send the Kaufvertrag and pay"
+    kept.save(told)
+    monkeypatch.setattr("monitor.DiscordApi.call", AsyncMock(return_value=(500, {"message": "500: Internal Server Error"})))
+
+    await negotiator(Claude(), kept, WatchMonitor(log_level="ERROR")._tell_owner).tell_owner()
+
+    assert kept.get("3535834511").notice == "Agreed: send the Kaufvertrag and pay"
+
+
 async def opened(kept, box):
     talking = negotiator(Claude(writes=["Ich biete [BETRAG]."]), kept)
     talking.ask_to_start(asked_for())
