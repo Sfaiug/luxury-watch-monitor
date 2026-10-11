@@ -10,6 +10,7 @@ import httpx2
 import pytest
 from anthropic import AsyncAnthropic
 
+from kleinanzeigen_messages import Unsent
 from negotiation import Move, Negotiation, Negotiations, Negotiator, SellerSays, Terms, filled, move
 
 LIMIT, OPENING = 8600, 7550
@@ -127,8 +128,10 @@ class Box:
         self.said, self.contact_fails = [], contact_fails
 
     async def contact(self, ad_id, text):
-        if self.contact_fails:
+        if self.contact_fails is True:
             raise RuntimeError("the page did not answer")
+        if self.contact_fails:
+            raise self.contact_fails
         self.said.append(Said(True, text))
         return "c1"
 
@@ -210,3 +213,26 @@ async def test_a_first_message_that_may_have_reached_the_seller_unseen_goes_to_t
     gone = kept.get("3535834511")
     assert (gone.status, gone.sent) == ("owner", ["Ich biete 7.550 €."])
     assert "could not see its first message reach the seller" in gone.notice
+
+
+async def test_a_first_message_that_never_left_is_sent_as_it_was_at_the_next_look_and_at_the_third_goes_to_the_owner(kept):
+    claude = Claude(writes=["Ich biete [BETRAG]."])
+    talking = negotiator(claude, kept)
+    talking.ask_to_start(asked_for())
+    refusing = Box(contact_fails=Unsent("the offer page did not load"))
+
+    await talking.start(refusing)
+    assert (kept.get("3535834511").status, kept.get("3535834511").notice) == ("pending", "")
+
+    box = Box()
+    await talking.start(box)
+    assert [s.text for s in box.said] == ["Ich biete 7.550 €."] and claude.asked == ["write"]  # written once
+
+    again = negotiator(Claude(writes=["Ich biete [BETRAG]."]), kept)
+    gone = asked_for()
+    gone.ad_id = "1"
+    again.ask_to_start(gone)
+    for _ in range(3):
+        await again.start(refusing)
+    assert kept.get("1").status == "owner" and "took no message" in kept.get("1").notice
+

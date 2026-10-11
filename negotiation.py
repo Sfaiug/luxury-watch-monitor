@@ -20,6 +20,7 @@ from typing import List, Literal, Optional
 from pydantic import BaseModel, Field
 
 from agent import STEP, RedFlag, ask, flagged
+from kleinanzeigen_messages import Unsent
 from prices_page import euros
 
 CLOSE = 0.02  # a seller asking this share or less above the offer is met at their price
@@ -125,6 +126,7 @@ def _price(limit: int, offered: int, terms: Terms, asked: Optional[int], accepts
 
 
 AMOUNT = "[BETRAG]"  # where the AI leaves the amount decided, for the code to write in
+TRIES = 3  # looks at which an offer's page takes no message before the agent hands it to the owner
 
 WRITE = f"""You write the buyer's next Kleinanzeigen message to the seller of a watch, in German, as the buyer himself.
 Short and friendly, as people write on Kleinanzeigen; "Sie" until the seller writes "du".
@@ -182,6 +184,7 @@ class Negotiation:
     terms: Terms = field(default_factory=Terms)
     sent: List[str] = field(default_factory=list)  # the agent's messages, sent or on their way: any other is the owner's
     status: str = "pending"  # pending, opening (its first message on its way), talking, agreed, ended, or owner
+    tries: int = 0  # looks at which its offer's page took no first message
     why: str = ""
     notice: str = ""  # what the owner is still to hear of it
 
@@ -255,13 +258,25 @@ class Negotiator:
             self._hand_over(negotiation, "it could not see its first message reach the seller")
 
     async def _open(self, messages, negotiation: Negotiation):
-        text = await self._write(negotiation, Move("first", negotiation.offered), [], None)
+        # A first message written before and never sent is sent as it was
+        text = negotiation.sent[-1] if negotiation.sent else await self._write(
+            negotiation, Move("first", negotiation.offered), [], None
+        )
         if text is None:
             return self._hand_over(negotiation, "the AI wrote no first message with the opening offer alone")
         negotiation.status = "opening"
-        negotiation.sent.append(text)
+        negotiation.sent[:] = [text]
         self.negotiations.save(negotiation)
-        negotiation.conversation = await messages.contact(negotiation.ad_id, text)
+        try:
+            negotiation.conversation = await messages.contact(negotiation.ad_id, text)
+        except Unsent:
+            # Nothing reached the seller: asked for still, until the offer's page has refused it too often
+            negotiation.tries += 1
+            if negotiation.tries >= TRIES:
+                return self._hand_over(negotiation, f"its offer page took no message at {TRIES} looks")
+            negotiation.status = "pending"
+            self.negotiations.save(negotiation)
+            raise
         negotiation.status = "talking"
         self.negotiations.save(negotiation)
         self.logger.info(f"Negotiation: opened at {euros(negotiation.offered)} for {negotiation.title[:60]}")
