@@ -17,6 +17,7 @@ from anthropic import transform_schema
 from bs4 import BeautifulSoup
 from pydantic import BaseModel, Field
 
+from chrono24 import FULL_SET, USED
 from config import APP_CONFIG
 from models import WatchData
 from prices import Prices, reference_key
@@ -144,7 +145,10 @@ def decide(reading: Reading, asking: Optional[Decimal], prices: Prices) -> Verdi
         return Verdict(False, "no reference")
     if not asking:
         return Verdict(False, "no price")
-    value, limit = worth(prices, reading.reference), buy_limit(prices, reading.reference)
+    # A full set is held against full sets while enough are offered to go by, else against all used watches
+    full_set = reading.box and reading.papers and worth(prices, reading.reference, FULL_SET) is not None
+    kind = FULL_SET if full_set else USED
+    value, limit = worth(prices, reading.reference, kind), buy_limit(prices, reading.reference, kind)
     if limit is None:  # no worth and no price of the owner's
         return Verdict(False, f"too few Chrono24 offers for {reading.reference} yet")
     if value is not None and asking < value * TOO_CHEAP:

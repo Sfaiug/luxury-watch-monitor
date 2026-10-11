@@ -1,5 +1,6 @@
 """The owner's page of watch prices: for every reference the shops have shown, what Chrono24 offers it for
-inside the EU, the worth and the most to pay worked out from that, and the owner's own buy price, set here."""
+inside the EU, used and as a full set, the worth and the most to pay worked out from each, and the owner's
+own buy price, set here."""
 
 import hashlib
 import hmac
@@ -11,10 +12,11 @@ from html import escape
 from aiohttp import web
 
 from agent import OPENING
+from chrono24 import FULL_SET, KINDS, USED
 from config import APP_CONFIG
 from prices import Prices
 from utils import parse_price
-from worth import buy_limit, most_to_pay, worth
+from worth import buy_limit, worth
 
 PATH = "/muv/prices"  # atlas.hopcomp.com hands /muv/ to the monitor
 
@@ -75,18 +77,22 @@ class PricesPage:
             return web.Response(status=403, text="This page opens only from its link.")
 
         rows = []
-        for reference, brand, model, found, searched in self.prices.references():
-            value = worth(self.prices, reference)
+        for reference, brand, model, searched in self.prices.references():
             own = self.prices.buy_price(reference)
-            market = f"{found} offers" if found is not None else "not searched yet"
+            market = "not searched yet"
             if searched:
-                market += f", <time>{searched[:10]}</time>"
+                used, full_sets = (self.prices.market(reference, kind)[0] for kind in (USED, FULL_SET))
+                market = f"{used} used, {full_sets} of them full sets, <time>{searched[:10]}</time>"
+            # Worth and the most to pay, the owner's price in its place once set, for each kind
+            numbers = "".join(
+                f"<td class=n>{euros(worth(self.prices, reference, kind))}</td>"
+                f'<td class="n limit">{euros(buy_limit(self.prices, reference, kind))}</td>'
+                for kind in KINDS
+            )
             rows.append(
                 f'<tr id="{escape(reference)}" class="{"own" if own is not None else ""}">'
                 f"<td>{escape(brand or '')}</td><td>{escape(model or '')}</td><td>{escape(reference)}</td>"
-                f"<td>{market}</td><td class=n>{euros(value)}</td>"
-                f"<td class=n>{euros(most_to_pay(value) if value is not None else None)}</td>"
-                f'<td class="n limit">{euros(buy_limit(self.prices, reference))}</td>'
+                f"<td>{market}</td>{numbers}"
                 f'<td><form method=post action="{PATH}?key={key(self.secret)}">'
                 f'<input type=hidden name=reference value="{escape(reference)}">'
                 f'<input name=price inputmode=numeric placeholder="your price" value="{"" if own is None else f"{own:.0f}"}">'
@@ -98,12 +104,13 @@ class PricesPage:
         html = f"""<!doctype html><html lang=en><head><meta charset=utf-8>
 <meta name=viewport content="width=device-width, initial-scale=1"><title>Watch prices</title><style>{STYLE}</style></head>
 <body><h1>Watch prices</h1>
-<p>Worth: the price a quarter of a watch's Chrono24 offers inside the EU ask less than, from five offers up.
+<p>Worth: the price a quarter of a watch's used Chrono24 offers inside the EU ask less than, from five offers up;
+for a full set, a quarter of the used ones with their original box and papers.
 Most to pay: what still leaves {share}&nbsp;% and at least {euros(APP_CONFIG.least_profit_eur)} profit after Chrono24's fee,
-shipping and the margin tax. Your price, once set, is the limit in its place; an empty one gives it back.</p>
+shipping and the margin tax. Your price, once set, is the most to pay in its place; an empty one gives it back.</p>
 {matches}<input type=search placeholder="Find a watch: brand, model or reference">
 <div class=table><table><thead><tr><th>Brand</th><th>Model</th><th>Reference</th><th>On Chrono24</th>
-<th>Worth</th><th>Most to pay</th><th>Limit</th><th>Your price</th></tr></thead>
+<th>Worth used</th><th>Most to pay</th><th>Worth full set</th><th>Most to pay</th><th>Your price</th></tr></thead>
 <tbody>{"".join(rows)}</tbody></table></div>
 <script>{FILTER}</script></body></html>"""
         return web.Response(text=html, content_type="text/html")

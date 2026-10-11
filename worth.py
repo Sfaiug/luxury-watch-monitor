@@ -11,13 +11,13 @@ FEWEST = 5  # offers below which the market says too little to go by
 MARGIN_TAX = Decimal("0.19")  # VAT on a used watch's margin (Differenzbesteuerung, § 25a UStG)
 
 
-def worth(prices: Prices, reference: str) -> Optional[Decimal]:
-    """The price a quarter of the watch's Chrono24 offers inside the EU ask less than; None from fewer than five.
+def worth(prices: Prices, reference: str, kind: str) -> Optional[Decimal]:
+    """The price a quarter of the Chrono24 offers inside the EU for this kind of the watch ask less than; None from fewer than five.
 
     A search reads the cheapest 120 offers: for a watch offered more than 480
     times the dearest of those stands in for the quarter, which only lowers it.
     """
-    found, asked = prices.market(reference)
+    found, asked = prices.market(reference, kind)
     if found < FEWEST or not asked:
         return None
     return Decimal(str(asked[min(math.ceil(found / 4), len(asked)) - 1]))
@@ -42,10 +42,10 @@ def most_to_pay(worth: Decimal) -> Decimal:
     return max(paid, Decimal(0)).quantize(Decimal(1), rounding=ROUND_FLOOR)
 
 
-def buy_limit(prices: Prices, reference: str) -> Optional[Decimal]:
-    """The most to pay for a watch: the owner's own buy price, or else the one worked out from its worth."""
+def buy_limit(prices: Prices, reference: str, kind: str) -> Optional[Decimal]:
+    """The most to pay for this kind of a watch: the owner's own buy price, or else the one worked out from its worth."""
     own = prices.buy_price(reference)
     if own is not None:
         return Decimal(str(own))
-    value = worth(prices, reference)
+    value = worth(prices, reference, kind)
     return most_to_pay(value) if value is not None else None

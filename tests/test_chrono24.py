@@ -9,7 +9,7 @@ from urllib.parse import parse_qs, urlsplit
 import pytest
 
 import chrono24
-from chrono24 import NotResults, read, search_round, search_url
+from chrono24 import FULL_SET, KINDS, USED, NotResults, read, search_round, search_url
 from models import ScrapingSession, WatchData
 from monitor import WatchMonitor
 from prices import Prices
@@ -95,7 +95,7 @@ def test_cloudflare_s_human_check_is_no_search_result():
 
 
 def test_the_search_asks_for_the_offers_inside_the_eu_vat_area_cheapest_first():
-    asked = parse_qs(urlsplit(search_url("Patek Philippe", "57111A010")).query)
+    asked = parse_qs(urlsplit(search_url("Patek Philippe", "57111A010", USED)).query)
 
     assert asked["query"] == ["Patek Philippe 57111A010"]
     # The 27 states and Monaco; not Martinique, Guadeloupe or Réunion, EU land outside its VAT
@@ -103,21 +103,33 @@ def test_the_search_asks_for_the_offers_inside_the_eu_vat_area_cheapest_first():
         "AT BE BG CY CZ DE DK EE ES FI FR GR HR HU IE IT LT LU LV MT NL PL PT RO SE SI SK".split() + ["MC"]
     )
     assert (asked["currencyId"], asked["sortorder"], asked["pageSize"]) == (["EUR"], ["1"], ["120"])
-    assert parse_qs(urlsplit(search_url(None, "116610LN")).query)["query"] == ["116610LN"]
+    assert parse_qs(urlsplit(search_url(None, "116610LN", USED)).query)["query"] == ["116610LN"]
 
 
-async def test_a_reference_the_shops_offer_is_searched_and_its_eu_offers_kept(prices):
+def test_the_search_asks_for_used_watches_and_for_used_ones_with_their_box_and_papers():
+    used = parse_qs(urlsplit(search_url("Rolex", "116610LN", USED)).query)
+    full_set = parse_qs(urlsplit(search_url("Rolex", "116610LN", FULL_SET)).query)
+
+    assert (used["usedOrNew"], "specials" in used) == (["used"], False)
+    # Chrono24's own "original box and papers", not its "original box" and "original papers", which find either
+    assert (full_set["usedOrNew"], full_set["specials"]) == (["used"], ["102"])
+
+
+async def test_a_reference_the_shops_offer_is_searched_for_each_kind_and_its_eu_offers_kept(prices):
     prices.saw([shop_offer("116610LN")])
     chrome = Chrome({"Rolex 116610LN": "chrono24.html"})
 
-    assert await search_round(prices, chrome, now=lambda: SEEN) == 1
+    assert await search_round(prices, chrome, now=lambda: SEEN) == 2
 
-    assert chrome.asked == ["Rolex 116610LN"]
+    assert chrome.asked == ["Rolex 116610LN", "Rolex 116610LN"]
     assert not chrome.open
     assert prices._db.execute(
         "SELECT COUNT(*), MIN(price), MIN(reference), MIN(first_seen) FROM offers WHERE site_key = 'chrono24'"
     ).fetchone() == (120, 9189.0, "116610LN", "2026-10-10T11:00:00")
-    assert prices._db.execute("SELECT * FROM searches").fetchall() == [("116610LN", 192, "2026-10-10T11:00:00")]
+    assert sorted(prices._db.execute("SELECT * FROM searches").fetchall()) == [
+        ("116610LN", FULL_SET, 192, "2026-10-10T11:00:00"),
+        ("116610LN", USED, 192, "2026-10-10T11:00:00"),
+    ]
 
 
 async def test_a_reference_is_searched_again_once_its_offers_are_a_week_old(prices):
@@ -130,38 +142,45 @@ async def test_a_reference_is_searched_again_once_its_offers_are_a_week_old(pric
     assert within_the_week.asked == []
 
     a_week_on = Chrome(pages)
-    assert await search_round(prices, a_week_on, now=lambda: SEEN + timedelta(days=7, seconds=1)) == 1
-    assert a_week_on.asked == ["Rolex 116610LN"]
+    assert await search_round(prices, a_week_on, now=lambda: SEEN + timedelta(days=7, seconds=1)) == 2
+    assert a_week_on.asked == ["Rolex 116610LN", "Rolex 116610LN"]
 
 
-async def test_references_never_searched_come_before_the_ones_searched_longest_ago(prices):
+async def test_searches_never_made_come_before_the_ones_made_longest_ago(prices):
     prices.saw([shop_offer("116610LN"), shop_offer("126610LN")])
-    prices.searched("116610LN", 192, [], SEEN - timedelta(days=9))
-    prices.searched("126610LN", 309, [], SEEN - timedelta(days=8))
+    for kind in KINDS:
+        prices.searched("116610LN", kind, 192, [], SEEN - timedelta(days=9))
+    prices.searched("126610LN", USED, 309, [], SEEN - timedelta(days=8))
     prices.saw([shop_offer("5711/1A-010", brand="Patek Philippe")])
 
-    assert prices.due(SEEN - chrono24.FRESH, 20) == [
-        ("Patek Philippe", "57111A010"),
-        ("Rolex", "116610LN"),
-        ("Rolex", "126610LN"),
+    assert prices.due(list(KINDS), SEEN - chrono24.FRESH, 20) == [
+        ("Rolex", "126610LN", FULL_SET),
+        ("Patek Philippe", "57111A010", USED),
+        ("Patek Philippe", "57111A010", FULL_SET),
+        ("Rolex", "116610LN", USED),
+        ("Rolex", "116610LN", FULL_SET),
+        ("Rolex", "126610LN", USED),
     ]
 
 
-async def test_the_searches_noted_before_they_kept_what_they_read_are_due_once_more(tmp_path):
+async def test_the_searches_made_before_they_asked_for_one_kind_are_made_again(tmp_path):
     before = Prices(tmp_path / "prices.sqlite3")
-    before.saw([shop_offer("116610LN"), shop_offer("99999XYZ")])
-    before.searched("116610LN", 192, [], SEEN)
-    before.searched("99999XYZ", 0, [], SEEN)
-    before._db.execute("PRAGMA user_version = 0")  # a file from before
+    before.saw([shop_offer("116610LN")])
+    before._db.execute("DROP TABLE searches")  # as it was, new watches among the offers it counted
+    before._db.execute("CREATE TABLE searches (reference TEXT PRIMARY KEY, found INTEGER NOT NULL, searched TEXT NOT NULL)")
+    before._db.execute("INSERT INTO searches VALUES ('116610LN', 192, '2026-10-10T11:00:00')")
+    before._db.execute("PRAGMA user_version = 1")
+    before._db.commit()
     before.close()
 
     prices = Prices(tmp_path / "prices.sqlite3")
-    assert prices.due(SEEN - chrono24.FRESH, 20) == [("Rolex", "116610LN")]
+    assert prices.due(list(KINDS), SEEN - chrono24.FRESH, 20) == [("Rolex", "116610LN", USED), ("Rolex", "116610LN", FULL_SET)]
 
-    # A search that keeps none now, of offers with no price, stands for its week
-    prices.searched("116610LN", 192, [], SEEN)
+    # Made again, they stand for their week
+    for kind in KINDS:
+        prices.searched("116610LN", kind, 192, [], SEEN)
     prices.close()
-    assert Prices(tmp_path / "prices.sqlite3").due(SEEN - chrono24.FRESH, 20) == []
+    assert Prices(tmp_path / "prices.sqlite3").due(list(KINDS), SEEN - chrono24.FRESH, 20) == []
 
 
 async def test_a_page_that_is_no_search_result_ends_the_round_and_leaves_its_reference_due(prices):
@@ -174,7 +193,9 @@ async def test_a_page_that_is_no_search_result_ends_the_round_and_leaves_its_ref
     assert chrome.asked == ["Rolex 116610LN"]
     assert not chrome.open
     assert prices._db.execute("SELECT COUNT(*) FROM offers WHERE site_key = 'chrono24'").fetchone() == (0,)
-    assert prices.due(SEEN, 20) == [("Rolex", "116610LN"), ("Rolex", "126610LN")]
+    assert prices.due(list(KINDS), SEEN, 20) == [
+        ("Rolex", "116610LN", USED), ("Rolex", "116610LN", FULL_SET), ("Rolex", "126610LN", USED), ("Rolex", "126610LN", FULL_SET)
+    ]
 
 
 async def test_the_search_runs_beside_the_monitor_and_stops_with_it(monkeypatch, prices):

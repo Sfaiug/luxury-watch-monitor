@@ -3,7 +3,7 @@
 import re
 import sqlite3
 from datetime import datetime
-from typing import Iterable, List, Optional, Tuple
+from typing import Iterable, List, Optional, Sequence, Tuple
 
 from models import WatchData
 
@@ -45,29 +45,31 @@ class Prices:
                     set_at TEXT NOT NULL
                 )
             """)
-            # When the market was last searched for a reference, and how many offers it found
+            # Searches made before they asked for one kind of watch held new ones too: they count as none
+            if self._db.execute("PRAGMA user_version").fetchone()[0] < 2:
+                self._db.execute("DROP TABLE IF EXISTS searches")
+                self._db.execute("DROP TABLE IF EXISTS searched_offers")
+                self._db.execute("PRAGMA user_version = 2")
+            # When the market was last searched for one kind of a reference's watches, and how many offers it found
             self._db.execute("""
                 CREATE TABLE IF NOT EXISTS searches (
-                    reference TEXT PRIMARY KEY,
+                    reference TEXT NOT NULL,
+                    kind TEXT NOT NULL,
                     found INTEGER NOT NULL,
-                    searched TEXT NOT NULL
+                    searched TEXT NOT NULL,
+                    PRIMARY KEY (reference, kind)
                 )
             """)
-            # The offers the last search for a reference read
+            # The offers that search read
             self._db.execute("""
                 CREATE TABLE IF NOT EXISTS searched_offers (
                     reference TEXT NOT NULL,
+                    kind TEXT NOT NULL,
                     site_key TEXT NOT NULL,
                     address TEXT NOT NULL,
-                    PRIMARY KEY (reference, site_key, address)
+                    PRIMARY KEY (reference, kind, site_key, address)
                 )
             """)
-            # Searches noted before they kept the offers they read count as none, once
-            if not self._db.execute("PRAGMA user_version").fetchone()[0]:
-                self._db.execute(
-                    "DELETE FROM searches WHERE found > 0 AND reference NOT IN (SELECT reference FROM searched_offers)"
-                )
-                self._db.execute("PRAGMA user_version = 1")
 
     def close(self):
         self._db.close()
@@ -109,50 +111,51 @@ class Prices:
                         ),
                     )
 
-    def due(self, before: datetime, limit: int) -> List[Tuple[Optional[str], str]]:
-        """Brand and reference of offered watches the market was not searched for since `before`, never searched first."""
+    def due(self, kinds: Sequence[str], before: datetime, limit: int) -> List[Tuple[Optional[str], str, str]]:
+        """Brand, reference and kind of offered watches the market was not searched for since `before`, never searched first."""
+        each = " UNION ALL ".join("SELECT ? AS kind, ? AS rank" for _ in kinds)
         return self._db.execute(
-            "SELECT MAX(offers.brand), offers.reference FROM offers "
-            "LEFT JOIN searches ON searches.reference = offers.reference "
+            f"SELECT MAX(offers.brand), offers.reference, kinds.kind FROM offers CROSS JOIN ({each}) AS kinds "
+            "LEFT JOIN searches ON searches.reference = offers.reference AND searches.kind = kinds.kind "
             "WHERE searches.searched IS NULL OR searches.searched < ? "
-            "GROUP BY offers.reference "
-            "ORDER BY MAX(searches.searched) IS NOT NULL, MAX(searches.searched), offers.reference "
+            "GROUP BY offers.reference, kinds.kind "
+            "ORDER BY MAX(searches.searched) IS NOT NULL, MAX(searches.searched), offers.reference, kinds.rank "
             "LIMIT ?",
-            (before.isoformat(timespec="seconds"), limit),
+            (*[value for rank, kind in enumerate(kinds) for value in (kind, rank)], before.isoformat(timespec="seconds"), limit),
         ).fetchall()
 
-    def searched(self, reference: str, found: int, offers: List[WatchData], at: datetime):
-        """Note that the market was searched for the reference, found this many offers in all and read these."""
+    def searched(self, reference: str, kind: str, found: int, offers: List[WatchData], at: datetime):
+        """Note that the market was searched for this kind of the reference's watches, found this many offers in all and read these."""
         key = reference_key(reference)
         self.saw(offers)
         with self._db:
             self._db.execute(
-                "INSERT OR REPLACE INTO searches VALUES (?, ?, ?)",
-                (key, found, at.isoformat(timespec="seconds")),
+                "INSERT OR REPLACE INTO searches VALUES (?, ?, ?, ?)",
+                (key, kind, found, at.isoformat(timespec="seconds")),
             )
-            self._db.execute("DELETE FROM searched_offers WHERE reference = ?", (key,))
+            self._db.execute("DELETE FROM searched_offers WHERE reference = ? AND kind = ?", (key, kind))
             self._db.executemany(
-                "INSERT OR IGNORE INTO searched_offers VALUES (?, ?, ?)",
-                [(key, offer.site_key, offer.address) for offer in offers],
+                "INSERT OR IGNORE INTO searched_offers VALUES (?, ?, ?, ?)",
+                [(key, kind, offer.site_key, offer.address) for offer in offers],
             )
 
-    def market(self, reference: str) -> Tuple[int, List[float]]:
-        """How many offers the last search of the market found for a reference, and the prices of those it read, cheapest first."""
+    def market(self, reference: str, kind: str) -> Tuple[int, List[float]]:
+        """How many offers of this kind the last search of the market found for a reference, and the prices of those it read, cheapest first."""
         key = reference_key(reference)
-        search = self._db.execute("SELECT found FROM searches WHERE reference = ?", (key,)).fetchone()
+        search = self._db.execute("SELECT found FROM searches WHERE reference = ? AND kind = ?", (key, kind)).fetchone()
         if not search:
             return 0, []
         read = self._db.execute(
             "SELECT price FROM searched_offers JOIN offers USING (site_key, address) "
-            "WHERE searched_offers.reference = ? ORDER BY price",
-            (key,),
+            "WHERE searched_offers.reference = ? AND searched_offers.kind = ? ORDER BY price",
+            (key, kind),
         )
         return search[0], [price for (price,) in read]
 
-    def references(self) -> List[Tuple[str, Optional[str], Optional[str], Optional[int], Optional[str]]]:
-        """Every reference offered: its brand and model, and the market's last search for it, offers found and when."""
+    def references(self) -> List[Tuple[str, Optional[str], Optional[str], Optional[str]]]:
+        """Every reference offered: its brand and model, and when the market was last searched for it."""
         return self._db.execute(
-            "SELECT offers.reference, MAX(offers.brand), MAX(offers.model), searches.found, searches.searched "
+            "SELECT offers.reference, MAX(offers.brand), MAX(offers.model), MAX(searches.searched) "
             "FROM offers LEFT JOIN searches ON searches.reference = offers.reference "
             "GROUP BY offers.reference ORDER BY MAX(offers.brand) IS NULL, MAX(offers.brand), offers.reference"
         ).fetchall()

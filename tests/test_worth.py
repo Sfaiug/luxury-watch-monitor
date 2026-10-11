@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 import chrono24
+from chrono24 import FULL_SET, USED
 from config import APP_CONFIG
 from models import WatchData
 from prices import Prices
@@ -21,8 +22,8 @@ def prices(tmp_path):
     return Prices(tmp_path / "prices.sqlite3")
 
 
-def searched(prices, found, offers, at=SEARCHED, reference="116610LN"):
-    prices.searched(reference, found, offers, at)
+def searched(prices, found, offers, at=SEARCHED, reference="116610LN", kind=USED):
+    prices.searched(reference, kind, found, offers, at)
 
 
 def chrono24_offers(*asked, at=SEARCHED, reference="116610LN"):
@@ -45,25 +46,36 @@ def test_a_watch_is_worth_what_a_quarter_of_its_eu_offers_ask_less_than(prices):
     searched(prices, found, offers)
 
     # 192 offers in all: the 48th cheapest
-    assert worth(prices, "116610LN") == Decimal("10800")
-    assert worth(prices, "116610 ln") == Decimal("10800")
+    assert worth(prices, "116610LN", USED) == Decimal("10800")
+    assert worth(prices, "116610 ln", USED) == Decimal("10800")
+
+
+def test_a_full_set_is_worth_what_a_quarter_of_the_full_sets_ask_less_than(prices):
+    searched(prices, 8, chrono24_offers(*(str(9000 + 100 * n) for n in range(8))))
+    full_sets = chrono24_offers("9600", "9700", "9800", "9900", "10500")
+    for offer in full_sets:
+        offer.url = offer.url.replace("--id", "-full-set--id")
+    searched(prices, 5, full_sets, kind=FULL_SET)
+
+    assert worth(prices, "116610LN", USED) == Decimal("9100")
+    assert worth(prices, "116610LN", FULL_SET) == Decimal("9700")
 
 
 def test_fewer_than_five_offers_say_too_little(prices):
     searched(prices, 4, chrono24_offers("9000", "9500", "9800", "12000"))
-    assert worth(prices, "116610LN") is None
+    assert worth(prices, "116610LN", USED) is None
 
     searched(prices, 5, chrono24_offers("9000", "9500", "9800", "12000", "12500"))
-    assert worth(prices, "116610LN") == Decimal("9500")
+    assert worth(prices, "116610LN", USED) == Decimal("9500")
 
 
 def test_a_watch_never_searched_has_no_worth(prices):
-    assert worth(prices, "116610LN") is None
+    assert worth(prices, "116610LN", USED) is None
 
 
 def test_beyond_the_page_the_dearest_offer_read_stands_in_for_the_quarter(prices):
     searched(prices, 1000, chrono24_offers(*(str(9000 + n) for n in range(120))))
-    assert worth(prices, "116610LN") == Decimal("9119")
+    assert worth(prices, "116610LN", USED) == Decimal("9119")
 
 
 def test_only_the_offers_its_last_search_still_found_count(prices):
@@ -72,7 +84,7 @@ def test_only_the_offers_its_last_search_still_found_count(prices):
     searched(prices, 6, gone, at=SEARCHED - timedelta(days=8))
     searched(prices, 5, chrono24_offers("9000", "9500", "9800", "12000", "12500"))
 
-    assert worth(prices, "116610LN") == Decimal("9500")
+    assert worth(prices, "116610LN", USED) == Decimal("9500")
 
 
 def test_the_offers_a_search_read_count_whichever_reference_read_them_first(prices):
@@ -80,8 +92,8 @@ def test_the_offers_a_search_read_count_whichever_reference_read_them_first(pric
     searched(prices, 4, chrono24_offers("9000", "9100", "9200", "9300", at=earlier), at=earlier, reference="116610")
     searched(prices, 8, chrono24_offers(*(str(9000 + 100 * n) for n in range(8))))
 
-    assert worth(prices, "116610LN") == Decimal("9100")
-    assert prices.market("116610") == (4, [9000, 9100, 9200, 9300])
+    assert worth(prices, "116610LN", USED) == Decimal("9100")
+    assert prices.market("116610", USED) == (4, [9000, 9100, 9200, 9300])
 
 
 def test_a_shop_s_offers_are_not_the_market(prices):
@@ -91,7 +103,7 @@ def test_a_shop_s_offers_are_not_the_market(prices):
     prices.saw(shop)
     searched(prices, 5, chrono24_offers("9000", "9500", "9800", "12000", "12500"))
 
-    assert worth(prices, "116610LN") == Decimal("9500")
+    assert worth(prices, "116610LN", USED) == Decimal("9500")
 
 
 def test_the_least_profit_is_a_tenth_of_the_worth_and_never_under_500_euros():

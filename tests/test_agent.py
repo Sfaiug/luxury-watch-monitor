@@ -16,11 +16,13 @@ from anthropic import AsyncAnthropic
 
 import chrono24
 from agent import Agent, Deals, Reading, decide, offer_page, read
+from chrono24 import FULL_SET, USED
 from config import APP_CONFIG, SITE_CONFIGS, AppConfig
 from models import ScrapingSession, WatchData
 from monitor import WatchMonitor
 from prices import Prices
 from prices_page import PATH, PricesPage, key
+from worth import worth
 
 PAGES = Path(__file__).parent / "pages"
 OFFER = (PAGES / "kleinanzeigen_offer.html").read_text(encoding="utf-8")
@@ -31,7 +33,7 @@ SEARCHED = datetime(2026, 10, 10, 11, 0)
 def prices(tmp_path):
     kept = Prices(tmp_path / "prices.sqlite3")
     found, offers = chrono24.read((PAGES / "chrono24.html").read_text(encoding="utf-8"), "Rolex", "116610LN", SEARCHED)
-    kept.searched("116610LN", found, offers, SEARCHED)  # worth 10.800 €, most to pay 8.608 €
+    kept.searched("116610LN", USED, found, offers, SEARCHED)  # worth 10.800 €, most to pay 8.608 €
     return kept
 
 
@@ -149,6 +151,19 @@ def test_the_ai_names_red_flags_from_the_list_only():
         Reading.model_validate_json(reading(red_flags=[]).model_dump_json().replace('"red_flags":[]', '"red_flags":["no returns"]'))
 
 
+def test_a_full_set_is_held_against_full_sets_once_enough_are_offered(prices):
+    _, offers = chrono24.read((PAGES / "chrono24.html").read_text(encoding="utf-8"), "Rolex", "116610LN", SEARCHED)
+    full_sets = [offer for offer in offers if offer.price >= 11000]
+    assert decide(reading(), Decimal("9000"), prices).worth == Decimal("10800")  # none searched yet: all used ones
+
+    prices.searched("116610LN", FULL_SET, len(full_sets), full_sets, SEARCHED)
+
+    assert decide(reading(), Decimal("9000"), prices).worth == worth(prices, "116610LN", FULL_SET) > Decimal("10800")
+    # Without both box and papers it is held against all used ones
+    assert decide(reading(papers=None), Decimal("9000"), prices).worth == Decimal("10800")
+    assert decide(reading(box=False), Decimal("9000"), prices).worth == Decimal("10800")
+
+
 def test_below_the_limit_the_opening_offer_starts_from_the_asking_price(prices):
     assert decide(reading(), Decimal("7000"), prices).opening == Decimal("6150")
 
@@ -199,7 +214,7 @@ async def test_a_match_is_judged_from_its_own_page_and_the_verdict_kept(prices, 
         (17790.0, 0, "too few Chrono24 offers for 116610LV yet")
     ]
     # Its reference is searched on Chrono24 next
-    assert ("Rolex", "116610LV") in prices.due(SEARCHED, 20)
+    assert ("Rolex", "116610LV", USED) in prices.due([USED], SEARCHED, 20)
 
 
 async def test_what_is_no_watch_for_sale_stays_out_of_the_price_database(prices, deals):

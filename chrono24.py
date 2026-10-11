@@ -40,6 +40,16 @@ PAUSE = 60  # seconds from one search to the next
 IDLE = 600  # seconds to wait when no reference is due, or when Chrono24 refused
 
 
+USED, FULL_SET = "used", "full set"
+# The watches a seller's is held against, as Chrono24's own filters ask for them: used ones, and
+# used ones with the original box and papers. New and unworn ones would raise the price of a used one
+KINDS = {
+    USED: {"usedOrNew": "used"},
+    # Original box and papers, both: 103 (box) and 104 (papers) asked together find either
+    FULL_SET: {"usedOrNew": "used", "specials": "102"},
+}
+
+
 class NotResults(Exception):
     """Chrono24 answered with a page that holds no search result: its human check, or a page it has changed."""
 
@@ -50,9 +60,11 @@ def search(query: str, **narrowed) -> str:
     return f"{BASE_URL}/search/index.htm?{urlencode(asked, doseq=True)}"
 
 
-def search_url(brand: Optional[str], reference: str) -> str:
-    """The search for a watch's offers inside the EU, cheapest first."""
-    return search(" ".join(filter(None, (brand, reference))), countryIds=EU, currencyId="EUR", pageSize=PAGE)
+def search_url(brand: Optional[str], reference: str, kind: str) -> str:
+    """The search for the offers of this kind of a watch inside the EU, cheapest first."""
+    return search(
+        " ".join(filter(None, (brand, reference))), countryIds=EU, currencyId="EUR", pageSize=PAGE, **KINDS[kind]
+    )
 
 
 def read(html: str, brand: Optional[str], reference: str, seen: datetime) -> Tuple[int, List[WatchData]]:
@@ -142,21 +154,21 @@ class Chrome:
 
 
 async def search_round(prices: Prices, chrome, now=datetime.now) -> int:
-    """Search Chrono24 for the references most due, one Chrome for the round; how many were searched.
+    """Make the Chrono24 searches most due, one Chrome for the round; how many were made.
 
-    A page that is no search result ends the round with that reference still
+    A page that is no search result ends the round with that search still
     due: what refuses one search refuses the next.
     """
-    due = prices.due(now() - FRESH, ROUND)
+    due = prices.due(list(KINDS), now() - FRESH, ROUND)
     if not due:
         return 0
     async with chrome as browser:
-        for searched, (brand, reference) in enumerate(due):
+        for searched, (brand, reference, kind) in enumerate(due):
             if searched:
                 await asyncio.sleep(PAUSE)
             seen = now()
-            found, offers = read(await browser.page(search_url(brand, reference)), brand, reference, seen)
-            prices.searched(reference, found, offers, seen)
+            found, offers = read(await browser.page(search_url(brand, reference, kind)), brand, reference, seen)
+            prices.searched(reference, kind, found, offers, seen)
     return len(due)
 
 
@@ -172,5 +184,5 @@ async def keep_up(prices: Prices, logger: logging.Logger):
             searched = 0
         else:
             if searched:
-                logger.info(f"Chrono24: searched {searched} references")
+                logger.info(f"Chrono24: made {searched} searches")
         await asyncio.sleep(PAUSE if searched else IDLE)
