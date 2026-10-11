@@ -32,7 +32,8 @@ tests: scripts/test.sh
 - The agent negotiates the whole purchase before the owner hears of it (11 Oct 2026): the price, payment by bank transfer only, and shipping or pickup, shipping preferred; pickup and no returns are fine. The seller must also agree to a purchase contract (Kaufvertrag) and send a picture of their ID card. Only when all of that is agreed is the owner notified, to send the Kaufvertrag and pay.
 - Each filter says, when it is made in Discord, whether the agent negotiates on everything it matches; in a filter that does not, each match has a button that starts the negotiation for that one (11 Oct 2026).
 - Chrono24 is searched around the clock at a slow pace, so a watch's prices are always recent (11 Oct 2026: "watch prices change all the time", "24/7 at a high delay is better").
-- The purchase and sale prices in the owner's controlling tool, every watch the business traded since 2014, are price data for whether a watch is worth buying and at what price (11 Oct 2026). They stay on the server, out of git: the tool names sellers.
+- The purchase and sale prices in the owner's controlling tool, every watch the business traded since 2014, are price data for whether a watch is worth buying and at what price (11 Oct 2026). They stay on the server, out of git: the tool names sellers. The server reads the export the owner sends by hand until a newer one comes (11 Oct 2026, asked whether to publish a CSV link instead: "I send exports by hand").
+- The agent's messages read as the owner's own; they do not say an AI writes them (11 Oct 2026, asked with Art. 50(1) of the EU AI Act named: "No, write as me").
 
 ## Lessons
 
