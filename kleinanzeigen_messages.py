@@ -31,6 +31,10 @@ class NotSent(Exception):
     """The site does not show the message as sent."""
 
 
+class Unsent(Exception):
+    """The message went nowhere: the contact form was never sent."""
+
+
 @dataclass
 class Message:
     outbound: bool  # written from the owner's account
@@ -99,10 +103,13 @@ class Messages:
 
     async def contact(self, ad_id: str, text: str) -> str:
         """Write the first message to an offer's seller through its contact form; the conversation it starts."""
-        earlier = await self.bought(ad_id)
-        before = len((await self.conversation(earlier)).messages) if earlier else 0
-        await self._page.goto(offer_url(ad_id), wait_until="domcontentloaded")
-        await self._page.fill("#viewad-contact-message", text)
+        try:
+            earlier = await self.bought(ad_id)
+            before = len((await self.conversation(earlier)).messages) if earlier else 0
+            await self._page.goto(offer_url(ad_id), wait_until="domcontentloaded")
+            await self._page.fill("#viewad-contact-message", text)
+        except Exception as e:
+            raise Unsent(f"the contact form of {ad_id} was not sent: {e}") from e
         await self._page.click("#viewad-contact-form button.viewad-contact-submit")
         await self._page.wait_for_selector(".j-viewad-contact-success", state="visible", timeout=30_000)
         conversation_id = await self.bought(ad_id)

@@ -4,7 +4,7 @@ import copy
 
 import pytest
 
-from kleinanzeigen_messages import Messages, NotSent
+from kleinanzeigen_messages import Messages, NotSent, Unsent
 
 USER = 4242
 
@@ -135,3 +135,16 @@ async def test_the_conversation_found_is_the_one_the_account_buys_in():
 async def test_an_answer_with_an_error_is_no_answer():
     with pytest.raises(RuntimeError, match="404"):
         await Messages(Site()).conversation("gone")
+
+
+async def test_a_contact_form_that_could_not_be_filled_sent_nothing():
+    site = Site(listed_pages=[[]])
+
+    async def gone(url, **options):
+        raise RuntimeError("the offer page did not load")
+
+    site.goto = gone
+    with pytest.raises(Unsent):
+        await Messages(site).contact("3535834511", "Hallo, ist die Uhr noch da?")
+    assert site.clicked == []
+
