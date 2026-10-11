@@ -29,6 +29,10 @@ tests: scripts/test.sh
 - Prices from Chrono24 count only when the offer is from the EU (10 Oct 2026: "On chrono price comparison we need to make sure to only look at EU offers because of VAT").
 - The least profit a watch must bring starts at 10% of what it is worth and at least 500 €, and the owner moves it (10 Oct 2026, to that suggestion: "Min Profit sounds good, maybe even higher. It also kind of depends on volume, its hard to quantify").
 - The agent runs on the latest Haiku model at `xhigh` effort (10 Oct 2026: "For the agent I always want to use the latest haiku model in xhigh"). Which model that is today is a setting on the server, not a name in the code.
+- The agent negotiates the whole purchase before the owner hears of it (11 Oct 2026): the price, payment by bank transfer only, and shipping or pickup, shipping preferred; pickup and no returns are fine. The seller must also agree to a purchase contract (Kaufvertrag) and send a picture of their ID card. Only when all of that is agreed is the owner notified, to send the Kaufvertrag and pay.
+- Each filter says, when it is made in Discord, whether the agent negotiates on everything it matches; in a filter that does not, each match has a button that starts the negotiation for that one (11 Oct 2026).
+- Chrono24 is searched around the clock at a slow pace, so a watch's prices are always recent (11 Oct 2026: "watch prices change all the time", "24/7 at a high delay is better").
+- The purchase and sale prices in the owner's controlling tool, every watch the business traded since 2014, are price data for whether a watch is worth buying and at what price (11 Oct 2026). They stay on the server, out of git: the tool names sellers.
 
 ## Lessons
 
