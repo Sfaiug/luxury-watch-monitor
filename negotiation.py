@@ -52,14 +52,14 @@ class Terms:
     asked_again: List[str] = field(default_factory=list)  # terms the seller refused once and was asked again
 
     def open(self) -> Dict[str, Tuple[str, ...]]:
-        """The terms not settled yet, each with the words a German message names it by."""
+        """The terms not settled yet, each with the words a German message names it by, the one to write first."""
         return {
             name: words
             for name, settled, words in (
-                ("payment by bank transfer", self.bank_transfer, ("überweis",)),
-                ("insured shipping, or else pickup", self.delivery, ("versand", "versend", "abhol")),
-                ("the purchase contract", self.contract, ("kaufvertrag",)),
-                ("a picture of the seller's ID card", self.id_card, ("ausweis",)),
+                ("payment by bank transfer", self.bank_transfer, ("Überweisung", "überweis")),
+                ("insured shipping, or else pickup", self.delivery, ("Versand", "versend", "verschick", "zuschick", "abhol")),
+                ("the purchase contract", self.contract, ("Kaufvertrag", "vertrag")),
+                ("a picture of the seller's ID card", self.id_card, ("Ausweis", "perso")),
             )
             if not settled
         }
@@ -157,7 +157,7 @@ TASKS = {
     "first": "This is the first message: ask whether the watch is still to be had, and offer the amount.",
     "offer": "Offer the amount.",
     "final": "Offer the amount, as the most the buyer can pay.",
-    "settle": "The price is agreed at the amount. Settle what is still open: {open}.",
+    "settle": "The price is agreed at the amount. Settle what is still open, naming each by its word: {open}.",
     "done": "All is agreed at the amount: thank the seller; the buyer sends the purchase contract and pays shortly.",
     "farewell": "The buyer cannot meet the seller on this: say so kindly, with no new offer.",
 }
@@ -386,8 +386,8 @@ class Negotiator:
     async def _write(self, negotiation: Negotiation, answer: Move, said, question: Optional[str]) -> Optional[str]:
         """The message for the move, its amount written in; None when the AI twice writes it otherwise."""
         open_terms = negotiation.terms.open() if answer.kind == "settle" else {}
-        task = TASKS[answer.kind].format(open=", ".join(open_terms))
-        if answer.refused:
+        task = TASKS[answer.kind].format(open=", ".join(f'{name} ("{words[0]}")' for name, words in open_terms.items()))
+        if answer.refused and answer.kind != "farewell":  # a farewell asks for nothing more
             task += INSIST.format(refused=" and ".join(answer.refused))
         content = f"{transcript(negotiation, said)}\n\nTask: {task}"
         if question:
@@ -395,7 +395,7 @@ class Negotiator:
         for _ in range(2):
             written = await ask(self.client, WRITE, [{"type": "text", "text": content}], Written)
             message = written and filled(written.message, answer.price, negotiation.title)
-            if message and all(any(word in message.lower() for word in words) for words in open_terms.values()):
+            if message and all(any(word.lower() in message.lower() for word in words) for words in open_terms.values()):
                 return message
         return None
 
