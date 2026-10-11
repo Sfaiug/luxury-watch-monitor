@@ -105,6 +105,14 @@ async def test_a_reply_counts_as_sent_once_its_conversation_shows_it():
         )
 
 
+async def test_a_message_said_before_counts_only_once_it_shows_again():
+    asked_before = Site([conversation(("OUTBOUND", "Ist die Uhr noch da?", 0), ("INBOUND", "Ja", 0))],
+                        shows_what_is_sent=False)
+
+    with pytest.raises(NotSent):
+        await Messages(asked_before).reply("abc:1:xyz", "Ist die Uhr noch da?")
+
+
 async def test_a_first_message_goes_through_the_offer_s_contact_form_and_its_conversation_is_found():
     # The account sells too: a conversation about another ad as its seller, on the first page of two
     selling = {"id": "own:1", "adId": "111", "role": "Seller"}

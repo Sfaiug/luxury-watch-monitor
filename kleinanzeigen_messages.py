@@ -99,6 +99,8 @@ class Messages:
 
     async def contact(self, ad_id: str, text: str) -> str:
         """Write the first message to an offer's seller through its contact form; the conversation it starts."""
+        earlier = await self.bought(ad_id)
+        before = len((await self.conversation(earlier)).messages) if earlier else 0
         await self._page.goto(offer_url(ad_id), wait_until="domcontentloaded")
         await self._page.fill("#viewad-contact-message", text)
         await self._page.click("#viewad-contact-form button.viewad-contact-submit")
@@ -106,14 +108,16 @@ class Messages:
         conversation_id = await self.bought(ad_id)
         if conversation_id is None:
             raise NotSent(f"no conversation about {ad_id} after contacting its seller")
-        await self._shows(conversation_id, text)
+        await self._shows(conversation_id, text, before)
         return conversation_id
 
     async def reply(self, conversation_id: str, text: str):
+        before = len((await self.conversation(conversation_id)).messages)
         await self._call("POST", f"{await self._conversations()}/{conversation_id}", {"message": text})
-        await self._shows(conversation_id, text)
+        await self._shows(conversation_id, text, before)
 
-    async def _shows(self, conversation_id: str, text: str):
-        sent = [message.text for message in (await self.conversation(conversation_id)).messages if message.outbound]
-        if not sent or sent[-1].strip() != text.strip():
+    async def _shows(self, conversation_id: str, text: str, before: int):
+        """Sent: the conversation has grown since it held `before` messages, and ends with this one."""
+        said = (await self.conversation(conversation_id)).messages
+        if len(said) <= before or not said[-1].outbound or said[-1].text.strip() != text.strip():
             raise NotSent(f"conversation {conversation_id} does not end with the message written")
