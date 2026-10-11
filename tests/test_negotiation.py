@@ -351,3 +351,26 @@ async def test_a_message_settling_the_rest_names_every_term_still_open(kept):
 
     assert box.said[-1].text == "Super, 7.550 €! Für den Kaufvertrag brauche ich noch ein Foto Ihres Ausweises."
 
+
+
+async def test_the_owner_is_told_to_pay_only_once_the_seller_has_the_agreement(kept):
+    box, notify = Box(), AsyncMock()
+    await opened(kept, box)
+    kept_terms = kept.get("3535834511")
+    kept_terms.terms = Terms(price=7550, bank_transfer=True, delivery="shipping", contract=True)
+    kept.save(kept_terms)
+    box.seller("Hier mein Ausweis.", pictures=1)
+    box.reply = AsyncMock(side_effect=RuntimeError("the site did not answer"))
+    talking = negotiator(Claude(reads=[says(id_card=True)], writes=["Danke! Der Kaufvertrag kommt gleich, dann überweise ich [BETRAG]."]),
+                         kept, notify)
+
+    await talking.follow_up(box)
+    await talking.tell_owner()
+    assert kept.get("3535834511").status == "closing" and notify.await_count == 0
+
+    del box.reply
+    await talking.follow_up(box)
+    await talking.tell_owner()
+
+    assert box.said[-1].text == "Danke! Der Kaufvertrag kommt gleich, dann überweise ich 7.550 €."
+    assert kept.get("3535834511").status == "agreed" and notify.await_count == 1
