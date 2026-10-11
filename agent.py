@@ -27,6 +27,7 @@ from worth import buy_limit, worth
 
 PHOTOS = 6  # photos the AI looks at, the first ones the seller chose
 OPENING = Decimal("0.88")  # the opening offer's share of what the agent may pay at most
+STEP = 50  # euros an offer moves by at least, and is rounded down to
 TOO_CHEAP = Decimal("0.5")  # below this share of its worth an offer is not what it says
 TOO_DEAR = Decimal("1.2")  # above this share of the limit a seller will not come down far enough
 
@@ -133,12 +134,17 @@ class Verdict:
     opening: Optional[Decimal] = None
 
 
+def flagged(red_flags: List[RedFlag]) -> str:
+    """Why the agent stops at what speaks against a watch or its seller."""
+    return "red flags: " + ", ".join(flag.replace("_", " ") for flag in red_flags)
+
+
 def decide(reading: Reading, asking: Optional[Decimal], prices: Prices) -> Verdict:
     """Whether an offer is worth contacting the seller about, and the opening offer, by the owner's numbers."""
     if not reading.is_watch_for_sale:
         return Verdict(False, "not a watch for sale")
     if reading.red_flags:
-        return Verdict(False, "red flags: " + ", ".join(flag.replace("_", " ") for flag in reading.red_flags))
+        return Verdict(False, flagged(reading.red_flags))
     if reading.condition == "defective":
         return Verdict(False, "defective")
     if not reading.reference:
@@ -155,8 +161,7 @@ def decide(reading: Reading, asking: Optional[Decimal], prices: Prices) -> Verdi
         return Verdict(False, "too cheap to be what it says", value, limit)
     if asking > limit * TOO_DEAR:
         return Verdict(False, "asks too much above the limit", value, limit)
-    # 50 euros at a time, downwards
-    opening = Decimal(math.floor(min(asking, limit) * OPENING / 50) * 50)
+    opening = Decimal(math.floor(min(asking, limit) * OPENING / STEP) * STEP)
     return Verdict(True, "worth contacting", value, limit, opening)
 
 

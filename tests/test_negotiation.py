@@ -42,6 +42,7 @@ def test_the_agent_gives_half_the_room_to_its_limit_and_no_more_than_halfway_to_
     assert offers == [("offer", 8300), ("offer", 8450), ("offer", 8500), ("final", LIMIT)]
 
     assert move(LIMIT, LIMIT, Terms(), says(price=9500), False).kind == "farewell"
+    assert move(2600, 2500, Terms(), says(price=2580), False).price == 2580  # never more than the seller asks
 
 
 @pytest.mark.parametrize("refusing", [dict(bank_transfer=False), dict(contract=False), dict(id_card=False)])
@@ -52,6 +53,13 @@ def test_a_seller_refusing_one_of_the_owner_s_terms_is_asked_once_more_then_bid_
     assert (first.kind, first.price, len(first.refused)) == ("settle", 7600, 1)  # the price talk goes on beside it
 
     assert move(LIMIT, OPENING, terms, says(**refusing), False).kind == "farewell"
+
+
+def test_a_term_the_seller_agreed_and_then_refuses_is_open_again():
+    terms = Terms(price=OPENING, bank_transfer=True, delivery="shipping", contract=True, id_card=True)
+
+    assert move(LIMIT, OPENING, terms, says(bank_transfer=False), False).kind == "settle"
+    assert terms.open() == ["payment by bank transfer"]
 
 
 def test_a_red_flag_or_a_sold_watch_ends_it_without_a_word():

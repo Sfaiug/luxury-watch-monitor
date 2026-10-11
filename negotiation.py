@@ -13,14 +13,10 @@ from typing import List, Literal, Optional
 
 from pydantic import BaseModel, Field
 
-from agent import RedFlag
+from agent import STEP, RedFlag, flagged
+from prices_page import euros
 
-STEP = 50  # euros an offer moves by at least, and is rounded down to
 CLOSE = 0.02  # a seller asking this share or less above the offer is met at their price
-
-
-def euros(amount: int) -> str:
-    return f"{amount:,} €".replace(",", ".")
 
 
 class SellerSays(BaseModel):
@@ -78,7 +74,7 @@ def move(limit: int, offered: int, terms: Terms, says: SellerSays, pictures: boo
     `pictures`: the seller sent pictures since the agent last wrote.
     """
     if says.red_flags:
-        return Move("end", why="red flags: " + ", ".join(flag.replace("_", " ") for flag in says.red_flags))
+        return Move("end", why=flagged(says.red_flags))
     if says.ended:
         return Move("end", why="the seller ended it")
     refused = [
@@ -90,10 +86,11 @@ def move(limit: int, offered: int, terms: Terms, says: SellerSays, pictures: boo
     if any(name in terms.asked_again for name in refused):
         return Move("farewell", why="the seller refuses " + " and ".join(refused))
     terms.asked_again += refused
-    terms.bank_transfer |= bool(says.bank_transfer)
+    # A refusal takes back what was agreed; the ID card counts once said and shown
+    terms.bank_transfer = terms.bank_transfer if says.bank_transfer is None else says.bank_transfer
     terms.delivery = says.delivery or terms.delivery
-    terms.contract |= bool(says.contract)
-    terms.id_card |= bool(says.id_card) and pictures  # said and shown
+    terms.contract = terms.contract if says.contract is None else says.contract
+    terms.id_card = terms.id_card if says.id_card is None else says.id_card and (pictures or terms.id_card)
 
     answer = _price(limit, offered, terms, says.price, says.accepts_offer)
     answer.refused = refused
@@ -111,8 +108,8 @@ def _price(limit: int, offered: int, terms: Terms, asked: Optional[int], accepts
                 return Move("farewell", why=f"the seller asks {euros(asked)}, above the limit of {euros(limit)}")
             # Half the room left up to the limit, and no more than halfway towards the seller, 50 euros at a time
             counter = max(offered + STEP, (offered + min(limit - offered, asked - offered) // 2) // STEP * STEP)
-            if counter >= limit - STEP:  # the last step is the limit itself
-                return Move("final", limit, f"the seller asks {euros(asked)}")
+            if counter >= limit - STEP:  # the last step is the limit itself, or the seller's price below it
+                return Move("final", min(limit, asked), f"the seller asks {euros(asked)}")
             return Move("offer", counter, f"the seller asks {euros(asked)}")
         else:
             return Move("offer", offered, "the seller names no price")
