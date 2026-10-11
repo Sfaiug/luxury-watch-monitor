@@ -10,6 +10,7 @@ import httpx2
 import pytest
 from anthropic import AsyncAnthropic
 
+from kleinanzeigen_messages import NotSent
 from negotiation import Move, Negotiation, Negotiations, Negotiator, SellerSays, Terms, amounts, move
 
 LIMIT, OPENING = 8600, 7550
@@ -83,7 +84,9 @@ def test_all_is_agreed_once_the_id_card_is_shown_not_only_promised():
 
 
 def test_the_amounts_a_message_names():
-    assert amounts("Wäre bei 9.200 € dabei, oder 9200€, 9.200,- Euro, € 9200. Baujahr 2017, 41 mm.") == {9200}
+    assert amounts("Wäre bei 9.200 € dabei, oder 9200€, 9.200,- Euro, € 9200, 9.200,-, VB 9.200 oder 9200? "
+                   "Abholung am 15.10. um 14 Uhr, 41 mm, 126610LN.") == {9200}
+    assert amounts("Die Datejust 41 126334 von 2021") == {126334, 2021}
 
 
 @dataclass
@@ -163,6 +166,21 @@ async def test_a_negotiation_asked_for_opens_once_with_the_opening_offer(kept):
     assert (kept.get("3535834511").conversation, kept.get("3535834511").status) == ("c1", "talking")
 
 
+async def test_a_first_message_that_may_have_reached_the_seller_unseen_is_handed_to_the_owner_not_written_again(kept):
+    box, notify = Box(), AsyncMock()
+    box.contact = AsyncMock(side_effect=NotSent("no conversation about 3535834511 after contacting its seller"))
+    talking = negotiator(Claude(writes=["Ist die Uhr noch da? Ich biete 7.550 €."]), kept, notify)
+    talking.ask_to_start(negotiation())
+
+    await talking.start(box)
+    await talking.start(box)
+    await talking.follow_up(box)
+
+    box.contact.assert_awaited_once()
+    assert kept.get("3535834511").status == "owner"
+    notify.assert_awaited_once()
+
+
 async def test_the_seller_s_counter_is_answered_with_the_agent_s_and_nothing_new_asks_nothing(kept):
     box = Box()
     await opened(kept, box)
@@ -195,6 +213,21 @@ async def test_the_owner_hears_once_all_is_agreed(kept):
     notify.assert_awaited_once()
     channel, text = notify.await_args.args
     assert channel == "filter:42" and "7.550 €" in text and "shipping" in text and "Kaufvertrag" in text
+
+
+async def test_what_the_owner_could_not_be_told_is_told_at_the_next_look(kept):
+    box, notify = Box(), AsyncMock()
+    await opened(kept, box)
+    box.seller("Ok, 7.550 € passt, Überweisung, Versand und Kaufvertrag gehen klar, hier mein Ausweis.", pictures=1)
+    await negotiator(Claude(reads=[says(accepts_offer=True, bank_transfer=True, delivery="shipping", contract=True, id_card=True)],
+                            writes=["Danke! Der Kaufvertrag kommt gleich, dann überweise ich die 7.550 €."]),
+                     kept, AsyncMock(side_effect=OSError("Discord unreachable"))).follow_up(box)
+
+    await negotiator(Claude(), kept, notify).follow_up(box)
+    await negotiator(Claude(), kept, notify).follow_up(box)
+
+    notify.assert_awaited_once()
+    assert kept.get("3535834511").status == "agreed"
 
 
 async def test_a_message_naming_another_amount_is_written_again_and_twice_hands_it_to_the_owner(kept):
