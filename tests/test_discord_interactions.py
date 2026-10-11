@@ -222,3 +222,20 @@ async def test_muv_offer_webhook_accepts_muv_url_without_action_id(
     finally:
         await server.stop()
         store.close()
+
+
+async def test_a_match_s_negotiate_button_is_answered_by_the_negotiation(mock_logger, temp_dir):
+    store = ActionStore(str(temp_dir / "actions.sqlite3"))
+    try:
+        pressed = []
+        server = DiscordInteractionServer(
+            store, FakeMUVService(), mock_logger, negotiate=lambda payload: pressed.append(payload) or "On it."
+        )
+        payload = {"type": 3, "data": {"custom_id": "negotiate:3519758108"}, "channel_id": "43"}
+
+        reply = await server.handle_payload(payload)
+
+        assert pressed == [payload]
+        assert (reply["data"]["content"], reply["data"]["flags"]) == ("On it.", 64)
+    finally:
+        store.close()

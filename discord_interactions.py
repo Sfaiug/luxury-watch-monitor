@@ -50,13 +50,14 @@ class DiscordInteractionServer:
     """Small aiohttp server for Discord application interactions."""
 
     def __init__(
-        self, store: ActionStore, muv_service: MUVActionService, logger, filter_flow=None, pages=()
+        self, store: ActionStore, muv_service: MUVActionService, logger, filter_flow=None, pages=(), negotiate=None
     ):
         self.store = store
         self.muv_service = muv_service
         self.logger = logger
         self.filter_flow = filter_flow
         self.pages = pages  # the owner's pages served beside the actions
+        self.negotiate = negotiate  # the reply to a match's "Negotiate" button
         self._runner: Optional[web.AppRunner] = None
         self._site: Optional[web.TCPSite] = None
         self._tasks: Set[asyncio.Task] = set()
@@ -212,6 +213,9 @@ class DiscordInteractionServer:
             reply = self.filter_flow.handle(payload)
             if reply:
                 return reply
+
+        if self.negotiate and custom_id.startswith("negotiate:"):
+            return self._ephemeral(self.negotiate(payload))
 
         if interaction_type != INTERACTION_MESSAGE_COMPONENT:
             return self._ephemeral("Unsupported interaction type.")

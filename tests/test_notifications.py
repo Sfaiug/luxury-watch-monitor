@@ -718,3 +718,19 @@ class TestNotificationManager:
         payload = call_args[1]["json"]
         assert "embeds" in payload
         assert len(payload["embeds"]) == 1
+
+
+async def test_a_bot_s_alert_carries_the_button_given_for_its_watch(mock_aiohttp_session, mock_logger, sample_watch_data, test_site_config):
+    mock_aiohttp_session.post.return_value.__aenter__.return_value = AsyncMock(status=200)
+    with patch.dict("os.environ", {"TEST_CHANNEL_ID": "123456789"}, clear=False), patch("notifications.APP_CONFIG") as config:
+        config.enable_notifications, config.enable_muv_actions = True, False
+        config.discord_bot_token, config.discord_api_base_url = "bot-token", "https://discord.com/api/v10"
+        config.discord_alert_channel_id = ""
+        sent = await NotificationManager(mock_aiohttp_session, mock_logger).send_notifications(
+            [sample_watch_data], test_site_config, lambda watch: {"type": 2, "label": "Negotiate", "custom_id": "negotiate:1"}
+        )
+
+    assert sent == 1
+    (row,) = mock_aiohttp_session.post.call_args.kwargs["json"]["components"]
+    assert row == {"type": 1, "components": [{"type": 2, "label": "Negotiate", "custom_id": "negotiate:1"}]}
+

@@ -35,7 +35,7 @@ class NotificationManager:
         self.action_store = action_store
 
     async def send_notifications(
-        self, watches: List[WatchData], site_config: SiteConfig
+        self, watches: List[WatchData], site_config: SiteConfig, button=None
     ) -> int:
         """
         Send Discord notifications for new watches.
@@ -43,6 +43,7 @@ class NotificationManager:
         Args:
             watches: List of watches to notify about
             site_config: Site configuration with webhook URL
+            button: a further button for each watch's alert, from the watch; a bot's alerts carry it
 
         Returns:
             Number of successful notifications sent
@@ -75,6 +76,9 @@ class NotificationManager:
                 components = self._build_muv_components(
                     watch, use_link_button=not use_bot
                 )
+                if button and use_bot:
+                    components = components or [{"type": 1, "components": []}]
+                    components[0]["components"].append(button(watch))
 
                 # Send notification
                 success = await self._send_single_notification(
