@@ -291,7 +291,7 @@ class Negotiator:
             negotiation, Move("first", negotiation.offered), [], None
         )
         if text is None:
-            return self._hand_over(negotiation, "the AI wrote no first message with the opening offer alone")
+            return
         negotiation.status = "opening"
         negotiation.sent[:] = [text]
         self.negotiations.save(negotiation)
@@ -345,7 +345,7 @@ class Negotiator:
             return self._hand_over(negotiation, f"no agreement after {MOST_WRITTEN} messages")
         text = await self._write(negotiation, answer, said, says.question)
         if text is None:
-            return self._hand_over(negotiation, "the AI wrote no message with the amount decided alone")
+            return
         # Kept before it is sent: should sending fail partway, it is known as the agent's, and sent again
         negotiation.sent.append(text)
         if answer.kind in ("offer", "final"):
@@ -384,7 +384,8 @@ class Negotiator:
             self.negotiations.save(negotiation)
 
     async def _write(self, negotiation: Negotiation, answer: Move, said, question: Optional[str]) -> Optional[str]:
-        """The message for the move, its amount written in; None when the AI twice writes it otherwise."""
+        """The message for the move, its amount written in; None, the negotiation handed to the owner, when the AI
+        twice writes it otherwise."""
         open_terms = negotiation.terms.open() if answer.kind == "settle" else {}
         task = TASKS[answer.kind].format(open=", ".join(f'{name} ("{words[0]}")' for name, words in open_terms.items()))
         if answer.refused and answer.kind != "farewell":  # a farewell asks for nothing more
@@ -395,8 +396,14 @@ class Negotiator:
         for _ in range(2):
             written = await ask(self.client, WRITE, [{"type": "text", "text": content}], Written)
             message = written and filled(written.message, answer.price, negotiation.title)
-            if message and all(any(word.lower() in message.lower() for word in words) for words in open_terms.values()):
+            if not message:
+                why = "the AI wrote no message with the amount decided alone"
+                continue
+            unnamed = [name for name, words in open_terms.items() if not any(w.lower() in message.lower() for w in words)]
+            if not unnamed:
                 return message
+            why = f"the AI wrote no message naming {' and '.join(unnamed)}"
+        self._hand_over(negotiation, why)
         return None
 
     def _end(self, negotiation: Negotiation, status: str, why: str, notice: str = ""):

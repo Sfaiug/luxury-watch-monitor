@@ -290,7 +290,20 @@ async def test_an_answer_written_wrong_twice_goes_to_the_owner(kept):
     await negotiator(Claude(reads=[says()], writes=["Maximal 9.000 €.", "Bis neuntausend."]), kept).follow_up(box)
 
     assert box.said[-1].text == "Was ist Ihr bestes Angebot?"
-    assert kept.get("3535834511").status == "owner" and kept.get("3535834511").notice
+    assert kept.get("3535834511").status == "owner" and "amount decided alone" in kept.get("3535834511").notice
+
+
+async def test_a_settling_message_twice_leaving_a_term_unnamed_goes_to_the_owner_told_which(kept):
+    box = Box()
+    await opened(kept, box)
+    box.seller("Ok, 7.550 passt. Überweisung und Kaufvertrag gehen klar.")
+    unnamed = "Super, [BETRAG] passt! Schicken Sie mir noch ein Foto Ihres Ausweises?"
+
+    await negotiator(Claude(reads=[says(accepts_offer=True, bank_transfer=True, contract=True)], writes=[unnamed, unnamed]),
+                     kept).follow_up(box)
+
+    gone = kept.get("3535834511")
+    assert gone.status == "owner" and "the AI wrote no message naming insured shipping, or else pickup" in gone.notice
 
 
 async def test_once_the_owner_writes_in_the_conversation_the_agent_stays_out(kept):
