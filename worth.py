@@ -1,26 +1,37 @@
-"""What a watch is worth, and the most to pay for it, from what it is offered for on Chrono24 inside the EU."""
+"""What a watch is worth, and the most to pay for it, from what it is offered for on Chrono24 inside the EU
+and what the business itself sold it for."""
 
 import math
+import statistics
+from datetime import date, timedelta
 from decimal import ROUND_FLOOR, Decimal
 from typing import Optional
 
+from chrono24 import FULL_SET
 from config import APP_CONFIG
 from prices import Prices
 
 FEWEST = 5  # offers below which the market says too little to go by
+SOLD_WITHIN = timedelta(days=365)  # the business's own sales that count, prices changing as they do
 MARGIN_TAX = Decimal("0.19")  # VAT on a used watch's margin (Differenzbesteuerung, § 25a UStG)
 
 
 def worth(prices: Prices, reference: str, kind: str) -> Optional[Decimal]:
-    """The price a quarter of the Chrono24 offers inside the EU for this kind of the watch ask less than; None from fewer than five.
+    """What this kind of the watch is worth: the lower of what the market asks and what the business sold it for.
 
-    A search reads the cheapest 120 offers: for a watch offered more than 480
-    times the dearest of those stands in for the quarter, which only lowers it.
+    The market: the price a quarter of the Chrono24 offers of this kind inside
+    the EU ask less than, from five offers up. A search reads the cheapest 120:
+    for a watch offered more than 480 times the dearest of those stands in for
+    the quarter, which only lowers it. The business: the middle of its own
+    sales of the watch within the last year, of full sets for a full set
+    (owner rule, 11 Oct 2026: the controlling tool's prices are price data).
     """
     found, asked = prices.market(reference, kind)
-    if found < FEWEST or not asked:
-        return None
-    return Decimal(str(asked[min(math.ceil(found / 4), len(asked)) - 1]))
+    market = Decimal(str(asked[min(math.ceil(found / 4), len(asked)) - 1])) if found >= FEWEST and asked else None
+    sold = prices.sales(reference, kind == FULL_SET, date.today() - SOLD_WITHIN)
+    ours = Decimal(str(statistics.median(sold))) if sold else None
+    known = [value for value in (market, ours) if value is not None]
+    return min(known) if known else None
 
 
 def least_profit(worth: Decimal) -> Decimal:
