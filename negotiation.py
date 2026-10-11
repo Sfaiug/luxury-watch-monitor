@@ -141,8 +141,9 @@ TASKS = {
 
 # A sum of money in words or signs: "€", "Euro", "9k", "8,5 Tsd.", "fünfhundert", "neuntausend", "achteinhalb"
 _MONEY = re.compile(r"€|\beuro|\beur\b|\d\s*(?:k|tsd)\b|hundert|tausend|einhalb\b|anderthalb", re.IGNORECASE)
-# A number: "8.000", "8,5", "210.30.42"; and read beside it, thousands apart by a space or an apostrophe: "8 000,00"
-_DIGITS = re.compile(r"\d+(?:[.,]\d+)*")
+# A number: "8.000" and "8.000,50" (thousands), "14.30" and "40,5" (two: a time, a decimal); and read beside it,
+# thousands apart by a space or an apostrophe: "8 000,00"
+_DIGITS = re.compile(r"\d{1,3}(?:[.,]\d{3})+(?!\d)|\d+")
 _GROUPED = re.compile(r"(?<!\d)\d{1,3}(?:[\s'’]\d{3})+(?!\d)")
 _BESIDE = re.compile(r"(?:€|\beuro\b|\beur\b)\s*" + re.escape(AMOUNT) + "|" + re.escape(AMOUNT) + r"\s*(?:€|\beuro\b|\beur\b)",
                      re.IGNORECASE)

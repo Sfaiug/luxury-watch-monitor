@@ -92,6 +92,8 @@ TITLE = "Rolex Submariner Date 126610LN"
      "Abholung ginge um 14 Uhr, 8.000 €?"),  # the watch's own number, and one under 100
     ("Ich würde [BETRAG] € zahlen, oder € [BETRAG]?", None),  # twice
     ("Ich würde [BETRAG] € zahlen.", "Ich würde 8.000 € zahlen."),  # its sign is the amount's
+    ("Abholung ginge um 14.30 Uhr, [BETRAG]? Sie hat 40,5 mm.", "Abholung ginge um 14.30 Uhr, 8.000 €? Sie hat 40,5 mm."),
+    ("Ich biete [BETRAG], notfalls 8.000,50.", None),
     ("Ich biete [BETRAG] oder 8,5k", None),
     ("Ich lege fünfhundert drauf: [BETRAG]", None),
     ("[BETRAG], oder achteinhalb?", None),
