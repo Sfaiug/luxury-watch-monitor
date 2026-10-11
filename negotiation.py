@@ -10,18 +10,22 @@ decided here, in code, and the amount decided is written into a message by
 the code, the AI's own words naming no sum of money.
 """
 
+import asyncio
 import json
 import re
 import sqlite3
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from typing import Dict, List, Literal, Optional, Tuple
+from zoneinfo import ZoneInfo
 
 from pydantic import BaseModel, Field
 
+import chrome
 from agent import STEP, RedFlag, ask, flagged
-from kleinanzeigen_messages import Unsent, plain
+from kleinanzeigen_messages import Messages, Unsent, plain
 from prices_page import euros
+from scrapers.kleinanzeigen import BASE_URL
 
 CLOSE = 0.02  # a seller asking this share or less above the offer is met at their price
 
@@ -129,6 +133,13 @@ def _price(limit: int, offered: int, terms: Terms, asked: Optional[int], accepts
 AMOUNT = "[BETRAG]"  # where the AI leaves the amount decided, for the code to write in
 TRIES = 3  # looks at which an offer's page takes no message before the agent hands it to the owner
 MOST_WRITTEN = 12  # messages the agent writes before it hands the conversation to the owner
+STARTS = ("pending",)  # the negotiations a look at the messages starts
+ANSWERS = ("talking", "closing")  # and those it answers, or sends the last message of
+LOOK_EVERY = 300  # seconds from one look at the sellers' answers to the next
+LOOK_DAILY = 86400  # seconds after which the session is used even with nothing to do, so its login stays fresh
+AWAKE = range(8, 21)  # the hours, in Germany, the agent writes in, as a person would
+GERMANY = ZoneInfo("Europe/Berlin")
+LOGGED_OUT = "The agent cannot reach Kleinanzeigen: your login there has ended. Log in once more, as on 11 Oct."
 
 READ = """You read a Kleinanzeigen conversation between a private watch buyer and the seller, for the buyer.
 Report where the seller stands after their latest messages; leave out what they did not say.
@@ -228,6 +239,9 @@ class Negotiations:
                 "(ad_id TEXT PRIMARY KEY, status TEXT NOT NULL, kept TEXT NOT NULL, updated TEXT NOT NULL)"
             )
 
+    def close(self):
+        self._db.close()
+
     def save(self, negotiation: Negotiation):
         with self._db:
             self._db.execute(
@@ -245,8 +259,8 @@ class Negotiations:
     def get(self, ad_id: str) -> Optional[Negotiation]:
         return next((negotiation for negotiation in self.all() if negotiation.ad_id == ad_id), None)
 
-    def with_status(self, status: str) -> List[Negotiation]:
-        return [negotiation for negotiation in self.all() if negotiation.status == status]
+    def with_status(self, *statuses: str) -> List[Negotiation]:
+        return [negotiation for negotiation in self.all() if negotiation.status in statuses]
 
 
 def transcript(negotiation: Negotiation, said) -> str:
@@ -274,9 +288,13 @@ class Negotiator:
         self.negotiations.save(negotiation)
         return True
 
+    def waiting(self) -> List[Negotiation]:
+        """The negotiations the next look at the messages serves."""
+        return self.negotiations.with_status(*STARTS, *ANSWERS)
+
     async def start(self, messages):
         """Write the first message, with the opening offer, of every negotiation asked for."""
-        for negotiation in self.negotiations.with_status("pending"):
+        for negotiation in self.negotiations.with_status(*STARTS):
             try:
                 await self._open(messages, negotiation)
             except Exception as e:
@@ -311,7 +329,7 @@ class Negotiator:
 
     async def follow_up(self, messages):
         """Answer every seller who wrote since the agent last did, and close what said its last word."""
-        for negotiation in self.negotiations.with_status("talking") + self.negotiations.with_status("closing"):
+        for negotiation in self.negotiations.with_status(*ANSWERS):
             try:
                 await self._answer(messages, negotiation)
             except Exception as e:
@@ -414,3 +432,39 @@ class Negotiator:
     def _hand_over(self, negotiation: Negotiation, why: str):
         self._end(negotiation, "owner", why,
                   f"The agent hands this negotiation to you ({why}): {negotiation.title}, {negotiation.address}")
+
+
+async def keep_talking(negotiator: Negotiator, session: str, logger, now=lambda: datetime.now(GERMANY)):
+    """Start the negotiations asked for and answer the sellers every few minutes of the day, and tell the owner what
+    they are still to hear, until cancelled.
+
+    Each look is a window of Chrome holding the owner's Kleinanzeigen session
+    (`session`, a file on the server), which keeps the session's renewed tokens.
+    """
+    logged_out, last_look = False, None
+    while True:
+        busy = negotiator.waiting()
+        stale = last_look is None or (now() - last_look).total_seconds() >= LOOK_DAILY
+        if (busy or stale) and now().hour in AWAKE:
+            last_look = now()
+            try:
+                async with chrome.Chrome() as browser:
+                    window = await browser.window(storage_state=session)
+                    try:
+                        page = await window.new_page()
+                        await page.goto(f"{BASE_URL}/m-nachrichten.html", wait_until="domcontentloaded")
+                        if "einloggen" in page.url or "login." in page.url:
+                            if busy and not logged_out:  # said once, where a negotiation waits, until it works again
+                                await negotiator.notify(busy[0].channel, LOGGED_OUT)
+                            logged_out = bool(busy)
+                            raise RuntimeError("the owner's Kleinanzeigen session has ended")
+                        logged_out = False
+                        messages = Messages(page)
+                        await negotiator.start(messages)
+                        await negotiator.follow_up(messages)
+                    finally:
+                        await window.storage_state(path=session)
+            except Exception as e:
+                logger.error(f"Negotiation: {e}")
+        await negotiator.tell_owner()
+        await asyncio.sleep(LOOK_EVERY)

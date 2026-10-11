@@ -8,10 +8,8 @@ Chrome through the next proxy.
 """
 
 import asyncio
-import contextlib
 import itertools
 import logging
-import os
 import re
 from datetime import datetime, timedelta
 from typing import Dict, Iterator, List, Optional, Tuple
@@ -19,6 +17,7 @@ from urllib.parse import urlencode
 
 from bs4 import BeautifulSoup
 
+import chrome
 import proxies
 from config import APP_CONFIG
 from models import WatchData
@@ -113,39 +112,14 @@ async def _without_pictures(route):
         await route.continue_()
 
 
-class Chrome:
-    """One Chrome on a virtual screen of its own; each page in a fresh window through the next proxy."""
+class Chrome(chrome.Chrome):
+    """Chrome, each page in a fresh window through the next proxy."""
 
     def __init__(self, proxies: Iterator[Optional[Dict[str, str]]]):
         self._proxies = proxies
 
-    async def __aenter__(self) -> "Chrome":
-        from playwright.async_api import async_playwright
-
-        self._open = contextlib.AsyncExitStack()
-        try:
-            screen = await asyncio.create_subprocess_exec(
-                "Xvfb", "-displayfd", "1", "-screen", "0", "1400x900x24", "-nolisten", "tcp",
-                stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL,
-            )
-            self._open.push_async_callback(screen.wait)
-            self._open.callback(screen.terminate)
-            display = ":" + (await screen.stdout.readline()).decode().strip()
-            playwright = await self._open.enter_async_context(async_playwright())
-            self._browser = await playwright.chromium.launch(
-                channel="chrome", headless=False, env={**os.environ, "DISPLAY": display}
-            )
-            self._open.push_async_callback(self._browser.close)
-        except BaseException:
-            await self._open.aclose()
-            raise
-        return self
-
-    async def __aexit__(self, *exc):
-        await self._open.aclose()
-
     async def page(self, url: str) -> str:
-        window = await self._browser.new_context(locale="de-DE", proxy=next(self._proxies))
+        window = await self.window(proxy=next(self._proxies))
         try:
             await window.route("**/*", _without_pictures)
             page = await window.new_page()

@@ -154,6 +154,8 @@ class AppConfig:
     agent_model: str = os.getenv("AGENT_MODEL", "")
     agent_effort: str = os.getenv("AGENT_EFFORT", "xhigh")
     deals_file: str = os.getenv("DEALS_FILE", "deals.sqlite3")
+    # The owner's Kleinanzeigen login, which the agent negotiates with; none: no negotiation
+    kleinanzeigen_session_file: str = os.getenv("KLEINANZEIGEN_SESSION_FILE", "kleinanzeigen_session.json")
 
     # MUV / Discord interaction actions
     enable_muv_actions: bool = _env_bool("ENABLE_MUV_ACTIONS", "false")

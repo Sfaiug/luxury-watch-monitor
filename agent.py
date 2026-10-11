@@ -226,12 +226,13 @@ class Deals:
 class Agent:
     """Judges each new Kleinanzeigen match: reads its page, asks the AI, decides, keeps the verdict."""
 
-    def __init__(self, client, fetch, prices: Prices, deals: Deals, logger):
+    def __init__(self, client, fetch, prices: Prices, deals: Deals, logger, on_verdict=None):
         self.client = client  # an AsyncAnthropic
         self.fetch = fetch  # the page at an address, as text
         self.prices = prices
         self.deals = deals
         self.logger = logger
+        self.on_verdict = on_verdict  # (watch, verdict): what follows a verdict, as a negotiation
 
     async def consider(self, watches: List[WatchData]):
         for watch in watches:
@@ -250,6 +251,8 @@ class Agent:
                     verdict = decide(reading, asking, self.prices)
                 self.deals.judged(watch, asking, reading, verdict, datetime.now())
                 self.logger.info(f"Agent: {watch.title[:60]}: {verdict.why}")
+                if self.on_verdict:
+                    self.on_verdict(watch, verdict)
             except Exception as e:
                 self.logger.warning(f"Agent could not judge {watch.url}: {e}")
 

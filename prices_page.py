@@ -143,7 +143,7 @@ shipping and the margin tax, and no more than the middle of what we paid for the
             )
         return (
             "<h2>Kleinanzeigen matches</h2><p>What the agent read in each match, and whether it would contact the seller,"
-            f" opening at {round(OPENING * 100)}&nbsp;% of the lower of asking price and limit. Nothing is sent to sellers yet.</p>"
+            f" opening at {round(OPENING * 100)}&nbsp;% of the lower of asking price and limit. Where the match's filter says so, the agent negotiates.</p>"
             "<div class=table><table><thead><tr><th>Judged</th><th>Offer</th><th>Read</th><th>Asking</th><th>Worth</th>"
             f"<th>Limit</th><th>Opening</th><th>Verdict</th></tr></thead><tbody>{''.join(rows)}</tbody></table></div>"
             "<h2>Watches</h2>"

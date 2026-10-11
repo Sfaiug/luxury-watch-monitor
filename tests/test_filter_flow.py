@@ -100,9 +100,9 @@ def press(custom_id, **data):
     }
 
 
-def form(store, seller, words, min_price="", max_price="", conditions=()):
+def form(store, seller, words, min_price="", max_price="", conditions=(), negotiate="no"):
     fields = {"words": words, "min_price": min_price, "max_price": max_price}
-    custom_id = ":".join(("filter", "form", store, seller, *conditions))
+    custom_id = ":".join(("filter", "form", store, seller, negotiate, *conditions))
     return {
         **press(custom_id),
         "type": 5,
@@ -155,8 +155,15 @@ async def test_from_the_button_to_a_channel_only_the_member_sees(flow, discord, 
     asked = flow.handle(
         press("filter:condition:kleinanzeigen:private", values=["new", "very_good"])
     )
+    assert asked["data"]["content"] == "Should the agent negotiate on every match worth buying?"
+    assert choices(asked) == [
+        ("Yes, every match", "filter:negotiate:kleinanzeigen:private:yes:new:very_good"),
+        ("No, only the ones I choose", "filter:negotiate:kleinanzeigen:private:no:new:very_good"),
+    ]
+
+    asked = flow.handle(press("filter:negotiate:kleinanzeigen:private:yes:new:very_good"))
     assert asked["type"] == 9
-    assert asked["data"]["custom_id"] == "filter:form:kleinanzeigen:private:new:very_good"
+    assert asked["data"]["custom_id"] == "filter:form:kleinanzeigen:private:yes:new:very_good"
     assert [row["components"][0]["custom_id"] for row in asked["data"]["components"]] == [
         "words",
         "min_price",
@@ -165,7 +172,7 @@ async def test_from_the_button_to_a_channel_only_the_member_sees(flow, discord, 
 
     reply = flow.handle(
         form(
-            "kleinanzeigen", "private", "Rolex Submariner", "5.000 €", "9000", ["new", "very_good"]
+            "kleinanzeigen", "private", "Rolex Submariner", "5.000 €", "9000", ["new", "very_good"], "yes"
         )
     )
     assert reply == {"type": 5, "data": {"flags": 64}}
@@ -173,7 +180,7 @@ async def test_from_the_button_to_a_channel_only_the_member_sees(flow, discord, 
 
     made = Filter(
         "101", MEMBER_ID, "kleinanzeigen", "private", "Rolex Submariner", 5000, 9000,
-        ["new", "very_good"],
+        ["new", "very_good"], negotiate=True,
     )
     assert made.search_url.endswith("/k0c157+global.zustand:new,like_new")
     assert flow.store.all() == [made]
@@ -182,7 +189,7 @@ async def test_from_the_button_to_a_channel_only_the_member_sees(flow, discord, 
     (channel,) = discord.said("POST", f"/guilds/{GUILD}/channels")
     assert channel["name"] == "Rolex Submariner"
     assert channel["topic"] == (
-        f"Kleinanzeigen · Private sellers · New, Very good · 5000 to 9000 € · {made.search_url}"
+        f"Kleinanzeigen · Private sellers · New, Very good · the agent negotiates · 5000 to 9000 € · {made.search_url}"
     )
     assert channel["parent_id"] == CATEGORY  # beside the button's channel
     everyone, member, bot = channel["permission_overwrites"]
@@ -214,12 +221,14 @@ async def test_with_two_marketplaces_the_first_question_is_where(flow, monkeypat
 async def test_any_condition_is_one_press(flow):
     asked = flow.handle(press("filter:condition:kleinanzeigen:dealer:any"))
 
-    assert asked["type"] == 9 and asked["data"]["custom_id"] == "filter:form:kleinanzeigen:dealer"
+    assert choices(asked)[1] == ("No, only the ones I choose", "filter:negotiate:kleinanzeigen:dealer:no")
+    asked = flow.handle(press("filter:negotiate:kleinanzeigen:dealer:no"))
+    assert asked["type"] == 9 and asked["data"]["custom_id"] == "filter:form:kleinanzeigen:dealer:no"
     flow.handle(form("kleinanzeigen", "dealer", "Cartier Tank"))
     await finish(flow)
 
     (made,) = flow.store.all()
-    assert made.conditions == []
+    assert (made.conditions, made.negotiate) == ([], False)
     assert made.search_url.endswith("/cartier-tank/k0c157")
 
 

@@ -1,8 +1,11 @@
 """The buying agent's negotiation: what it answers a seller by the owner's terms, and how it writes to them."""
 
+import asyncio
 import json
 import logging
 from dataclasses import dataclass
+from datetime import datetime, timedelta
+from decimal import Decimal
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -10,7 +13,12 @@ import httpx2
 import pytest
 from anthropic import AsyncAnthropic
 
+import negotiation
+from agent import Verdict
+from filters import Filter, FilterStore
 from kleinanzeigen_messages import Unsent
+from models import WatchData
+from monitor import WatchMonitor
 from negotiation import Move, Negotiation, Negotiations, Negotiator, SellerSays, Terms, filled, move
 
 LIMIT, OPENING = 8600, 7550
@@ -238,6 +246,146 @@ async def test_a_first_message_that_never_left_is_sent_as_it_was_at_the_next_loo
     for _ in range(3):
         await again.start(refusing)
     assert kept.get("1").status == "owner" and "took no message" in kept.get("1").notice
+
+
+class Browser:
+    """Chrome as the talk loop opens it: one window holding the session, on the message box's page."""
+
+    def __init__(self, at="https://www.kleinanzeigen.de/m-nachrichten.html"):
+        self.at, self.opened, self.kept = at, [], []
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *exc):
+        pass
+
+    async def window(self, storage_state):
+        self.opened.append(storage_state)
+        browser = self
+
+        class Window:
+            async def new_page(self):
+                return SimpleNamespace(url=browser.at, goto=AsyncMock())
+
+            async def storage_state(self, path):
+                browser.kept.append(path)
+
+        return Window()
+
+
+async def one_look(monkeypatch, kept, box, browser, hour, notify=None):
+    """keep_talking's first look, at that hour in Germany; the loop ends at its first pause."""
+    monkeypatch.setattr(negotiation.chrome, "Chrome", lambda: browser)
+    monkeypatch.setattr(negotiation, "Messages", lambda page: box)
+    monkeypatch.setattr(negotiation.asyncio, "sleep", AsyncMock(side_effect=asyncio.CancelledError))
+    talking = negotiator(Claude(writes=["Ich biete [BETRAG]."]), kept, notify)
+    talking.ask_to_start(asked_for())
+    with pytest.raises(asyncio.CancelledError):
+        await negotiation.keep_talking(talking, "session.json", logging.getLogger("test"),
+                                       now=lambda: datetime(2026, 10, 11, hour, 0, tzinfo=negotiation.GERMANY))
+
+
+async def test_the_talk_loop_writes_by_day_with_the_owner_s_session_and_keeps_it_renewed(monkeypatch, kept):
+    box, browser = Box(), Browser()
+
+    await one_look(monkeypatch, kept, box, browser, hour=10)
+
+    assert [s.text for s in box.said] == ["Ich biete 7.550 €."]
+    assert browser.opened == browser.kept == ["session.json"]
+
+
+async def test_at_night_the_agent_writes_nothing(monkeypatch, kept):
+    box, browser = Box(), Browser()
+
+    await one_look(monkeypatch, kept, box, browser, hour=23)
+
+    assert box.said == [] and browser.opened == []
+
+
+async def test_an_ended_login_is_said_to_the_owner(monkeypatch, kept):
+    box, notify = Box(), AsyncMock()
+
+    await one_look(monkeypatch, kept, box, Browser(at="https://www.kleinanzeigen.de/m-einloggen.html"), 10, notify)
+
+    assert box.said == []
+    notify.assert_awaited_once_with("filter:42", negotiation.LOGGED_OUT)
+
+
+def test_a_match_worth_contacting_is_negotiated_where_its_filter_says_so(tmp_path, kept):
+    monitor = WatchMonitor(log_level="ERROR")
+    monitor.filter_store = FilterStore(tmp_path / "filters.json")
+    monitor.filter_store.add(Filter("42", "1", "kleinanzeigen", "private", "Rolex", negotiate=True))
+    monitor.filter_store.add(Filter("43", "1", "kleinanzeigen", "private", "Omega"))
+    monitor.negotiator = negotiator(Claude(), kept)
+
+    def match(key, ad_id):
+        return WatchData(title="Rolex Submariner", url=f"https://www.kleinanzeigen.de/s-anzeige/{ad_id}",
+                         site_name="Kleinanzeigen", site_key=key)
+
+    worth_it = Verdict(True, "worth contacting", Decimal("10800"), Decimal("8608"), Decimal("7550"))
+    monitor._negotiate_if_asked(match("filter:42", "1"), worth_it)
+    monitor._negotiate_if_asked(match("filter:43", "2"), worth_it)  # its filter leaves it to the member
+    monitor._negotiate_if_asked(match("filter:42", "3"), Verdict(False, "asks too much above the limit"))
+
+    assert [(n.ad_id, n.channel, n.limit, n.offered) for n in kept.with_status("pending")] == [("1", "filter:42", 8608, 7550)]
+
+
+async def test_with_nothing_to_do_the_session_is_used_once_a_day_to_keep_the_login_fresh(monkeypatch, kept):
+    browser, clock = Browser(), [datetime(2026, 10, 11, 10, tzinfo=negotiation.GERMANY)]
+
+    async def pause(seconds):  # an hour on, then a day on, then the end
+        if len(steps) == 0:
+            raise asyncio.CancelledError
+        clock[0] += steps.pop(0)
+
+    steps = [timedelta(hours=1), timedelta(days=1)]
+    monkeypatch.setattr(negotiation.chrome, "Chrome", lambda: browser)
+    monkeypatch.setattr(negotiation.asyncio, "sleep", pause)
+
+    with pytest.raises(asyncio.CancelledError):
+        await negotiation.keep_talking(negotiator(Claude(), kept), "session.json", logging.getLogger("test"), now=lambda: clock[0])
+
+    assert browser.kept == ["session.json", "session.json"]  # the first look, and a day on; not an hour on
+
+
+async def test_a_last_message_that_did_not_leave_is_sent_at_the_next_look_not_the_next_day(monkeypatch, kept):
+    box, browser, notify = Box(), Browser(), AsyncMock()
+    await opened(kept, box)
+    agreed = kept.get("3535834511")
+    agreed.terms = Terms(price=7550, bank_transfer=True, delivery="shipping", contract=True)
+    kept.save(agreed)
+    box.seller("Hier mein Ausweis.", pictures=1)
+    box.reply = AsyncMock(side_effect=RuntimeError("the site did not answer"))
+    clock = [datetime(2026, 10, 11, 10, tzinfo=negotiation.GERMANY)]
+
+    async def pause(seconds):  # five minutes on, the site answers again; then the end
+        if box.__dict__.pop("reply", None) is None:
+            raise asyncio.CancelledError
+        clock[0] += timedelta(seconds=seconds)
+
+    monkeypatch.setattr(negotiation.chrome, "Chrome", lambda: browser)
+    monkeypatch.setattr(negotiation, "Messages", lambda page: box)
+    monkeypatch.setattr(negotiation.asyncio, "sleep", pause)
+    talking = negotiator(Claude(reads=[says(id_card=True)], writes=["Danke! Der Kaufvertrag kommt gleich, dann überweise ich [BETRAG]."]),
+                         kept, notify)
+
+    with pytest.raises(asyncio.CancelledError):
+        await negotiation.keep_talking(talking, "session.json", logging.getLogger("test"), now=lambda: clock[0])
+
+    assert len(browser.opened) == 2 and box.said[-1].text == "Danke! Der Kaufvertrag kommt gleich, dann überweise ich 7.550 €."
+    assert kept.get("3535834511").status == "agreed" and notify.await_count == 1
+
+
+async def test_what_discord_did_not_post_the_owner_is_told_again(monkeypatch, kept):
+    told = asked_for()
+    told.status, told.notice = "agreed", "Agreed: send the Kaufvertrag and pay"
+    kept.save(told)
+    monkeypatch.setattr("monitor.DiscordApi.call", AsyncMock(return_value=(500, {"message": "500: Internal Server Error"})))
+
+    await negotiator(Claude(), kept, WatchMonitor(log_level="ERROR")._tell_owner).tell_owner()
+
+    assert kept.get("3535834511").notice == "Agreed: send the Kaufvertrag and pay"
 
 
 async def opened(kept, box):
