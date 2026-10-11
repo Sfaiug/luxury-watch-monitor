@@ -163,13 +163,27 @@ async def test_searches_never_made_come_before_the_ones_made_longest_ago(prices)
     ]
 
 
-async def test_of_the_references_never_searched_the_latest_seen_goes_first(prices):
-    # A filter's match, just read by the agent, is priced before the shops' older stock
-    older, newer = shop_offer("116610LN"), shop_offer("126610LN")
-    newer.url, newer.scraped_at = "https://www.kleinanzeigen.de/s-anzeige/1", SEEN
-    prices.saw([older, newer])
+async def test_a_reference_offered_since_its_last_search_goes_first_the_latest_offered_first(prices):
+    prices.saw([shop_offer("116610LN"), shop_offer("126610LN"), shop_offer("5711/1A-010", brand="Patek Philippe")])
+    # Chrono24's own offers, found by one kind's search, are no new offer for the other kind
+    _, found = read(page("chrono24.html"), "Rolex", "116610LN", SEEN - timedelta(hours=29))
+    prices.searched("116610LN", USED, 192, [], SEEN - timedelta(hours=30))
+    prices.searched("116610LN", FULL_SET, 192, found, SEEN - timedelta(hours=29))
+    for kind in KINDS:
+        prices.searched("126610LN", kind, 309, [], SEEN - timedelta(hours=20))
+    # A filter's match, just read by the agent, is priced before the rest
+    match = shop_offer("126610LN")
+    match.url, match.site_key, match.scraped_at = "https://www.kleinanzeigen.de/s-anzeige/1", "filter:42", SEEN
+    prices.saw([match])
 
-    assert [reference for _, reference, _ in prices.due(list(KINDS), SEEN, 20)] == ["126610LN", "126610LN", "116610LN", "116610LN"]
+    assert prices.due(list(KINDS), SEEN - chrono24.FRESH, 20) == [
+        ("Rolex", "126610LN", USED),
+        ("Rolex", "126610LN", FULL_SET),
+        ("Patek Philippe", "57111A010", USED),
+        ("Patek Philippe", "57111A010", FULL_SET),
+        ("Rolex", "116610LN", USED),
+        ("Rolex", "116610LN", FULL_SET),
+    ]
 
 
 async def test_the_searches_made_before_they_asked_for_one_kind_are_made_again(tmp_path):

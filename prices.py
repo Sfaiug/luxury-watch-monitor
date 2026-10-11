@@ -112,16 +112,18 @@ class Prices:
                     )
 
     def due(self, kinds: Sequence[str], before: datetime, limit: int) -> List[Tuple[Optional[str], str, str]]:
-        """Brand, reference and kind of offered watches the market was not searched for since `before`: never searched
-        first, the latest seen of them first, then the ones searched longest ago."""
+        """Brand, reference and kind of offered watches the market was not searched for since `before`: first the ones
+        never searched or offered anew since, the latest offered first, then the ones searched longest ago."""
         each = " UNION ALL ".join("SELECT ? AS kind, ? AS rank" for _ in kinds)
+        # The market's own offers, from the site its searches read, come with the searches: offered anew they are not
+        offered = "MAX(CASE WHEN offers.site_key NOT IN (SELECT site_key FROM searched_offers) THEN offers.first_seen END)"
+        last = f"CASE WHEN {offered} > MAX(searches.searched) THEN NULL ELSE MAX(searches.searched) END"
         return self._db.execute(
             f"SELECT MAX(offers.brand), offers.reference, kinds.kind FROM offers CROSS JOIN ({each}) AS kinds "
             "LEFT JOIN searches ON searches.reference = offers.reference AND searches.kind = kinds.kind "
             "WHERE searches.searched IS NULL OR searches.searched < ? "
             "GROUP BY offers.reference, kinds.kind "
-            "ORDER BY MAX(searches.searched) IS NOT NULL, MAX(searches.searched), MAX(offers.first_seen) DESC, "
-            "offers.reference, kinds.rank "
+            f"ORDER BY {last} IS NOT NULL, {last}, {offered} DESC, offers.reference, kinds.rank "
             "LIMIT ?",
             (*[value for rank, kind in enumerate(kinds) for value in (kind, rank)], before.isoformat(timespec="seconds"), limit),
         ).fetchall()
