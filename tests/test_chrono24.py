@@ -132,18 +132,18 @@ async def test_a_reference_the_shops_offer_is_searched_for_each_kind_and_its_eu_
     ]
 
 
-async def test_a_reference_is_searched_again_once_its_offers_are_a_week_old(prices):
+async def test_a_reference_is_searched_again_around_the_clock_an_hour_on_at_the_earliest(prices):
     prices.saw([shop_offer("116610LN")])
     pages = {"Rolex 116610LN": "chrono24.html"}
     await search_round(prices, Chrome(pages), now=lambda: SEEN)
 
-    within_the_week = Chrome(pages)
-    assert await search_round(prices, within_the_week, now=lambda: SEEN + timedelta(days=6, hours=23)) == 0
-    assert within_the_week.asked == []
+    within_the_hour = Chrome(pages)
+    assert await search_round(prices, within_the_hour, now=lambda: SEEN + timedelta(minutes=59)) == 0
+    assert within_the_hour.asked == []
 
-    a_week_on = Chrome(pages)
-    assert await search_round(prices, a_week_on, now=lambda: SEEN + timedelta(days=7, seconds=1)) == 2
-    assert a_week_on.asked == ["Rolex 116610LN", "Rolex 116610LN"]
+    an_hour_on = Chrome(pages)
+    assert await search_round(prices, an_hour_on, now=lambda: SEEN + timedelta(hours=1, seconds=1)) == 2
+    assert an_hour_on.asked == ["Rolex 116610LN", "Rolex 116610LN"]
 
 
 async def test_searches_never_made_come_before_the_ones_made_longest_ago(prices):
@@ -163,6 +163,29 @@ async def test_searches_never_made_come_before_the_ones_made_longest_ago(prices)
     ]
 
 
+async def test_a_reference_offered_since_its_last_search_goes_first_the_latest_offered_first(prices):
+    prices.saw([shop_offer("116610LN"), shop_offer("126610LN"), shop_offer("5711/1A-010", brand="Patek Philippe")])
+    # Chrono24's own offers, found by one kind's search, are no new offer for the other kind
+    _, found = read(page("chrono24.html"), "Rolex", "116610LN", SEEN - timedelta(hours=29))
+    prices.searched("116610LN", USED, 192, [], SEEN - timedelta(hours=30))
+    prices.searched("116610LN", FULL_SET, 192, found, SEEN - timedelta(hours=29))
+    for kind in KINDS:
+        prices.searched("126610LN", kind, 309, [], SEEN - timedelta(hours=20))
+    # A filter's match, just read by the agent, is priced before the rest
+    match = shop_offer("126610LN")
+    match.url, match.site_key, match.scraped_at = "https://www.kleinanzeigen.de/s-anzeige/1", "filter:42", SEEN
+    prices.saw([match])
+
+    assert prices.due(list(KINDS), SEEN - chrono24.FRESH, 20) == [
+        ("Rolex", "126610LN", USED),
+        ("Rolex", "126610LN", FULL_SET),
+        ("Patek Philippe", "57111A010", USED),
+        ("Patek Philippe", "57111A010", FULL_SET),
+        ("Rolex", "116610LN", USED),
+        ("Rolex", "116610LN", FULL_SET),
+    ]
+
+
 async def test_the_searches_made_before_they_asked_for_one_kind_are_made_again(tmp_path):
     before = Prices(tmp_path / "prices.sqlite3")
     before.saw([shop_offer("116610LN")])
@@ -176,7 +199,7 @@ async def test_the_searches_made_before_they_asked_for_one_kind_are_made_again(t
     prices = Prices(tmp_path / "prices.sqlite3")
     assert prices.due(list(KINDS), SEEN - chrono24.FRESH, 20) == [("Rolex", "116610LN", USED), ("Rolex", "116610LN", FULL_SET)]
 
-    # Made again, they stand for their week
+    # Made again, they stand for their hour
     for kind in KINDS:
         prices.searched("116610LN", kind, 192, [], SEEN)
     prices.close()
