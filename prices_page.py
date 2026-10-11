@@ -117,7 +117,8 @@ shipping and the margin tax. Your price, once set, is the limit in its place; an
             reading = json.loads(verdict["reading"]) if verdict["reading"] else {}
             read = ", ".join(
                 filter(None, [reading.get("reference"), (reading.get("condition") or "").replace("unknown", "").replace("_", " "),
-                              "box" if reading.get("box") else "", "papers" if reading.get("papers") else ""])
+                              "box" if reading.get("box") else "", "papers" if reading.get("papers") else "",
+                              *reading.get("notes", [])])
             )
             rows.append(
                 f'<tr class="{"own" if verdict["contact"] else ""}"><td>{verdict["judged"][:16].replace("T", " ")}</td>'

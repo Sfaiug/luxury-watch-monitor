@@ -49,7 +49,7 @@ def model(monkeypatch):
 def reading(**read):
     stated = dict(
         is_watch_for_sale=True, brand="Rolex", model="Submariner Date", reference="116610LN", year=2017,
-        condition="very_good", box=True, papers=True, concerns=[],
+        condition="very_good", box=True, papers=True, red_flags=[], notes=[],
     )
     stated.update(read)
     return Reading(**stated)
@@ -137,6 +137,18 @@ def test_a_watch_asked_near_its_limit_is_worth_contacting_from_88_percent_of_the
     )
 
 
+def test_a_private_seller_s_usual_terms_are_notes_that_keep_no_one_from_the_seller(prices):
+    # The live agent's first real offer, 11 Oct 2026, was left for these
+    verdict = decide(reading(notes=["pickup only", "no returns", "no warranty"]), Decimal("9000"), prices)
+
+    assert (verdict.contact, verdict.why) == (True, "worth contacting")
+
+
+def test_the_ai_names_red_flags_from_the_list_only():
+    with pytest.raises(ValueError):
+        Reading.model_validate_json(reading(red_flags=[]).model_dump_json().replace('"red_flags":[]', '"red_flags":["no returns"]'))
+
+
 def test_below_the_limit_the_opening_offer_starts_from_the_asking_price(prices):
     assert decide(reading(), Decimal("7000"), prices).opening == Decimal("6150")
 
@@ -145,7 +157,7 @@ def test_below_the_limit_the_opening_offer_starts_from_the_asking_price(prices):
     "read, asking, why",
     [
         (dict(is_watch_for_sale=False), "9000", "not a watch for sale"),
-        (dict(concerns=["dial and reference do not match"]), "9000", "concerns: dial and reference do not match"),
+        (dict(red_flags=["details_contradict_each_other"]), "9000", "red flags: details contradict each other"),
         (dict(condition="defective"), "9000", "defective"),
         (dict(reference=None), "9000", "no reference"),
         (dict(reference="126610LN"), "9000", "too few Chrono24 offers for 126610LN yet"),
@@ -235,7 +247,7 @@ async def test_a_filter_s_new_matches_go_to_the_agent_and_a_shop_s_do_not(prices
 
 async def test_the_owner_sees_the_agent_s_verdicts_on_the_prices_page(prices, deals):
     at_9000 = AsyncMock(return_value=OFFER.replace("17.790", "9.000"))
-    await Agent(Claude(reading().model_dump_json()), at_9000, prices, deals, logging.getLogger("test")).consider([match()])
+    await Agent(Claude(reading(notes=["pickup only"]).model_dump_json()), at_9000, prices, deals, logging.getLogger("test")).consider([match()])
     app = web.Application()
     PricesPage(prices, "secret", deals).add_to(app)
 
@@ -243,5 +255,5 @@ async def test_the_owner_sees_the_agent_s_verdicts_on_the_prices_page(prices, de
         page = await (await client.get(PATH, params={"key": key("secret")})).text()
 
     verdicts = page[page.index("Kleinanzeigen matches"):page.index("<h2>Watches</h2>")]
-    assert "116610LN, very good, box, papers" in verdicts
+    assert "116610LN, very good, box, papers, pickup only" in verdicts
     assert "9.000 €" in verdicts and "7.550 €" in verdicts and "worth contacting" in verdicts
