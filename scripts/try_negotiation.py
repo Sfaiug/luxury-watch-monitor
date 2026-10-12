@@ -53,8 +53,10 @@ class DirectMessages:
 
     async def post(self, content: str) -> dict:
         status, answer = await self.api.call("POST", f"/channels/{self.channel}/messages", {"content": content})
-        if status not in (200, 201):  # refused: nothing was sent
+        if 400 <= status < 500:  # refused: nothing was sent
             raise Unsent(f"Discord answered {status}: {answer}")
+        if status not in (200, 201):  # it may have been sent all the same
+            raise RuntimeError(f"Discord answered {status}: {answer}")
         return answer
 
     async def contact(self, ad_id: str, text: str) -> str:
