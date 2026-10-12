@@ -166,9 +166,13 @@ def decide(reading: Reading, asking: Optional[Decimal], prices: Prices) -> Verdi
         return Verdict(False, "no reference")
     if not asking:
         return Verdict(False, "no price")
-    kind = next((kind for kind in held_against(reading) if worth(prices, reading.reference, kind) is not None), USED)
+    kinds = held_against(reading)
+    kind = next((kind for kind in kinds if worth(prices, reading.reference, kind) is not None), USED)
     value, limit = worth(prices, reading.reference, kind), buy_limit(prices, reading.reference, kind)
-    if limit is None:  # no worth and no price of the owner's
+    # A limit counts once Chrono24 was searched for every kind the offer is held against, or it is the owner's own:
+    # a full set is not decided on all used watches alone because its own search has not come yet
+    searched = all(prices.ever_searched(reading.reference, kind) for kind in kinds)
+    if limit is None or not (searched or prices.buy_price(reading.reference) is not None):
         return Verdict(False, f"too few Chrono24 offers for {reading.reference} yet")
     if value is not None and asking < value * TOO_CHEAP:
         return Verdict(False, "too cheap to be what it says", value, limit)
@@ -270,10 +274,7 @@ class Agent:
                 reading = Reading.model_validate_json(row["reading"])
                 asking = Decimal(str(row["asking"])) if row["asking"] is not None else None
                 verdict = decide(reading, asking, self.prices)
-                # Decided once every kind it is held against was searched: a full set not on all used watches alone
-                if verdict.limit is None or not all(
-                    self.prices.ever_searched(reading.reference, kind) for kind in held_against(reading)
-                ):
+                if verdict.limit is None:
                     continue
                 watch = WatchData(title=row["title"], url=row["address"], site_name="Kleinanzeigen",
                                   site_key=row["filter"] or "", price=asking)

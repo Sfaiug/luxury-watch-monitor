@@ -35,6 +35,7 @@ def prices(tmp_path):
     kept = Prices(tmp_path / "prices.sqlite3")
     found, offers = chrono24.read((PAGES / "chrono24.html").read_text(encoding="utf-8"), "Rolex", "116610LN", SEARCHED)
     kept.searched("116610LN", USED, found, offers, SEARCHED)  # worth 10.800 €, most to pay 8.608 €
+    kept.searched("116610LN", FULL_SET, 0, [], SEARCHED)  # and no full set offered
     return kept
 
 
@@ -155,7 +156,7 @@ def test_the_ai_names_red_flags_from_the_list_only():
 def test_a_full_set_is_held_against_full_sets_once_enough_are_offered(prices):
     _, offers = chrono24.read((PAGES / "chrono24.html").read_text(encoding="utf-8"), "Rolex", "116610LN", SEARCHED)
     full_sets = [offer for offer in offers if offer.price >= 11000]
-    assert decide(reading(), Decimal("9000"), prices).worth == Decimal("10800")  # none searched yet: all used ones
+    assert decide(reading(), Decimal("9000"), prices).worth == Decimal("10800")  # none offered: all used ones
 
     prices.searched("116610LN", FULL_SET, len(full_sets), full_sets, SEARCHED)
 
@@ -250,6 +251,24 @@ async def test_a_match_that_came_before_its_watch_s_prices_is_decided_again_once
     assert follows.call_count == 2 and (watch.url, watch.site_key) == (match().url, "filter:42")
     assert (verdict.contact, verdict.why, verdict.worth) == (True, "worth contacting", worth(prices, "116610LV", FULL_SET))
     assert deals.latest(1)[0]["worth"] == float(verdict.worth)
+
+
+async def test_a_full_set_that_comes_between_its_two_searches_waits_for_the_second(prices, deals):
+    follows = Mock()
+    agent = Agent(Claude(reading(reference="116610LV").model_dump_json()), AsyncMock(return_value=OFFER.replace("17.790", "9.000")),
+                  prices, deals, logging.getLogger("test"), follows)
+    found, offers = chrono24.read((PAGES / "chrono24.html").read_text(encoding="utf-8"), "Rolex", "116610LV", SEARCHED)
+    prices.searched("116610LV", USED, found, offers, SEARCHED)
+
+    await agent.consider([match()])
+    full_sets = [offer for offer in offers if offer.price >= 11000]
+    prices.searched("116610LV", FULL_SET, len(full_sets), full_sets, SEARCHED)
+    agent.reconsider()
+
+    assert [(call.args[1].why, call.args[1].worth) for call in follows.call_args_list] == [
+        ("too few Chrono24 offers for 116610LV yet", None),
+        ("worth contacting", worth(prices, "116610LV", FULL_SET)),
+    ]
 
 
 async def test_each_cycle_decides_again_on_the_matches_that_wait_for_their_prices(tmp_path):
