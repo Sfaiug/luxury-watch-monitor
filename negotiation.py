@@ -55,15 +55,16 @@ class Terms:
     id_card: bool = False
     asked_again: List[str] = field(default_factory=list)  # terms the seller refused once and was asked again
 
-    def open(self) -> Dict[str, Tuple[str, ...]]:
-        """The terms not settled yet, each with the words a German message names it by, the one to write first."""
+    def open(self) -> Dict[str, Tuple[str, str]]:
+        """The terms not settled yet, each with the word to write it by and the pattern of the words a German message
+        names it by: "Banküberweisung", "verschicken", "den Vertrag" and "Perso", not "Vertragshändler" or "Person"."""
         return {
-            name: words
-            for name, settled, words in (
-                ("payment by bank transfer", self.bank_transfer, ("Überweisung", "überweis")),
-                ("insured shipping, or else pickup", self.delivery, ("Versand", "versend", "verschick", "zuschick", "abhol")),
-                ("the purchase contract", self.contract, ("Kaufvertrag", "vertrag")),
-                ("a picture of the seller's ID card", self.id_card, ("Ausweis", "perso")),
+            name: (word, named)
+            for name, settled, word, named in (
+                ("payment by bank transfer", self.bank_transfer, "Überweisung", r"überweis"),
+                ("insured shipping, or else pickup", self.delivery, "Versand", r"versand|versend|verschick|zuschick|abhol"),
+                ("the purchase contract", self.contract, "Kaufvertrag", r"kaufvertrag|\bvertrag\b"),
+                ("a picture of the seller's ID card", self.id_card, "Ausweis", r"ausweis|\bperso\b"),
             )
             if not settled
         }
@@ -408,7 +409,7 @@ class Negotiator:
         """The message for the move, its amount written in; None, the negotiation handed to the owner, when the AI
         twice writes it otherwise."""
         open_terms = negotiation.terms.open() if answer.kind == "settle" else {}
-        task = TASKS[answer.kind].format(open=", ".join(f'{name} ("{words[0]}")' for name, words in open_terms.items()))
+        task = TASKS[answer.kind].format(open=", ".join(f'{name} ("{word}")' for name, (word, _) in open_terms.items()))
         if answer.refused and answer.kind != "farewell":  # a farewell asks for nothing more
             task += INSIST.format(refused=" and ".join(answer.refused))
         content = f"{transcript(negotiation, said)}\n\nTask: {task}"
@@ -420,7 +421,7 @@ class Negotiator:
             if not message:
                 why = "the AI wrote no message with the amount decided alone"
                 continue
-            unnamed = [name for name, words in open_terms.items() if not any(w.lower() in message.lower() for w in words)]
+            unnamed = [name for name, (_, named) in open_terms.items() if not re.search(named, message, re.IGNORECASE)]
             if not unnamed:
                 return message
             why = f"the AI wrote no message naming {' and '.join(unnamed)}"
