@@ -147,10 +147,10 @@ class AppConfig:
     sale_fee_share: float = float(os.getenv("SALE_FEE_SHARE", "0.065"))
     sale_shipping_eur: float = float(os.getenv("SALE_SHIPPING_EUR", "60"))
 
-    # The buying agent: which model reads the offers and how hard it thinks
-    # (owner rule, 10 Oct 2026: the latest Haiku at xhigh). The latest Haiku
-    # then, Claude Haiku 5.5, takes xhigh and would otherwise think at medium;
-    # an empty AGENT_EFFORT is for a model that takes no effort at all
+    # The buying agent: which model reads the offers and negotiates, and how
+    # hard it thinks: whichever negotiate best in chats with simulated sellers
+    # (owner rule, 12 Oct 2026), set on the server; an empty AGENT_EFFORT is
+    # for a model that takes no effort at all
     agent_model: str = os.getenv("AGENT_MODEL", "")
     agent_effort: str = os.getenv("AGENT_EFFORT", "xhigh")
     deals_file: str = os.getenv("DEALS_FILE", "deals.sqlite3")

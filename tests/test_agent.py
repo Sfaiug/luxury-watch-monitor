@@ -105,7 +105,6 @@ async def test_the_ai_reads_the_offer_with_its_first_photos_on_the_model_the_ser
 
 
 def test_the_agent_thinks_at_xhigh_unless_the_server_names_another_effort():
-    # Owner rule, 10 Oct 2026: the latest Haiku at xhigh
     assert AppConfig().agent_effort == "xhigh"
 
 
