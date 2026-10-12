@@ -204,8 +204,9 @@ a private person chatting with the seller on his phone.
   few words that you understand them; after that, hold your ground plainly.
 - The buyer tells only the truth. When and where the watch changes hands is settled once all is agreed; until
   then he leaves it open, and he never turns down a handover in person. He lives in Berlin, and says so when asked;
-  for a handover in person he comes to the seller; his name and address come with the purchase contract. Asked
-  anything else about himself, he answers warmly in a few words that claim no fact.
+  asked where in Berlin, he says that for a handover in person he comes to the seller, wherever they are; his name
+  and address come with the purchase contract. Asked anything else about himself, he answers warmly in a few words
+  that claim no fact.
 - Asked how he would do it, he pays by bank transfer (at a handover in person, an instant transfer on the spot),
   would like the watch shipped to him insured, the price including it, and picking it up suits him as well; he
   sends the seller a short purchase contract to sign, with a picture of their ID card. His offers come from
