@@ -18,7 +18,7 @@ import chrono24
 from agent import Agent, Deals, Reading, decide, offer_page, read
 from chrono24 import FULL_SET, USED
 from config import APP_CONFIG, SITE_CONFIGS, AppConfig
-from filters import Filter
+from filters import Filter, FilterStore
 from models import ScrapingSession, WatchData
 from monitor import WatchMonitor
 from prices import Prices
@@ -226,6 +226,41 @@ async def test_each_verdict_goes_on_to_what_follows_it(prices, deals):
 
     ((watch, verdict),) = [call.args for call in follows.call_args_list]
     assert (watch, verdict.contact, verdict.why) == (match(), False, "asks too much above the limit")
+
+
+async def test_a_match_that_came_before_its_watch_s_prices_is_decided_again_once_they_came(prices, deals):
+    follows = Mock()
+    agent = Agent(Claude(reading(reference="116610LV").model_dump_json()), AsyncMock(return_value=OFFER.replace("17.790", "9.000")),
+                  prices, deals, logging.getLogger("test"), follows)
+    await agent.consider([match()])
+    agent.reconsider()
+    assert [call.args[1].why for call in follows.call_args_list] == ["too few Chrono24 offers for 116610LV yet"]
+
+    found, offers = chrono24.read((PAGES / "chrono24.html").read_text(encoding="utf-8"), "Rolex", "116610LV", SEARCHED)
+    prices.searched("116610LV", USED, found, offers, SEARCHED)
+    agent.reconsider()
+    assert follows.call_count == 1  # a full set waits for the full sets' search too
+
+    full_sets = [offer for offer in offers if offer.price >= 11000]
+    prices.searched("116610LV", FULL_SET, len(full_sets), full_sets, SEARCHED)
+    agent.reconsider()
+    agent.reconsider()
+
+    watch, verdict = follows.call_args.args
+    assert follows.call_count == 2 and (watch.url, watch.site_key) == (match().url, "filter:42")
+    assert (verdict.contact, verdict.why, verdict.worth) == (True, "worth contacting", worth(prices, "116610LV", FULL_SET))
+    assert deals.latest(1)[0]["worth"] == float(verdict.worth)
+
+
+async def test_each_cycle_decides_again_on_the_matches_that_wait_for_their_prices(tmp_path):
+    monitor = WatchMonitor(log_level="ERROR")
+    monitor.filter_store = FilterStore(tmp_path / "filters.json")
+    monitor.persistence = Mock()
+    monitor.agent = Mock()
+
+    await monitor.run_monitoring_cycle()
+
+    monitor.agent.reconsider.assert_called_once_with()
 
 
 async def test_what_is_no_watch_for_sale_stays_out_of_the_price_database(prices, deals):

@@ -506,6 +506,10 @@ class WatchMonitor:
             # Wait for all to complete
             await asyncio.gather(*tasks)
 
+            # Matches that came before their watch's Chrono24 offers, once the offers came
+            if self.agent:
+                self.agent.reconsider()
+
             # Poll reviewed MUV offer links without a separate worker process.
             await self._monitor_muv_offer_links()
 
