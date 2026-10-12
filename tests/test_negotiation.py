@@ -596,6 +596,24 @@ async def test_a_seller_who_wrote_after_an_answer_failed_is_read_and_the_answer_
     assert (now.status, now.offered, now.terms.asked_again) == ("talking", 7850, [])  # the refusal waits for its turn
 
 
+async def test_a_refusal_an_answer_taken_back_asked_again_counts_once(kept):
+    box = Box()
+    await opened(kept, box)
+    box.seller("7.550 € passt, aber nur bar.")
+    box.reply = AsyncMock(side_effect=RuntimeError("the site did not answer"))
+    await negotiator(Claude(reads=[says(accepts_offer=True, bank_transfer=False)],
+                            writes=["[BETRAG] passt. Überweisung ist mir wichtig, geht das?"]), kept).follow_up(box)
+    box.seller("Keine Antwort? Wie gesagt, nur bar.")
+    del box.reply
+
+    await negotiator(Claude(reads=[says(accepts_offer=True, bank_transfer=False)],
+                            writes=["[BETRAG] passt. Mit Überweisung sind wir beide abgesichert, geht das?"]), kept).follow_up(box)
+
+    now = kept.get("3535834511")
+    assert (now.status, now.terms.asked_again) == ("talking", ["bank transfer"])  # asked once more, not bid farewell
+    assert box.said[-1].text == "7.550 € passt. Mit Überweisung sind wir beide abgesichert, geht das?"
+
+
 async def test_a_negotiation_kept_without_its_earlier_state_has_its_unsent_message_taken_back_alone(kept):
     box = Box()
     await opened(kept, box)
