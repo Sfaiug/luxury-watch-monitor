@@ -57,19 +57,19 @@ class Terms:
     id_card: bool = False
     asked_again: List[str] = field(default_factory=list)  # terms the seller refused once and was asked again
 
-    def open(self) -> Dict[str, Tuple[str, str]]:
-        """The terms not settled yet, in the order they are asked for, each with the word to write it by and the
-        pattern of the words a German message names it by: "Banküberweisung", "verschicken", "den Vertrag" and
-        "Perso", not "Vertragshändler" or "Person"."""
+    def open(self) -> Dict[str, Tuple[str, str, str]]:
+        """The terms not settled yet, in the order they are asked for, each with the word to write it by, the
+        pattern of the words a German message names it by ("Banküberweisung", "verschicken", "den Vertrag" and
+        "Perso", not "Vertragshändler" or "Person") and its field here and in what the seller says."""
         return {
-            name: (word, named)
-            for name, settled, word, named in (
-                ("payment by bank transfer", self.bank_transfer, "Überweisung", r"überweis"),
-                ("insured shipping, or else pickup", self.delivery, "Versand", r"versand|versend|verschick|zuschick|abhol"),
-                ("the purchase contract the buyer sends to sign", self.contract, "Kaufvertrag", r"kaufvertrag|\bvertrag\b"),
-                ("a picture of the seller's ID card", self.id_card, "Ausweis", r"ausweis|\bperso\b"),
+            name: (word, named, said)
+            for name, said, word, named in (
+                ("payment by bank transfer", "bank_transfer", "Überweisung", r"überweis"),
+                ("insured shipping, or else pickup", "delivery", "Versand", r"versand|versend|verschick|zuschick|abhol"),
+                ("the purchase contract the buyer sends to sign", "contract", "Kaufvertrag", r"kaufvertrag|\bvertrag\b"),
+                ("a picture of the seller's ID card", "id_card", "Ausweis", r"ausweis|\bperso\b"),
             )
-            if not settled
+            if not getattr(self, said)
         }
 
 
@@ -94,15 +94,14 @@ def move(limit: int, offered: int, terms: Terms, says: SellerSays, pictures: boo
         return Move("end", why=flagged(says.red_flags))
     if says.ended:
         return Move("end", why="the seller ended it")
-    refused = [
-        name
-        for name, given in (("bank transfer", says.bank_transfer), ("the purchase contract", says.contract),
-                            ("a picture of the ID card", says.id_card))
-        if given is False
-    ]
-    if any(name in terms.asked_again for name in refused):
-        return Move("farewell", why="the seller refuses " + " and ".join(refused))
-    terms.asked_again += refused
+    refused = {
+        said: name
+        for said, name in (("bank_transfer", "bank transfer"), ("contract", "the purchase contract"),
+                           ("id_card", "a picture of the ID card"))
+        if getattr(says, said) is False
+    }
+    if any(name in terms.asked_again for name in refused.values()):
+        return Move("farewell", why="the seller refuses " + " and ".join(refused.values()))
     # A refusal takes back what was agreed; the ID card counts once said and shown
     terms.bank_transfer = terms.bank_transfer if says.bank_transfer is None else says.bank_transfer
     terms.delivery = says.delivery or terms.delivery
@@ -110,7 +109,10 @@ def move(limit: int, offered: int, terms: Terms, says: SellerSays, pictures: boo
     terms.id_card = terms.id_card if says.id_card is None else says.id_card and (pictures or terms.id_card)
 
     answer = _price(limit, offered, terms, says.price, says.accepts_offer and not opening, opening)
-    answer.refused = refused
+    # The term asked for, refused, is asked for once more; any other refused waits for its turn
+    asked = next(iter(terms.open().values()))[2] if answer.kind in ("agreed", "settle") else None
+    answer.refused = [refused[asked]] if asked in refused else []
+    terms.asked_again += answer.refused
     return answer
 
 
@@ -122,7 +124,8 @@ def _price(limit: int, offered: int, terms: Terms, asked: Optional[int], accepts
     if not agreed:
         if accepts_offer:
             terms.price = offered
-        elif asked is not None and (asked <= offered or (asked <= limit and asked - offered <= max(STEP, asked * CLOSE))):
+        elif asked is not None and (asked <= offered or (
+                not opening and asked <= limit and asked - offered <= max(STEP, asked * CLOSE))):
             terms.price = min(asked, limit)
         elif opening:
             return Move("offer", offered, "its opening offer")
@@ -257,8 +260,9 @@ class Negotiation:
 
     @property
     def opened(self) -> bool:
-        """The agent has offered: its first message only asks whether the watch is still there."""
-        return len(self.sent) > 1
+        """The agent has offered: a message of its own names an amount, which only the code writes in. Its first
+        message only asks whether the watch is still there; before 12 Oct 2026 it named the opening offer."""
+        return any(_MONEY.search(text) for text in self.sent)
 
 
 class Negotiations:
@@ -328,7 +332,7 @@ class Negotiator:
         return self.negotiations.with_status(*STARTS, *ANSWERS)
 
     async def start(self, messages):
-        """Write the first message, with the opening offer, of every negotiation asked for."""
+        """Write the first message of every negotiation asked for."""
         for negotiation in self.negotiations.with_status(*STARTS):
             try:
                 await self._open(messages, negotiation)
@@ -449,8 +453,8 @@ class Negotiator:
         """The message for the move, its amount written in; None, the negotiation handed to the owner, when the AI
         twice writes it otherwise."""
         asked = dict(list(negotiation.terms.open().items())[:1]) if answer.kind in ("agreed", "settle") else {}
-        task = TASKS[answer.kind].format(term="".join(f'{name} ("{word}")' for name, (word, _) in asked.items()))
-        if answer.refused and answer.kind != "farewell":  # a farewell asks for nothing more
+        task = TASKS[answer.kind].format(term="".join(f'{name} ("{word}")' for name, (word, _, _) in asked.items()))
+        if answer.refused:
             task += INSIST.format(refused=" and ".join(answer.refused))
         content = f"{transcript(negotiation, said)}\n\nTask: {task}"
         if question:
@@ -461,7 +465,7 @@ class Negotiator:
             if not message:
                 why = "the AI wrote no message with the amount decided alone"
                 continue
-            unnamed = [name for name, (_, named) in asked.items() if not re.search(named, message, re.IGNORECASE)]
+            unnamed = [name for name, (_, named, _) in asked.items() if not re.search(named, message, re.IGNORECASE)]
             if not unnamed:
                 return message
             why = f"the AI wrote no message naming {' and '.join(unnamed)}"

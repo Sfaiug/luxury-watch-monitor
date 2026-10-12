@@ -62,14 +62,29 @@ def test_the_agent_gives_half_the_room_to_its_limit_and_no_more_than_halfway_to_
     assert move(2600, 2500, Terms(), says(price=2580), False).price == 2580  # never more than the seller asks
 
 
-@pytest.mark.parametrize("refusing", [dict(bank_transfer=False), dict(contract=False), dict(id_card=False)])
-def test_a_seller_refusing_one_of_the_owner_s_terms_is_asked_once_more_then_bid_farewell(refusing):
-    terms = Terms()
+@pytest.mark.parametrize("agreed, refusing", [
+    (dict(), dict(bank_transfer=False)),
+    (dict(bank_transfer=True, delivery="shipping"), dict(contract=False)),
+    (dict(bank_transfer=True, delivery="shipping", contract=True), dict(id_card=False)),
+])
+def test_a_seller_refusing_the_term_asked_for_is_asked_once_more_then_bid_farewell(agreed, refusing):
+    terms = Terms(**agreed)
 
     first = move(LIMIT, OPENING, terms, says(price=7600, **refusing), False)
     assert (first.kind, first.price, len(first.refused)) == ("agreed", 7600, 1)  # the price talk goes on beside it
 
     assert move(LIMIT, OPENING, terms, says(**refusing), False).kind == "farewell"
+
+
+def test_a_term_refused_before_its_turn_waits_for_it():
+    terms = Terms()
+
+    assert move(LIMIT, OPENING, terms, says(accepts_offer=True, id_card=False), False) == Move(
+        "agreed", OPENING, "next: payment by bank transfer")
+    assert move(LIMIT, OPENING, terms, says(bank_transfer=True, id_card=False), False) == Move(
+        "settle", None, "next: insured shipping, or else pickup")
+    assert move(LIMIT, OPENING, terms, says(delivery="shipping", contract=True, id_card=False), False) == Move(
+        "settle", None, "next: a picture of the seller's ID card", ["a picture of the ID card"])
 
 
 def test_a_term_the_seller_agreed_and_then_refuses_is_open_again():
@@ -94,6 +109,7 @@ def test_the_seller_is_asked_for_one_term_at_a_time_in_turn():
 
 def test_before_its_first_offer_the_agent_opens_with_it_whatever_the_seller_asks():
     assert move(LIMIT, OPENING, Terms(), says(price=9500), False, opening=True) == Move("offer", OPENING, "its opening offer")
+    assert move(LIMIT, OPENING, Terms(), says(price=7700), False, opening=True) == Move("offer", OPENING, "its opening offer")
     assert move(LIMIT, OPENING, Terms(), says(), False, opening=True) == Move("offer", OPENING, "its opening offer")
     assert move(LIMIT, OPENING, Terms(), says(accepts_offer=True), False, opening=True).kind == "offer"  # nothing to accept
     assert move(LIMIT, OPENING, Terms(), says(price=7000), False, opening=True) == Move("agreed", 7000, "next: payment by bank transfer")
@@ -235,6 +251,12 @@ async def test_a_negotiation_asked_for_opens_once_asking_only_whether_the_watch_
 
     assert box.said[-1].text == "Ich würde 7.550 € bieten."  # its opening, not a step towards the seller's price
     assert kept.get("3535834511").offered == OPENING and kept.get("3535834511").opened
+
+
+def test_a_first_message_from_before_it_only_asked_whether_the_watch_is_there_has_offered():
+    negotiation = asked_for()
+    negotiation.sent = ["Hallo, ist die Uhr noch zu haben? Ich würde 7.550 € bieten."]
+    assert negotiation.opened
 
 
 async def test_a_first_message_written_wrong_twice_goes_to_the_owner_who_hears_until_told(kept):
@@ -571,7 +593,7 @@ async def test_a_seller_who_wrote_after_an_answer_failed_is_read_and_the_answer_
     assert [s.text for s in box.said if s.outbound] == ["Ist die Uhr noch zu haben?", "Ich biete 7.550 €.",
                                                         "Für 7.850 € gern, aber nur per Überweisung."]
     now = kept.get("3535834511")
-    assert (now.status, now.offered, now.terms.asked_again) == ("talking", 7850, ["bank transfer"])  # refused once
+    assert (now.status, now.offered, now.terms.asked_again) == ("talking", 7850, [])  # the refusal waits for its turn
 
 
 async def test_a_negotiation_kept_without_its_earlier_state_has_its_unsent_message_taken_back_alone(kept):
