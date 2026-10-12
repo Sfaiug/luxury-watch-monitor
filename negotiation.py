@@ -352,7 +352,8 @@ class Negotiator:
             # The seller wrote since its latest message, which never reached them: that message is taken back with
             # what it decided, and what the seller wrote is read
             negotiation.sent.remove(unshown.pop())
-            negotiation.offered, negotiation.terms = negotiation.before["offered"], Terms(**negotiation.before["terms"])
+            if negotiation.before:  # kept before negotiations kept it, a message is taken back alone
+                negotiation.offered, negotiation.terms = negotiation.before["offered"], Terms(**negotiation.before["terms"])
             negotiation.status, negotiation.ends = "talking", ""
             self.negotiations.save(negotiation)
         if unshown:
