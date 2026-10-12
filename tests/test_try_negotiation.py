@@ -9,14 +9,18 @@ from scripts import try_negotiation as trying
 
 
 class Discord:
-    def __init__(self, messages=(), status=200):
-        self.messages, self.status, self.posted = list(messages), status, []
+    def __init__(self, messages=(), refuses=0):
+        self.messages, self.refuses, self.posted = list(messages), refuses, []
 
     async def call(self, method, path, body=None, params=None):
         if method == "POST":
             self.posted.append(body["content"])
-            return self.status, {"id": str(len(self.posted))}
-        return self.status, self.messages
+            if len(self.posted) == self.refuses:
+                return 403, {"message": "refused"}
+            return 200, {"id": str(len(self.posted))}
+        # The oldest after the one named, as many as asked for at most, the newest first
+        after = sorted((m for m in self.messages if int(m["id"]) > int(params["after"])), key=lambda m: int(m["id"]))
+        return 200, after[:params["limit"]][::-1]
 
 
 def test_a_first_message_follows_a_note_the_conversation_starts_after():
@@ -27,9 +31,10 @@ def test_a_first_message_follows_a_note_the_conversation_starts_after():
     assert discord.posted[1] == "Hallo, ist die Uhr noch zu haben?"
 
 
-def test_a_first_message_discord_refuses_is_unsent():
+@pytest.mark.parametrize("refused", [1, 2], ids=["the note", "the message"])
+def test_a_first_message_discord_refuses_is_unsent(refused):
     with pytest.raises(Unsent):
-        asyncio.run(trying.DirectMessages(Discord(status=403), "dm").contact("try", "Hallo"))
+        asyncio.run(trying.DirectMessages(Discord(refuses=refused), "dm").contact("try", "Hallo"))
 
 
 def test_the_conversation_is_what_the_bot_and_the_owner_wrote_in_order_without_the_notes():
@@ -44,3 +49,10 @@ def test_the_conversation_is_what_the_bot_and_the_owner_wrote_in_order_without_t
     talk = asyncio.run(trying.DirectMessages(discord, "dm").conversation("10"))
     assert [(m.outbound, m.text, m.attachments) for m in talk.messages] == [
         (True, "Hallo, ist die Uhr noch zu haben?", 0), (False, "Ja, noch da.", 0), (False, "", 1)]
+
+
+def test_the_conversation_is_read_past_the_page_discord_gives():
+    discord = Discord([{"id": str(n), "author": {"id": "owner"}, "content": str(n), "timestamp": "t"}
+                       for n in range(11, 11 + trying.DirectMessages.PAGE + 1)])
+    talk = asyncio.run(trying.DirectMessages(discord, "dm").conversation("10"))
+    assert [m.text for m in talk.messages] == [str(n) for n in range(11, 11 + trying.DirectMessages.PAGE + 1)]
