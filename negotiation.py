@@ -163,6 +163,7 @@ MOST_WRITTEN = 24  # messages the agent writes before it hands the conversation 
 # way to an agreement (a seller holding out to its last offer, then each term in turn), for questions and refusals
 STARTS = ("pending",)  # the negotiations a look at the messages starts
 ANSWERS = ("talking", "closing")  # and those it answers, or sends the last message of
+AGAIN = timedelta(days=7)  # how long a seller the agent let go is still answered, should they write again
 LOOK_EVERY = 300  # seconds from one look at the sellers' answers to the next
 REPLY_AFTER = (120, 900)  # the seconds, drawn between these, a seller's message waits for its answer at least
 LOOK_DAILY = 86400  # seconds after which the session is used even with nothing to do, so its login stays fresh
@@ -216,7 +217,8 @@ TASKS = {
     "settle": "Ask for {term} alone, by its word.",
     "done": "All is agreed at the amount: thank the seller and sum the deal up in one sentence; the buyer sends the "
             "purchase contract shortly and pays.",
-    "farewell": "The buyer cannot meet the seller on this: say so kindly, with no new offer.",
+    "farewell": "The buyer cannot meet the seller on this: say so kindly, with no new offer; they may write again "
+                "should they think it over.",
 }
 INSIST = " The seller refuses {refused}: say why the buyer holds to it, as for every watch he buys, and ask once more."
 
@@ -269,7 +271,7 @@ class Negotiation:
     # agreed, ended, or owner
     ends: str = ""  # what a closing negotiation ends as once its last message reached the seller: agreed or ended
     tries: int = 0  # looks at which its offer's page took no first message
-    seen: int = 0  # the messages in the conversation when the agent wrote its latest
+    seen: int = 0  # the messages in the conversation when the agent wrote its latest, or ended it
     before: dict = field(default_factory=dict)  # its offer and the terms as they stood before its latest message
     why: str = ""
     notice: str = ""  # what the owner is still to hear of it
@@ -313,8 +315,14 @@ class Negotiations:
     def get(self, ad_id: str) -> Optional[Negotiation]:
         return next((negotiation for negotiation in self.all() if negotiation.ad_id == ad_id), None)
 
-    def with_status(self, *statuses: str) -> List[Negotiation]:
-        return [negotiation for negotiation in self.all() if negotiation.status in statuses]
+    def with_status(self, *statuses: str, since: datetime = datetime.min) -> List[Negotiation]:
+        """The negotiations in these statuses, last changed since `since`."""
+        rows = self._db.execute(
+            f"SELECT ad_id FROM negotiations WHERE status IN ({', '.join('?' * len(statuses))}) AND updated >= ?",
+            (*statuses, since.isoformat(timespec="seconds")),
+        )
+        ids = {ad_id for (ad_id,) in rows}
+        return [negotiation for negotiation in self.all() if negotiation.ad_id in ids]
 
 
 def transcript(negotiation: Negotiation, said) -> str:
@@ -348,7 +356,11 @@ class Negotiator:
 
     def waiting(self) -> List[Negotiation]:
         """The negotiations the next look at the messages serves."""
-        return self.negotiations.with_status(*STARTS, *ANSWERS)
+        return self.negotiations.with_status(*STARTS) + self._answered()
+
+    def _answered(self) -> List[Negotiation]:
+        """Those under way, and those the agent let go lately, whose seller may write again."""
+        return self.negotiations.with_status(*ANSWERS) + self.negotiations.with_status("ended", since=datetime.now() - AGAIN)
 
     async def start(self, messages):
         """Write the first message of every negotiation asked for."""
@@ -385,7 +397,7 @@ class Negotiator:
 
     async def follow_up(self, messages):
         """Answer every seller who wrote since the agent last did, and close what said its last word."""
-        for negotiation in self.negotiations.with_status(*ANSWERS):
+        for negotiation in self._answered():
             try:
                 await self._answer(messages, negotiation)
             except Exception as e:
@@ -413,7 +425,7 @@ class Negotiator:
             return self._close(negotiation)
         if unshown:
             return
-        if not said or said[-1].outbound:
+        if not said or said[-1].outbound or (negotiation.status == "ended" and len(said) <= negotiation.seen):
             return
         # A person answers after a while, not at once (owner rule, 12 Oct 2026)
         now = datetime.now(GERMANY)
@@ -423,6 +435,9 @@ class Negotiator:
         if now < datetime.fromisoformat(negotiation.due):
             return
         negotiation.due = ""
+        if negotiation.status == "ended":
+            # The seller wrote again after the agent let them go: they are read afresh
+            negotiation.status, negotiation.ends, negotiation.why = "talking", "", ""
         says = await ask(self.client, READ, [{"type": "text", "text": transcript(negotiation, said)}], SellerSays)
         if says is None:
             return self._hand_over(negotiation, "the AI declined to read the seller's answer")
@@ -432,6 +447,7 @@ class Negotiator:
                       any(message.attachments for message in said[last + 1:]),  # pictures since the agent wrote
                       not negotiation.opened)
         if answer.kind == "end":
+            negotiation.seen = len(said)  # what the seller wrote before is not read again; what they write next is
             return self._end(negotiation, "ended", answer.why)
         if len(negotiation.sent) >= MOST_WRITTEN and answer.kind not in ("done", "farewell"):
             return self._hand_over(negotiation, f"no agreement after {MOST_WRITTEN} messages")

@@ -791,6 +791,59 @@ async def test_a_farewell_asks_for_nothing_more(kept):
     assert "ask once more" not in task and kept.get("3535834511").status == "ended"
 
 
+async def test_a_seller_who_writes_again_after_the_agent_let_them_go_is_answered(kept):
+    box = Box()
+    await opened(kept, box)
+    box.seller("Unter 12.000 € nicht.")
+    at_limit = kept.get("3535834511")
+    at_limit.offered = LIMIT
+    kept.save(at_limit)
+    await negotiator(Claude(reads=[says(price=12000)], writes=["Schade, da komme ich nicht mit. Melden Sie sich gern."]),
+                     kept).follow_up(box)
+    assert kept.get("3535834511").status == "ended"
+    quiet = Claude()
+    await negotiator(quiet, kept).follow_up(box)
+    assert quiet.asked == []  # its own farewell is the last word
+
+    box.seller("Ok, dann machen wir 8.600 €.")
+    claude = Claude(reads=[says(price=8600)], writes=["Prima, [BETRAG]! Passt Ihnen Überweisung?"])
+    talking = negotiator(claude, kept)
+    assert [n.ad_id for n in talking.waiting()] == ["3535834511"]
+    await talking.follow_up(box)
+
+    assert box.said[-1].text == "Prima, 8.600 €! Passt Ihnen Überweisung?"
+    assert (kept.get("3535834511").status, kept.get("3535834511").terms.price) == ("talking", 8600)
+
+
+async def test_what_the_seller_wrote_before_the_end_is_not_read_again_only_what_they_write_after(kept):
+    box = Box()
+    await opened(kept, box)
+    box.seller("Sorry, schon verkauft.")
+    await negotiator(Claude(reads=[says(ended=True)]), kept).follow_up(box)
+    quiet = Claude()
+    await negotiator(quiet, kept).follow_up(box)
+    assert kept.get("3535834511").status == "ended" and quiet.asked == []
+
+    box.seller("Der Käufer ist abgesprungen, noch Interesse?")
+    claude = Claude(reads=[says()], writes=["Ja, gern, für [BETRAG]."])
+    await negotiator(claude, kept).follow_up(box)
+
+    assert claude.asked == ["read", "write"] and kept.get("3535834511").status == "talking"
+
+
+def test_a_seller_let_go_more_than_a_week_ago_is_no_longer_looked_for(kept):
+    gone = asked_for()
+    gone.status = "ended"
+    kept.save(gone)
+    talking = negotiator(Claude(), kept)
+    assert [n.ad_id for n in talking.waiting()] == ["3535834511"]
+
+    with kept._db:
+        kept._db.execute("UPDATE negotiations SET updated = ?", ((datetime.now() - timedelta(days=8)).isoformat(timespec="seconds"),))
+
+    assert talking.waiting() == []
+
+
 @pytest.fixture
 def by_hand(tmp_path, kept):
     """The monitor with one filter the member negotiates by hand and one the agent negotiates on throughout."""
