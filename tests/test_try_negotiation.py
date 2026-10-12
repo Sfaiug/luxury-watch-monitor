@@ -9,14 +9,16 @@ from scripts import try_negotiation as trying
 
 
 class Discord:
-    def __init__(self, messages=(), refuses=0):
-        self.messages, self.refuses, self.posted = list(messages), refuses, []
+    def __init__(self, messages=(), refuses=0, loses=0):
+        self.messages, self.refuses, self.loses, self.posted = list(messages), refuses, loses, []
 
     async def call(self, method, path, body=None, params=None):
         if method == "POST":
             self.posted.append(body["content"])
             if len(self.posted) == self.refuses:
                 return 403, {"message": "refused"}
+            if len(self.posted) == self.loses:
+                raise TimeoutError("sent, its answer lost")
             return 200, {"id": str(len(self.posted))}
         # The oldest after the one named, as many as asked for at most, the newest first
         after = sorted((m for m in self.messages if int(m["id"]) > int(params["after"])), key=lambda m: int(m["id"]))
@@ -35,6 +37,12 @@ def test_a_first_message_follows_a_note_the_conversation_starts_after():
 def test_a_first_message_discord_refuses_is_unsent(refused):
     with pytest.raises(Unsent):
         asyncio.run(trying.DirectMessages(Discord(refuses=refused), "dm").contact("try", "Hallo"))
+
+
+def test_a_first_message_whose_answer_is_lost_is_not_unsent():
+    # It may have reached the seller: it goes to the owner, not out again
+    with pytest.raises(TimeoutError):
+        asyncio.run(trying.DirectMessages(Discord(loses=2), "dm").contact("try", "Hallo"))
 
 
 def test_the_conversation_is_what_the_bot_and_the_owner_wrote_in_order_without_the_notes():
