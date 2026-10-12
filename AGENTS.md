@@ -31,7 +31,7 @@ tests: scripts/test.sh
 - What a watch is worth comes from a price database of our own, "a large matrix of watch prices in conditions and everything, so the AI agent has a reference point", fed first by Chrono24 (10 Oct 2026: "I think chrono is the most accurate, as there is also most times a price graph").
 - Prices from Chrono24 count only when the offer is from the EU (10 Oct 2026: "On chrono price comparison we need to make sure to only look at EU offers because of VAT").
 - The least profit a watch must bring starts at 10% of what it is worth and at least 500 €, and the owner moves it (10 Oct 2026, to that suggestion: "Min Profit sounds good, maybe even higher. It also kind of depends on volume, its hard to quantify").
-- The agent runs on the latest Haiku model at `xhigh` effort (10 Oct 2026: "For the agent I always want to use the latest haiku model in xhigh"). Which model that is today is a setting on the server, not a name in the code.
+- The agent runs on whichever model and effort negotiate best in chats with simulated sellers (12 Oct 2026, superseding "always the latest haiku model in xhigh": "feel free to also try sonnet and haiku all at different effort levels to find the sweet spot. I am open to useing either"). Which that is today is a setting on the server (`AGENT_MODEL`, `AGENT_EFFORT`), not a name in the code.
 - The agent negotiates the whole purchase before the owner hears of it (11 Oct 2026): the price, payment by bank transfer only, and shipping or pickup, shipping preferred; pickup and no returns are fine. The seller must also agree to a purchase contract (Kaufvertrag) and send a picture of their ID card. Only when all of that is agreed is the owner notified, to send the Kaufvertrag and pay.
 - Each filter says, when it is made in Discord, whether the agent negotiates on everything it matches; in a filter that does not, each match has a button that starts the negotiation for that one (11 Oct 2026).
 - Chrono24 is searched around the clock at a slow pace, so a watch's prices are always recent (11 Oct 2026: "watch prices change all the time", "24/7 at a high delay is better").
@@ -39,6 +39,7 @@ tests: scripts/test.sh
 - The agent's messages read as the owner's own; they do not say an AI writes them (11 Oct 2026, asked with Art. 50(1) of the EU AI Act named: "No, write as me").
 - The agent writes as a person chatting does (12 Oct 2026: "we dont want that the agent always instnaly writes, this is not human at all", "Every time writing hello and greetings? Alwas repeating itself?"): it answers after a while, greets only at the start and repeats nothing.
 - The seller is asked one thing at a time, until the deal stands (12 Oct 2026: "the agent should also not isntanly bombard the seller with all the requests, it should be one after another. Psychological trick, we get the seller in a 'yes loop' until we have the deal. Use psychological tricks."): first whether the watch is still there, then the price, then each term in turn.
+- Asked where the buyer is from, the agent says Berlin (12 Oct 2026, asked which city it may name: "Berlin").
 
 ## Lessons
 
