@@ -79,6 +79,14 @@ def test_a_term_the_seller_agreed_and_then_refuses_is_open_again():
     assert list(terms.open()) == ["payment by bank transfer"]
 
 
+def test_a_seller_asking_more_than_the_agreed_price_opens_the_price_again_from_it():
+    terms = Terms(price=OPENING, bank_transfer=True, delivery="shipping", contract=True, id_card=True)
+
+    assert move(LIMIT, OPENING, terms, says(price=OPENING), False).kind == "done"  # the agreed price named again
+    assert move(LIMIT, 7000, terms, says(price=8000), False) == Move("offer", 7750, "the seller asks 8.000 €")
+    assert terms.price is None
+
+
 def test_a_red_flag_or_a_sold_watch_ends_it_without_a_word():
     assert move(LIMIT, OPENING, Terms(), says(red_flags=["payment_or_contact_outside_kleinanzeigen"]), False).kind == "end"
     assert move(LIMIT, OPENING, Terms(), says(ended=True), False).kind == "end"
