@@ -36,14 +36,14 @@ def test_an_offer_the_seller_accepts_is_the_price_and_the_rest_is_settled_next()
 
     answer = move(LIMIT, OPENING, terms, says(accepts_offer=True), pictures=False)
 
-    assert (answer.kind, answer.price, terms.price) == ("settle", 7550, 7550)
+    assert (answer.kind, answer.price, terms.price) == ("agreed", 7550, 7550)
     assert list(terms.open()) == ["payment by bank transfer", "insured shipping, or else pickup",
-                                  "the purchase contract", "a picture of the seller's ID card"]
+                                  "the purchase contract the buyer sends to sign", "a picture of the seller's ID card"]
 
 
 def test_a_seller_asking_a_little_more_is_met_at_their_price():
     answer = move(LIMIT, OPENING, Terms(), says(price=7700), False)
-    assert (answer.kind, answer.price) == ("settle", 7700)
+    assert (answer.kind, answer.price) == ("agreed", 7700)
     assert move(LIMIT, OPENING, Terms(), says(price=7000), False).price == 7000  # below the offer: theirs
 
 
@@ -67,7 +67,7 @@ def test_a_seller_refusing_one_of_the_owner_s_terms_is_asked_once_more_then_bid_
     terms = Terms()
 
     first = move(LIMIT, OPENING, terms, says(price=7600, **refusing), False)
-    assert (first.kind, first.price, len(first.refused)) == ("settle", 7600, 1)  # the price talk goes on beside it
+    assert (first.kind, first.price, len(first.refused)) == ("agreed", 7600, 1)  # the price talk goes on beside it
 
     assert move(LIMIT, OPENING, terms, says(**refusing), False).kind == "farewell"
 
@@ -75,8 +75,28 @@ def test_a_seller_refusing_one_of_the_owner_s_terms_is_asked_once_more_then_bid_
 def test_a_term_the_seller_agreed_and_then_refuses_is_open_again():
     terms = Terms(price=OPENING, bank_transfer=True, delivery="shipping", contract=True, id_card=True)
 
-    assert move(LIMIT, OPENING, terms, says(bank_transfer=False), False).kind == "settle"
+    assert move(LIMIT, OPENING, terms, says(bank_transfer=False), False) == Move(
+        "settle", None, "next: payment by bank transfer", ["bank transfer"])
     assert list(terms.open()) == ["payment by bank transfer"]
+
+
+def test_the_seller_is_asked_for_one_term_at_a_time_in_turn():
+    terms, asked = Terms(price=OPENING), []
+    for agreed in (dict(bank_transfer=True), dict(delivery="shipping"), dict(contract=True)):
+        answer = move(LIMIT, OPENING, terms, says(), False)
+        asked.append((answer.kind, answer.price, answer.why))
+        move(LIMIT, OPENING, terms, says(**agreed), False)
+
+    assert asked == [("settle", None, "next: payment by bank transfer"), ("settle", None, "next: insured shipping, or else pickup"),
+                     ("settle", None, "next: the purchase contract the buyer sends to sign")]
+    assert move(LIMIT, OPENING, terms, says(), False).why == "next: a picture of the seller's ID card"
+
+
+def test_before_its_first_offer_the_agent_opens_with_it_whatever_the_seller_asks():
+    assert move(LIMIT, OPENING, Terms(), says(price=9500), False, opening=True) == Move("offer", OPENING, "its opening offer")
+    assert move(LIMIT, OPENING, Terms(), says(), False, opening=True) == Move("offer", OPENING, "its opening offer")
+    assert move(LIMIT, OPENING, Terms(), says(accepts_offer=True), False, opening=True).kind == "offer"  # nothing to accept
+    assert move(LIMIT, OPENING, Terms(), says(price=7000), False, opening=True) == Move("agreed", 7000, "next: payment by bank transfer")
 
 
 def test_a_seller_asking_more_than_the_agreed_price_opens_the_price_again_from_it():
@@ -194,17 +214,27 @@ def negotiator(claude, kept, notify=None):
     return Negotiator(claude, kept, notify or AsyncMock(), logging.getLogger("test"))
 
 
-async def test_a_negotiation_asked_for_opens_once_with_the_opening_offer_written_in(kept):
-    box, talking = Box(), negotiator(Claude(writes=["Hallo, ist die Uhr noch zu haben? Ich würde [BETRAG] bieten."]), kept)
+async def test_a_negotiation_asked_for_opens_once_asking_only_whether_the_watch_is_there_and_offers_on_the_answer(kept):
+    claude = Claude(reads=[says(price=9900)], writes=["Hallo, ist die Uhr noch zu haben? Ich würde [BETRAG] bieten.",
+                                                      "Hallo, ist die Uhr noch zu haben?", "Ich würde [BETRAG] bieten."])
+    box, talking = Box(), negotiator(claude, kept)
 
     assert talking.ask_to_start(asked_for()) and kept.get("3535834511").status == "pending"
     assert not talking.ask_to_start(asked_for())
     await talking.start(box)
     await talking.start(box)
 
-    assert [s.text for s in box.said] == ["Hallo, ist die Uhr noch zu haben? Ich würde 7.550 € bieten."]
+    assert [s.text for s in box.said] == ["Hallo, ist die Uhr noch zu haben?"]  # an amount in the first is written again
     opened = kept.get("3535834511")
     assert (opened.status, opened.conversation, opened.sent) == ("talking", "c1", [box.said[0].text])
+    task = json.loads(claude.requests[0])["messages"][0]["content"][0]["text"]
+    assert "The buyer has offered nothing yet" in task and "7.550" not in task
+
+    box.seller("Ja, noch da. Preis steht ja drin.")
+    await talking.follow_up(box)
+
+    assert box.said[-1].text == "Ich würde 7.550 € bieten."  # its opening, not a step towards the seller's price
+    assert kept.get("3535834511").offered == OPENING and kept.get("3535834511").opened
 
 
 async def test_a_first_message_written_wrong_twice_goes_to_the_owner_who_hears_until_told(kept):
@@ -224,18 +254,18 @@ async def test_a_first_message_written_wrong_twice_goes_to_the_owner_who_hears_u
 
 
 async def test_a_first_message_that_may_have_reached_the_seller_unseen_goes_to_the_owner_not_again(kept):
-    talking = negotiator(Claude(writes=["Ich biete [BETRAG]."]), kept)
+    talking = negotiator(Claude(writes=["Ist die Uhr noch zu haben?"]), kept)
     talking.ask_to_start(asked_for())
 
     await talking.start(Box(contact_fails=True))
 
     gone = kept.get("3535834511")
-    assert (gone.status, gone.sent) == ("owner", ["Ich biete 7.550 €."])
+    assert (gone.status, gone.sent) == ("owner", ["Ist die Uhr noch zu haben?"])
     assert "could not see its first message reach the seller" in gone.notice
 
 
 async def test_a_first_message_that_never_left_is_sent_as_it_was_at_the_next_look_and_at_the_third_goes_to_the_owner(kept):
-    claude = Claude(writes=["Ich biete [BETRAG]."])
+    claude = Claude(writes=["Ist die Uhr noch zu haben?"])
     talking = negotiator(claude, kept)
     talking.ask_to_start(asked_for())
     refusing = Box(contact_fails=Unsent("the offer page did not load"))
@@ -245,9 +275,9 @@ async def test_a_first_message_that_never_left_is_sent_as_it_was_at_the_next_loo
 
     box = Box()
     await talking.start(box)
-    assert [s.text for s in box.said] == ["Ich biete 7.550 €."] and claude.asked == ["write"]  # written once
+    assert [s.text for s in box.said] == ["Ist die Uhr noch zu haben?"] and claude.asked == ["write"]  # written once
 
-    again = negotiator(Claude(writes=["Ich biete [BETRAG]."]), kept)
+    again = negotiator(Claude(writes=["Ist die Uhr noch zu haben?"]), kept)
     gone = asked_for()
     gone.ad_id = "1"
     again.ask_to_start(gone)
@@ -287,7 +317,7 @@ async def one_look(monkeypatch, kept, box, browser, hour, notify=None):
     monkeypatch.setattr(negotiation.chrome, "Chrome", lambda: browser)
     monkeypatch.setattr(negotiation, "Messages", lambda page: box)
     monkeypatch.setattr(negotiation.asyncio, "sleep", AsyncMock(side_effect=asyncio.CancelledError))
-    talking = negotiator(Claude(writes=["Ich biete [BETRAG]."]), kept, notify)
+    talking = negotiator(Claude(writes=["Ist die Uhr noch zu haben?"]), kept, notify)
     talking.ask_to_start(asked_for())
     with pytest.raises(asyncio.CancelledError):
         await negotiation.keep_talking(talking, "session.json", logging.getLogger("test"),
@@ -299,7 +329,7 @@ async def test_the_talk_loop_writes_by_day_with_the_owner_s_session_and_keeps_it
 
     await one_look(monkeypatch, kept, box, browser, hour=10)
 
-    assert [s.text for s in box.said] == ["Ich biete 7.550 €."]
+    assert [s.text for s in box.said] == ["Ist die Uhr noch zu haben?"]
     assert browser.opened == browser.kept == ["session.json"]
 
 
@@ -398,9 +428,12 @@ async def test_what_discord_did_not_post_the_owner_is_told_again(monkeypatch, ke
 
 
 async def opened(kept, box):
-    talking = negotiator(Claude(writes=["Ich biete [BETRAG]."]), kept)
+    """A negotiation under way: the agent asked whether the watch is there, and offered on the seller's yes."""
+    talking = negotiator(Claude(reads=[says()], writes=["Ist die Uhr noch zu haben?", "Ich biete [BETRAG]."]), kept)
     talking.ask_to_start(asked_for())
     await talking.start(box)
+    box.seller("Ja.")
+    await talking.follow_up(box)
 
 
 async def test_the_seller_s_counter_is_answered_and_nothing_new_asks_nothing(kept):
@@ -470,10 +503,10 @@ async def test_a_word_that_only_holds_a_term_s_word_does_not_name_it(kept):
 
     await negotiator(Claude(reads=[says(accepts_offer=True, bank_transfer=True, delivery="shipping")],
                             writes=["Super, [BETRAG]! Ich kaufe auch als Privatperson. War das ein Vertragshändler?",
-                                    "Super, [BETRAG]! Den Kaufvertrag schicke ich, dazu bräuchte ich ein Foto Ihres Ausweises."]),
+                                    "Super, [BETRAG]! Ich mache dazu immer einen kurzen Kaufvertrag, passt das?"]),
                      kept).follow_up(box)
 
-    assert box.said[-1].text.endswith("Foto Ihres Ausweises.")
+    assert box.said[-1].text.endswith("kurzen Kaufvertrag, passt das?")
 
 
 async def test_once_the_owner_writes_in_the_conversation_the_agent_stays_out(kept):
@@ -535,7 +568,8 @@ async def test_a_seller_who_wrote_after_an_answer_failed_is_read_and_the_answer_
 
     await negotiator(claude, kept).follow_up(box)
 
-    assert [s.text for s in box.said if s.outbound] == ["Ich biete 7.550 €.", "Für 7.850 € gern, aber nur per Überweisung."]
+    assert [s.text for s in box.said if s.outbound] == ["Ist die Uhr noch zu haben?", "Ich biete 7.550 €.",
+                                                        "Für 7.850 € gern, aber nur per Überweisung."]
     now = kept.get("3535834511")
     assert (now.status, now.offered, now.terms.asked_again) == ("talking", 7850, ["bank transfer"])  # refused once
 
@@ -559,18 +593,18 @@ async def test_a_negotiation_kept_without_its_earlier_state_has_its_unsent_messa
     assert kept.get("3535834511").status == "ended"
 
 
-async def test_a_message_settling_the_rest_names_every_term_still_open(kept):
+async def test_a_message_settling_a_term_names_it(kept):
     box = Box()
     await opened(kept, box)
     box.seller("Ok, 7.550 € passt, Überweisung und Versand gehen klar.")
 
-    # The ID card left out of the first message, as the real model once waived it
+    # The contract left out of the first message, as the real model once waived the ID card
     await negotiator(Claude(reads=[says(accepts_offer=True, bank_transfer=True, delivery="shipping")],
-                            writes=["Super, [BETRAG] per Überweisung! Den Kaufvertrag schicke ich.",
-                                    "Super, [BETRAG]! Für den Kaufvertrag brauche ich noch ein Foto Ihres Ausweises."]),
+                            writes=["Super, [BETRAG] per Überweisung und mit Versand!",
+                                    "Super, [BETRAG]! Ich mache dazu immer einen kurzen Kaufvertrag, passt das?"]),
                      kept).follow_up(box)
 
-    assert box.said[-1].text == "Super, 7.550 €! Für den Kaufvertrag brauche ich noch ein Foto Ihres Ausweises."
+    assert box.said[-1].text == "Super, 7.550 €! Ich mache dazu immer einen kurzen Kaufvertrag, passt das?"
 
 
 
@@ -617,10 +651,10 @@ async def test_a_seller_who_wrote_after_the_last_word_failed_is_read_before_it_e
 
 
 @pytest.mark.parametrize("words", [
-    "Super, [BETRAG]! Können Sie die Uhr versichert verschicken? Für den Vertrag bitte noch ein Foto vom Perso.",
-    "Super, [BETRAG]! Abholung ginge auch. Den Kaufvertrag schicke ich, dazu bräuchte ich ein Foto Ihres Ausweises.",
+    "Super, [BETRAG]! Können Sie die Uhr versichert verschicken?",
+    "Super, [BETRAG]! Würden Sie sie mir versichert zuschicken? Dann ist sie am schnellsten bei mir.",
 ])
-async def test_a_settling_message_may_name_the_terms_as_people_do(kept, words):
+async def test_a_settling_message_asks_for_the_next_term_alone_named_as_people_do(kept, words):
     box = Box()
     await opened(kept, box)
     box.seller("Ok, 7.550 € passt, Überweisung geht klar.")
@@ -630,7 +664,7 @@ async def test_a_settling_message_may_name_the_terms_as_people_do(kept, words):
 
     assert box.said[-1].text == words.replace("[BETRAG]", "7.550 €")
     task = json.loads(claude.requests[-1])["messages"][0]["content"][0]["text"]
-    assert '("Versand")' in task and '("Kaufvertrag")' in task and '("Ausweis")' in task  # the AI is told the words
+    assert '("Versand")' in task and '("Kaufvertrag")' not in task and '("Ausweis")' not in task  # the next term's word
 
 
 async def test_a_farewell_asks_for_nothing_more(kept):
