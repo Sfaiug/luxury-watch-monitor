@@ -562,6 +562,45 @@ def test_the_while_an_answer_waits_is_drawn_anew_each_time_within_minutes():
     assert len(waits) > 1 and all(timedelta(minutes=2) <= wait <= timedelta(minutes=15) for wait in waits)
 
 
+def asked_to_write(claude):
+    """What the AI was given to write the latest draft from."""
+    return json.loads(claude.requests[-1])["messages"][0]["content"][0]["text"]
+
+
+async def test_a_draft_saying_again_what_an_earlier_message_said_is_written_anew_told_what(kept):
+    box = Box()
+    await opened(kept, box)
+    box.seller("Unter 8.500 € geht nichts.")
+    claude = Claude(reads=[says(price=8500)], writes=["Ist die Uhr noch zu haben? Sonst [BETRAG].", "Wie wäre es mit [BETRAG]?"])
+
+    await negotiator(claude, kept).follow_up(box)
+
+    assert box.said[-1].text == "Wie wäre es mit 8.000 €?"
+    assert '"ist die uhr noch" says again what the buyer wrote before' in asked_to_write(claude)
+
+
+async def test_a_second_draft_saying_something_again_goes_out_all_the_same(kept):
+    box = Box()
+    await opened(kept, box)
+    box.seller("Unter 8.500 € geht nichts.")
+
+    await negotiator(Claude(reads=[says(price=8500)], writes=["Ich biete [BETRAG]."] * 2), kept).follow_up(box)
+
+    assert box.said[-1].text == "Ich biete 8.000 €." and kept.get("3535834511").status == "talking"
+
+
+async def test_a_draft_naming_a_sum_itself_is_written_anew_told_why(kept):
+    box = Box()
+    await opened(kept, box)
+    box.seller("Unter 8.500 € geht nichts.")
+    claude = Claude(reads=[says(price=8500)], writes=["8.500 € ist mir zu viel. [BETRAG]?", "Das ist mir zu viel. [BETRAG]?"])
+
+    await negotiator(claude, kept).follow_up(box)
+
+    assert box.said[-1].text == "Das ist mir zu viel. 8.000 €?"
+    assert "not even one the seller wrote" in asked_to_write(claude)
+
+
 async def test_an_answer_written_wrong_twice_goes_to_the_owner(kept):
     box = Box()
     await opened(kept, box)
