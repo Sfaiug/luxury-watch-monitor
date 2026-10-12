@@ -143,9 +143,11 @@ def _price(limit: int, offered: int, terms: Terms, asked: Optional[int], accepts
             terms.asked, terms.held = asked, False
             # Half the room left up to the limit, and no more than halfway towards the seller, 50 euros at a time
             counter = max(offered + STEP, (offered + min(top - offered, asked - offered) // 2) // STEP * STEP)
-            if counter >= top - STEP:  # the last step is the limit itself, or the seller's price below it
-                return Move("final", min(top, asked), f"the seller asks {euros(asked)}")
-            return Move("offer", counter, f"the seller asks {euros(asked)}")
+            if counter < top - STEP:
+                return Move("offer", counter, f"the seller asks {euros(asked)}")
+            if asked > top:  # the last step is the limit itself
+                return Move("final", top, f"the seller asks {euros(asked)}")
+            terms.price = asked  # or the seller's price below it, met
         else:
             return Move("offer", offered, "the seller names no price")
     if terms.open():

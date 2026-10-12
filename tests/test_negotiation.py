@@ -83,6 +83,7 @@ def test_the_agent_offers_whole_steps_its_last_below_a_limit_that_is_none():
     assert move(8366, 8250, Terms(), says(price=9000), False) == Move("final", 8350, "the seller asks 9.000 €")
     assert move(8366, 8350, Terms(), says(price=8400), False).kind == "farewell"
     assert move(8366, 8350, Terms(), says(price=8366), False) == Move("agreed", 8366, "next: payment by bank transfer")
+    assert move(2633, 2500, Terms(), says(price=2599), False) == Move("agreed", 2599, "next: payment by bank transfer")
 
 
 def test_a_seller_holding_out_to_the_agent_s_last_offer_then_agreeing_term_by_term_is_not_handed_over():
