@@ -219,8 +219,8 @@ TASKS = {
     "first": "This is the first message: ask only whether the watch is still to be had.",
     "offer": "Offer the amount. It need not be his last: say nothing of a limit or a last word.",
     "final": "Offer the amount, as the most the buyer can pay.",
-    "hold": "The seller has not come down since the buyer's last offer: keep that offer, without naming it again, and "
-            "ask what the seller could do towards it; say nothing of a limit or a last word.",
+    "hold": "The seller has not come down since the buyer's last offer: make no new one, and ask what the seller "
+            "could do towards it, without naming it again; say nothing of keeping it, of a limit or a last word.",
     "agreed": "The seller agreed to the price, the amount: confirm it, and ask for {term} alone, by its word.",
     "settle": "Ask for {term} alone, by its word.",
     "done": "All is agreed at the amount: thank the seller and sum the deal up in one sentence; the buyer sends the "
