@@ -269,7 +269,8 @@ class Negotiation:
     sent: List[str] = field(default_factory=list)  # the agent's messages, sent or on their way: any other is the owner's
     status: str = "pending"  # pending, opening (its first message on its way), talking, closing (its last on its way),
     # agreed, ended, or owner
-    ends: str = ""  # what a closing negotiation ends as once its last message reached the seller: agreed or ended
+    ends: str = ""  # what a closing negotiation ends as once its last message reached the seller: agreed or ended;
+    # ended too where it ended without a word
     tries: int = 0  # looks at which its offer's page took no first message
     seen: int = 0  # the messages in the conversation when the agent wrote its latest, or ended it
     before: dict = field(default_factory=dict)  # its offer and the terms as they stood before its latest message
@@ -425,7 +426,10 @@ class Negotiator:
             return self._close(negotiation)
         if unshown:
             return
-        if not said or said[-1].outbound or (negotiation.status == "ended" and len(said) <= negotiation.seen):
+        if not said or said[-1].outbound:
+            return
+        if negotiation.status == "ended" and (len(said) <= negotiation.seen or not negotiation.ends):
+            # Nothing new since the end; an end without a word kept no count of what came before it until 12 Oct 2026
             return
         # A person answers after a while, not at once (owner rule, 12 Oct 2026)
         now = datetime.now(GERMANY)
@@ -447,7 +451,8 @@ class Negotiator:
                       any(message.attachments for message in said[last + 1:]),  # pictures since the agent wrote
                       not negotiation.opened)
         if answer.kind == "end":
-            negotiation.seen = len(said)  # what the seller wrote before is not read again; what they write next is
+            # What the seller wrote before is not read again; what they write next is
+            negotiation.seen, negotiation.ends = len(said), "ended"
             return self._end(negotiation, "ended", answer.why)
         if len(negotiation.sent) >= MOST_WRITTEN and answer.kind not in ("done", "farewell"):
             return self._hand_over(negotiation, f"no agreement after {MOST_WRITTEN} messages")

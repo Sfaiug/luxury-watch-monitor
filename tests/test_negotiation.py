@@ -831,6 +831,20 @@ async def test_what_the_seller_wrote_before_the_end_is_not_read_again_only_what_
     assert claude.asked == ["read", "write"] and kept.get("3535834511").status == "talking"
 
 
+async def test_an_end_without_a_word_kept_before_it_counted_the_messages_stays_quiet(kept):
+    box = Box()
+    await opened(kept, box)
+    box.seller("Sorry, schon verkauft.")
+    older = kept.get("3535834511")
+    older.status = "ended"  # as kept before 12 Oct 2026: its count still the one at the agent's latest message
+    kept.save(older)
+    quiet = Claude()
+
+    await negotiator(quiet, kept).follow_up(box)
+
+    assert quiet.asked == [] and kept.get("3535834511").status == "ended"
+
+
 def test_a_seller_let_go_more_than_a_week_ago_is_no_longer_looked_for(kept):
     gone = asked_for()
     gone.status = "ended"
