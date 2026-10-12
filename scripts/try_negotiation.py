@@ -46,6 +46,8 @@ class DirectMessages:
     """The message box the agent uses, as a DM with the owner: the bot's messages are the buyer's, the owner's the
     seller's."""
 
+    PAGE = 100  # the most messages Discord gives at once
+
     def __init__(self, api: DiscordApi, channel: str):
         self.api, self.channel = api, channel
 
@@ -61,16 +63,23 @@ class DirectMessages:
                 f"**{NOTE}.** You are the seller now. Your ad: *{TITLE}*, asking {euros(ASKING)}. The agent pays at "
                 f"most {euros(LIMIT)}. Answer it here as a seller would, in German; a picture you send counts as "
                 "the ID card. The buyer's messages follow.")
+            await self.post(text)
         except Exception as e:
             raise Unsent(str(e)) from e
-        await self.post(text)
         return start["id"]
 
     async def conversation(self, conversation_id: str) -> Conversation:
-        status, answer = await self.api.call(
-            "GET", f"/channels/{self.channel}/messages", params={"after": conversation_id, "limit": 100})
-        if status != 200:
-            raise RuntimeError(f"Discord answered {status}: {answer}")
+        # Discord gives the messages after one a page at a time
+        answer, after = [], conversation_id
+        while True:
+            status, page = await self.api.call(
+                "GET", f"/channels/{self.channel}/messages", params={"after": after, "limit": self.PAGE})
+            if status != 200:
+                raise RuntimeError(f"Discord answered {status}: {page}")
+            answer += page
+            if len(page) < self.PAGE:
+                break
+            after = max(page, key=lambda m: int(m["id"]))["id"]
         said = sorted((m for m in answer if not (m["author"].get("bot") and m["content"].startswith(NOTE))),
                       key=lambda m: int(m["id"]))
         return Conversation(conversation_id, AD, "the owner", [
