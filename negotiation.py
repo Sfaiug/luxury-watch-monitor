@@ -250,6 +250,23 @@ def filled(message: str, amount: Optional[int], title: str) -> Optional[str]:
     return message.replace(AMOUNT, euros(amount)).strip() if amount else message.strip()
 
 
+RUN = 4  # words in a row that, said in an earlier message of the buyer, make a draft say it again
+
+
+def repeated(message: str, earlier: List[str]) -> Optional[str]:
+    """What of the message an earlier one already said: words in a row from it, or its ending."""
+    words = re.findall(r"\w+", message.lower())
+    for text in earlier:
+        before = re.findall(r"\w+", text.lower())
+        said = {tuple(before[i:i + RUN]) for i in range(len(before) - RUN + 1)}
+        again = next((run for run in zip(*(words[i:] for i in range(RUN))) if run in said), None)
+        if again:
+            return " ".join(again)
+        if len(words) >= 3 and words[-3:] == before[-3:]:
+            return " ".join(words[-3:])
+    return None
+
+
 class Written(BaseModel):
     message: str
 
@@ -494,7 +511,8 @@ class Negotiator:
 
     async def _write(self, negotiation: Negotiation, answer: Move, said, question: Optional[str]) -> Optional[str]:
         """The message for the move, its amount written in; None, the negotiation handed to the owner, when the AI
-        twice writes it otherwise."""
+        twice writes it otherwise. A draft refused is written anew, the AI told why; one saying again what an
+        earlier message said is written anew once, and goes out should the new one be refused."""
         asked = dict(list(negotiation.terms.open().items())[:1]) if answer.kind in ("agreed", "settle") else {}
         task = TASKS[answer.kind].format(term="".join(f'{name} ("{word}")' for name, (word, _, _) in asked.items()))
         if answer.refused:
@@ -502,16 +520,28 @@ class Negotiator:
         content = f"{transcript(negotiation, said)}\n\nTask: {task}"
         if question:
             content += f"\nThe seller's open question: {question}"
-        for _ in range(2):
-            written = await ask(self.client, WRITE, [{"type": "text", "text": content}], Written)
+        refused, again_said = "", None
+        for draft in range(2):
+            written = await ask(self.client, WRITE, [{"type": "text", "text": content + refused}], Written)
             message = written and filled(written.message, answer.price, negotiation.title)
             if not message:
                 why = "the AI wrote no message with the amount decided alone"
+                amount = f"the amount only as {AMOUNT}, once, and " if answer.price else ""
+                refused = (f"\n\nYour last draft was refused: write {amount}no other sum of money and no number from 100 "
+                           "up, not even one the seller wrote.")
                 continue
             unnamed = [name for name, (_, named, _) in asked.items() if not re.search(named, message, re.IGNORECASE)]
-            if not unnamed:
+            if unnamed:
+                why = f"the AI wrote no message naming {' and '.join(unnamed)}"
+                refused = f"\n\nYour last draft was refused: it did not name {' and '.join(unnamed)}."
+                continue
+            again = repeated(message, negotiation.sent) if draft == 0 else None
+            if again is None:
                 return message
-            why = f"the AI wrote no message naming {' and '.join(unnamed)}"
+            again_said = message
+            refused = f'\n\nYour last draft was refused: "{again}" says again what the buyer wrote before. Say it anew or not at all.'
+        if again_said:
+            return again_said
         self._hand_over(negotiation, why)
         return None
 
