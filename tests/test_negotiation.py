@@ -540,6 +540,25 @@ async def test_a_seller_who_wrote_after_an_answer_failed_is_read_and_the_answer_
     assert (now.status, now.offered, now.terms.asked_again) == ("talking", 7850, ["bank transfer"])  # refused once
 
 
+async def test_a_negotiation_kept_without_its_earlier_state_has_its_unsent_message_taken_back_alone(kept):
+    box = Box()
+    await opened(kept, box)
+    box.seller("7.550 € ok, Überweisung, Versand, Kaufvertrag, hier mein Ausweis.", pictures=1)
+    box.reply = AsyncMock(side_effect=RuntimeError("the site did not answer"))
+    await negotiator(Claude(reads=[says(accepts_offer=True, bank_transfer=True, delivery="shipping", contract=True,
+                                        id_card=True)],
+                            writes=["Danke! Der Kaufvertrag kommt gleich, dann überweise ich [BETRAG]."]), kept).follow_up(box)
+    older = kept.get("3535834511")
+    older.before = {}
+    kept.save(older)
+    box.seller("Keine Antwort? Dann ist sie jetzt anderweitig verkauft.")
+    del box.reply
+
+    await negotiator(Claude(reads=[says(ended=True)]), kept).follow_up(box)
+
+    assert kept.get("3535834511").status == "ended"
+
+
 async def test_a_message_settling_the_rest_names_every_term_still_open(kept):
     box = Box()
     await opened(kept, box)
