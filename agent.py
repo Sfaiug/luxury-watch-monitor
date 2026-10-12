@@ -148,6 +148,12 @@ def flagged(red_flags: List[RedFlag]) -> str:
     return "red flags: " + ", ".join(flag.replace("_", " ") for flag in red_flags)
 
 
+def held_against(reading: Reading) -> List[str]:
+    """The kinds of watches an offer is held against, the first one enough are offered of to go by: a full set against
+    full sets, else against all used watches."""
+    return [FULL_SET, USED] if reading.box and reading.papers else [USED]
+
+
 def decide(reading: Reading, asking: Optional[Decimal], prices: Prices) -> Verdict:
     """Whether an offer is worth contacting the seller about, and the opening offer, by the owner's numbers."""
     if not reading.is_watch_for_sale:
@@ -160,9 +166,7 @@ def decide(reading: Reading, asking: Optional[Decimal], prices: Prices) -> Verdi
         return Verdict(False, "no reference")
     if not asking:
         return Verdict(False, "no price")
-    # A full set is held against full sets while enough are offered to go by, else against all used watches
-    full_set = reading.box and reading.papers and worth(prices, reading.reference, FULL_SET) is not None
-    kind = FULL_SET if full_set else USED
+    kind = next((kind for kind in held_against(reading) if worth(prices, reading.reference, kind) is not None), USED)
     value, limit = worth(prices, reading.reference, kind), buy_limit(prices, reading.reference, kind)
     if limit is None:  # no worth and no price of the owner's
         return Verdict(False, f"too few Chrono24 offers for {reading.reference} yet")
@@ -266,7 +270,10 @@ class Agent:
                 reading = Reading.model_validate_json(row["reading"])
                 asking = Decimal(str(row["asking"])) if row["asking"] is not None else None
                 verdict = decide(reading, asking, self.prices)
-                if verdict.limit is None:
+                # Decided once every kind it is held against was searched: a full set not on all used watches alone
+                if verdict.limit is None or not all(
+                    self.prices.ever_searched(reading.reference, kind) for kind in held_against(reading)
+                ):
                     continue
                 watch = WatchData(title=row["title"], url=row["address"], site_name="Kleinanzeigen",
                                   site_key=row["filter"] or "", price=asking)

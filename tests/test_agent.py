@@ -239,11 +239,16 @@ async def test_a_match_that_came_before_its_watch_s_prices_is_decided_again_once
     found, offers = chrono24.read((PAGES / "chrono24.html").read_text(encoding="utf-8"), "Rolex", "116610LV", SEARCHED)
     prices.searched("116610LV", USED, found, offers, SEARCHED)
     agent.reconsider()
+    assert follows.call_count == 1  # a full set waits for the full sets' search too
+
+    full_sets = [offer for offer in offers if offer.price >= 11000]
+    prices.searched("116610LV", FULL_SET, len(full_sets), full_sets, SEARCHED)
+    agent.reconsider()
     agent.reconsider()
 
     watch, verdict = follows.call_args.args
     assert follows.call_count == 2 and (watch.url, watch.site_key) == (match().url, "filter:42")
-    assert (verdict.contact, verdict.why) == (True, "worth contacting")
+    assert (verdict.contact, verdict.why, verdict.worth) == (True, "worth contacting", worth(prices, "116610LV", FULL_SET))
     assert deals.latest(1)[0]["worth"] == float(verdict.worth)
 
 

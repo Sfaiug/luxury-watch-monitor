@@ -154,6 +154,11 @@ class Prices:
                 [(key, kind, offer.site_key, offer.address) for offer in offers],
             )
 
+    def ever_searched(self, reference: str, kind: str) -> bool:
+        """Whether the market was ever searched for this kind of the reference's watches."""
+        key = reference_key(reference)
+        return self._db.execute("SELECT 1 FROM searches WHERE reference = ? AND kind = ?", (key, kind)).fetchone() is not None
+
     def market(self, reference: str, kind: str) -> Tuple[int, List[float]]:
         """How many offers of this kind the last search of the market found for a reference, and the prices of those it read, cheapest first."""
         key = reference_key(reference)
