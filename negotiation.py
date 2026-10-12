@@ -229,6 +229,7 @@ class Negotiation:
     ends: str = ""  # what a closing negotiation ends as once its last message reached the seller: agreed or ended
     tries: int = 0  # looks at which its offer's page took no first message
     seen: int = 0  # the messages in the conversation when the agent wrote its latest
+    before: dict = field(default_factory=dict)  # its offer and the terms as they stood before its latest message
     why: str = ""
     notice: str = ""  # what the owner is still to hear of it
 
@@ -347,9 +348,11 @@ class Negotiator:
             # Written from the account, not by the agent: the owner took over
             return self._end(negotiation, "owner", "the owner wrote in the conversation")
         unshown = [text for text in negotiation.sent if plain(text) not in shown]
-        if unshown and negotiation.status == "closing" and len(said) > negotiation.seen:
-            # The seller wrote since its last word, which never reached them: what they wrote is read, not that word
+        if unshown and len(said) > negotiation.seen:
+            # The seller wrote since its latest message, which never reached them: that message is taken back with
+            # what it decided, and what the seller wrote is read
             negotiation.sent.remove(unshown.pop())
+            negotiation.offered, negotiation.terms = negotiation.before["offered"], Terms(**negotiation.before["terms"])
             negotiation.status, negotiation.ends = "talking", ""
             self.negotiations.save(negotiation)
         if unshown:
@@ -365,6 +368,7 @@ class Negotiator:
         if says is None:
             return self._hand_over(negotiation, "the AI declined to read the seller's answer")
         last = max(n for n, message in enumerate(said) if message.outbound)
+        before = {"offered": negotiation.offered, "terms": asdict(negotiation.terms)}
         answer = move(negotiation.limit, negotiation.offered, negotiation.terms, says,
                       any(message.attachments for message in said[last + 1:]))  # pictures since the agent wrote
         if answer.kind == "end":
@@ -376,7 +380,7 @@ class Negotiator:
             return
         # Kept before it is sent: should sending fail partway, it is known as the agent's, and sent again
         negotiation.sent.append(text)
-        negotiation.seen = len(said)
+        negotiation.seen, negotiation.before = len(said), before
         if answer.kind in ("offer", "final"):
             negotiation.offered = answer.price
         if answer.kind in ("done", "farewell"):
