@@ -48,7 +48,7 @@ class SellerSays(BaseModel):
 
 @dataclass
 class Terms:
-    """What the seller has agreed so far."""
+    """What the seller has agreed so far, and where they stood on the price."""
 
     price: Optional[int] = None
     bank_transfer: bool = False
@@ -56,6 +56,8 @@ class Terms:
     contract: bool = False
     id_card: bool = False
     asked_again: List[str] = field(default_factory=list)  # terms the seller refused once and was asked again
+    asked: Optional[int] = None  # the seller's price when the agent last made an offer
+    held: bool = False  # the agent's last answer kept its offer, the seller not having come down
 
     def open(self) -> Dict[str, Tuple[str, str, str]]:
         """The terms not settled yet, in the order they are asked for, each with the word to write it by, the
@@ -75,8 +77,8 @@ class Terms:
 
 @dataclass
 class Move:
-    """The agent's answer: an offer, its final offer (the limit), the price agreed and the first term asked for, the
-    next term asked for, done, a farewell, or the end without a word."""
+    """The agent's answer: an offer, its final offer (the limit), its offer kept, the price agreed and the first term
+    asked for, the next term asked for, done, a farewell, or the end without a word."""
 
     kind: str
     price: Optional[int] = None
@@ -128,15 +130,24 @@ def _price(limit: int, offered: int, terms: Terms, asked: Optional[int], accepts
                 not opening and asked <= limit and asked - offered <= max(STEP, asked * CLOSE))):
             terms.price = min(asked, limit)
         elif opening:
+            terms.asked = asked
             return Move("offer", offered, "its opening offer")
         elif asked is not None:
-            if offered >= limit:
+            top = limit // STEP * STEP  # its own offers in whole steps, as a person names them
+            if offered >= top:
                 return Move("farewell", why=f"the seller asks {euros(asked)}, above the limit of {euros(limit)}")
+            if terms.asked is not None and asked >= terms.asked and not terms.held:
+                # The seller has not come down since its last offer: it keeps that one, once, for them to move
+                terms.held = True
+                return Move("hold", why=f"the seller holds at {euros(asked)}")
+            terms.asked, terms.held = asked, False
             # Half the room left up to the limit, and no more than halfway towards the seller, 50 euros at a time
-            counter = max(offered + STEP, (offered + min(limit - offered, asked - offered) // 2) // STEP * STEP)
-            if counter >= limit - STEP:  # the last step is the limit itself, or the seller's price below it
-                return Move("final", min(limit, asked), f"the seller asks {euros(asked)}")
-            return Move("offer", counter, f"the seller asks {euros(asked)}")
+            counter = max(offered + STEP, (offered + min(top - offered, asked - offered) // 2) // STEP * STEP)
+            if counter < top - STEP:
+                return Move("offer", counter, f"the seller asks {euros(asked)}")
+            if asked > top:  # the last step is the limit itself
+                return Move("final", top, f"the seller asks {euros(asked)}")
+            terms.price = asked  # or the seller's price below it, met
         else:
             return Move("offer", offered, "the seller names no price")
     if terms.open():
@@ -147,7 +158,8 @@ def _price(limit: int, offered: int, terms: Terms, asked: Optional[int], accepts
 
 AMOUNT = "[BETRAG]"  # where the AI leaves the amount decided, for the code to write in
 TRIES = 3  # looks at which an offer's page takes no message before the agent hands it to the owner
-MOST_WRITTEN = 12  # messages the agent writes before it hands the conversation to the owner
+MOST_WRITTEN = 24  # messages the agent writes before it hands the conversation to the owner: half again the longest
+# way to an agreement (a seller holding out to its last offer, then each term in turn), for questions and refusals
 STARTS = ("pending",)  # the negotiations a look at the messages starts
 ANSWERS = ("talking", "closing")  # and those it answers, or sends the last message of
 LOOK_EVERY = 300  # seconds from one look at the sellers' answers to the next
@@ -196,6 +208,8 @@ TASKS = {
     "first": "This is the first message: ask only whether the watch is still to be had.",
     "offer": "Offer the amount.",
     "final": "Offer the amount, as the most the buyer can pay.",
+    "hold": "The seller has not come down since the buyer's last offer: keep that offer, without naming it again, and "
+            "ask what the seller could do towards it.",
     "agreed": "The seller agreed to the price, the amount: confirm it, and ask for {term} alone, by its word.",
     "settle": "Ask for {term} alone, by its word.",
     "done": "All is agreed at the amount: thank the seller and sum the deal up in one sentence; the buyer sends the "
