@@ -463,6 +463,19 @@ async def test_a_settling_message_twice_leaving_a_term_unnamed_goes_to_the_owner
     assert gone.status == "owner" and "the AI wrote no message naming insured shipping, or else pickup" in gone.notice
 
 
+async def test_a_word_that_only_holds_a_term_s_word_does_not_name_it(kept):
+    box = Box()
+    await opened(kept, box)
+    box.seller("Ok, 7.550 € passt, Überweisung und Versand gehen klar. Ich bin Privatperson.")
+
+    await negotiator(Claude(reads=[says(accepts_offer=True, bank_transfer=True, delivery="shipping")],
+                            writes=["Super, [BETRAG]! Ich kaufe auch als Privatperson. War das ein Vertragshändler?",
+                                    "Super, [BETRAG]! Den Kaufvertrag schicke ich, dazu bräuchte ich ein Foto Ihres Ausweises."]),
+                     kept).follow_up(box)
+
+    assert box.said[-1].text.endswith("Foto Ihres Ausweises.")
+
+
 async def test_once_the_owner_writes_in_the_conversation_the_agent_stays_out(kept):
     box = Box()
     await opened(kept, box)
