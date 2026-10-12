@@ -9,7 +9,7 @@ and with what opening offer. Each verdict is kept in deals.sqlite3.
 import math
 import sqlite3
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from decimal import Decimal
 from typing import List, Literal, Optional, Tuple, Type, TypeVar
 
@@ -30,6 +30,7 @@ OPENING = Decimal("0.88")  # the opening offer's share of what the agent may pay
 STEP = 50  # euros an offer moves by at least, and is rounded down to
 TOO_CHEAP = Decimal("0.5")  # below this share of its worth an offer is not what it says
 TOO_DEAR = Decimal("1.2")  # above this share of the limit a seller will not come down far enough
+WAITS = timedelta(days=7)  # a match waits this long at most for its watch's prices: by then it is mostly sold or gone
 
 INSTRUCTIONS = """You read a watch offer on Kleinanzeigen for a watch dealer who may buy it.
 Report only what the offer states or its photos show; leave out what neither does.
@@ -194,9 +195,13 @@ class Deals:
                     worth REAL,
                     buy_limit REAL,
                     opening REAL,
-                    judged TEXT NOT NULL
+                    judged TEXT NOT NULL,
+                    filter TEXT
                 )
             """)
+            # A file from before the verdicts named their filter
+            if "filter" not in [column[1] for column in self._db.execute("PRAGMA table_info(verdicts)")]:
+                self._db.execute("ALTER TABLE verdicts ADD COLUMN filter TEXT")
 
     def close(self):
         self._db.close()
@@ -207,7 +212,7 @@ class Deals:
 
         with self._db:
             self._db.execute(
-                "INSERT OR REPLACE INTO verdicts VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "INSERT OR REPLACE INTO verdicts VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     watch.url,
                     watch.title,
@@ -219,12 +224,21 @@ class Deals:
                     amount(verdict.limit),
                     amount(verdict.opening),
                     at.isoformat(timespec="seconds"),
+                    watch.site_key,
                 ),
             )
 
     def latest(self, count: int) -> List[sqlite3.Row]:
         self._db.row_factory = sqlite3.Row
         return self._db.execute("SELECT * FROM verdicts ORDER BY judged DESC LIMIT ?", (count,)).fetchall()
+
+    def without_limit(self, since: datetime) -> List[sqlite3.Row]:
+        """The verdicts since then on offers the AI read that came to no limit."""
+        self._db.row_factory = sqlite3.Row
+        return self._db.execute(
+            "SELECT * FROM verdicts WHERE reading IS NOT NULL AND buy_limit IS NULL AND judged >= ?",
+            (since.isoformat(timespec="seconds"),),
+        ).fetchall()
 
 
 class Agent:
@@ -241,11 +255,34 @@ class Agent:
     async def consider(self, watches: List[WatchData]):
         for watch in watches:
             judged = await self.judge(watch)
+            if judged:
+                self._follow(watch, judged[1])
+
+    def reconsider(self):
+        """Decide again on the matches that came before their watch's Chrono24 offers, now that the search may have
+        brought them: a match is not lost for arriving first."""
+        for row in self.deals.without_limit(datetime.now() - WAITS):
             try:
-                if judged and self.on_verdict:
-                    self.on_verdict(watch, judged[1])
+                reading = Reading.model_validate_json(row["reading"])
+                asking = Decimal(str(row["asking"])) if row["asking"] is not None else None
+                verdict = decide(reading, asking, self.prices)
+                if verdict.limit is None:
+                    continue
+                watch = WatchData(title=row["title"], url=row["address"], site_name="Kleinanzeigen",
+                                  site_key=row["filter"] or "", price=asking)
+                self.deals.judged(watch, asking, reading, verdict, datetime.now())
+                self.logger.info(f"Agent, its prices come: {watch.title[:60]}: {verdict.why}")
             except Exception as e:
-                self.logger.warning(f"Agent could not follow up on {watch.url}: {e}")
+                self.logger.warning(f"Agent could not decide again on {row['address']}: {e}")
+                continue
+            self._follow(watch, verdict)
+
+    def _follow(self, watch: WatchData, verdict: Verdict):
+        try:
+            if self.on_verdict:
+                self.on_verdict(watch, verdict)
+        except Exception as e:
+            self.logger.warning(f"Agent could not follow up on {watch.url}: {e}")
 
     async def judge(self, watch: WatchData) -> Optional[Tuple[Optional[Decimal], Verdict]]:
         """Read the offer's own page, have the AI read it and decide, keep the verdict; the asking price and the
