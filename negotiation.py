@@ -512,7 +512,7 @@ class Negotiator:
     async def _write(self, negotiation: Negotiation, answer: Move, said, question: Optional[str]) -> Optional[str]:
         """The message for the move, its amount written in; None, the negotiation handed to the owner, when the AI
         twice writes it otherwise. A draft refused is written anew, the AI told why; one saying again what an
-        earlier message said is written anew once."""
+        earlier message said is written anew once, and goes out should the new one be refused."""
         asked = dict(list(negotiation.terms.open().items())[:1]) if answer.kind in ("agreed", "settle") else {}
         task = TASKS[answer.kind].format(term="".join(f'{name} ("{word}")' for name, (word, _, _) in asked.items()))
         if answer.refused:
@@ -520,7 +520,7 @@ class Negotiator:
         content = f"{transcript(negotiation, said)}\n\nTask: {task}"
         if question:
             content += f"\nThe seller's open question: {question}"
-        refused = ""
+        refused, again_said = "", None
         for draft in range(2):
             written = await ask(self.client, WRITE, [{"type": "text", "text": content + refused}], Written)
             message = written and filled(written.message, answer.price, negotiation.title)
@@ -538,7 +538,10 @@ class Negotiator:
             again = repeated(message, negotiation.sent) if draft == 0 else None
             if again is None:
                 return message
+            again_said = message
             refused = f'\n\nYour last draft was refused: "{again}" says again what the buyer wrote before. Say it anew or not at all.'
+        if again_said:
+            return again_said
         self._hand_over(negotiation, why)
         return None
 

@@ -589,6 +589,18 @@ async def test_a_second_draft_saying_something_again_goes_out_all_the_same(kept)
     assert box.said[-1].text == "Ich biete 8.000 €." and kept.get("3535834511").status == "talking"
 
 
+async def test_a_draft_saying_something_again_goes_out_should_its_rewrite_be_refused(kept):
+    box = Box()
+    await opened(kept, box)
+    box.seller("Unter 8.500 € geht nichts.")
+    claude = Claude(reads=[says(price=8500)], writes=["Ist die Uhr noch zu haben? Sonst [BETRAG].", "Maximal 9.000 €."])
+
+    await negotiator(claude, kept).follow_up(box)
+
+    assert box.said[-1].text == "Ist die Uhr noch zu haben? Sonst 8.000 €."
+    assert kept.get("3535834511").status == "talking"
+
+
 async def test_a_draft_naming_a_sum_itself_is_written_anew_told_why(kept):
     box = Box()
     await opened(kept, box)
