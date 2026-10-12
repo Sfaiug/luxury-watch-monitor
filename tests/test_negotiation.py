@@ -522,6 +522,24 @@ async def test_an_answer_that_did_not_reach_the_seller_is_sent_again_not_decided
     assert again.asked == [] and box.said[-1].text == "Wie wäre es mit 8.000 €?"
 
 
+async def test_a_seller_who_wrote_after_an_answer_failed_is_read_and_the_answer_taken_back(kept):
+    box = Box()
+    await opened(kept, box)
+    box.seller("Unter 8.500 € geht nichts, und nur bar.")
+    box.reply = AsyncMock(side_effect=RuntimeError("the site did not answer"))
+    await negotiator(Claude(reads=[says(price=8500, bank_transfer=False)], writes=["Wie wäre es mit [BETRAG] per Überweisung?"]),
+                     kept).follow_up(box)
+    box.seller("Keine Antwort? Dann eben 8.200 €, aber bar.")
+    del box.reply
+    claude = Claude(reads=[says(price=8200, bank_transfer=False)], writes=["Für [BETRAG] gern, aber nur per Überweisung."])
+
+    await negotiator(claude, kept).follow_up(box)
+
+    assert [s.text for s in box.said if s.outbound] == ["Ich biete 7.550 €.", "Für 7.850 € gern, aber nur per Überweisung."]
+    now = kept.get("3535834511")
+    assert (now.status, now.offered, now.terms.asked_again) == ("talking", 7850, ["bank transfer"])  # refused once
+
+
 async def test_a_message_settling_the_rest_names_every_term_still_open(kept):
     box = Box()
     await opened(kept, box)
