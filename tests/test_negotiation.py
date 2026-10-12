@@ -266,7 +266,8 @@ def kept(tmp_path):
 
 
 def negotiator(claude, kept, notify=None):
-    return Negotiator(claude, kept, notify or AsyncMock(), logging.getLogger("test"))
+    """The negotiator, answering at once: how long an answer waits is the next test's."""
+    return Negotiator(claude, kept, notify or AsyncMock(), logging.getLogger("test"), a_while=lambda: timedelta(0))
 
 
 async def test_a_negotiation_asked_for_opens_once_asking_only_whether_the_watch_is_there_and_offers_on_the_answer(kept):
@@ -531,6 +532,34 @@ async def test_the_owner_hears_once_all_is_agreed_and_the_id_card_shown(kept):
     assert kept.get("3535834511").status == "agreed"
     channel, text = notify.await_args.args
     assert channel == "filter:42" and "7.550 €" in text and "shipping" in text and "Kaufvertrag" in text
+
+
+async def test_a_seller_is_answered_a_while_after_they_wrote_not_at_once(kept):
+    box = Box()
+    await opened(kept, box)
+    box.seller("Unter 8.500 € geht nichts.")
+    claude = Claude(reads=[says(price=8500)], writes=["Wie wäre es mit [BETRAG]?"])
+    talking = Negotiator(claude, kept, AsyncMock(), logging.getLogger("test"), a_while=lambda: timedelta(minutes=10))
+
+    await talking.follow_up(box)
+    box.seller("Und?")  # the seller writes again meanwhile: the answer keeps its time
+    await talking.follow_up(box)
+    waiting = kept.get("3535834511")
+    assert claude.asked == [] and box.said[-1].text == "Und?"
+    assert timedelta(minutes=9) < datetime.fromisoformat(waiting.due) - datetime.now(negotiation.GERMANY) <= timedelta(minutes=10)
+
+    waiting.due = (datetime.now(negotiation.GERMANY) - timedelta(seconds=1)).isoformat()
+    kept.save(waiting)
+    await talking.follow_up(box)
+
+    assert box.said[-1].text == "Wie wäre es mit 8.000 €?" and kept.get("3535834511").due == ""
+
+
+def test_the_while_an_answer_waits_is_drawn_anew_each_time_within_minutes():
+    talking = Negotiator(Claude(), None, AsyncMock(), logging.getLogger("test"))
+    waits = {talking.a_while() for _ in range(20)}
+
+    assert len(waits) > 1 and all(timedelta(minutes=2) <= wait <= timedelta(minutes=15) for wait in waits)
 
 
 async def test_an_answer_written_wrong_twice_goes_to_the_owner(kept):

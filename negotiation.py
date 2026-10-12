@@ -14,10 +14,11 @@ watch is still there, then the price, then each term in turn.
 
 import asyncio
 import json
+import random
 import re
 import sqlite3
 from dataclasses import asdict, dataclass, field
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Dict, List, Literal, Optional, Tuple
 from zoneinfo import ZoneInfo
 
@@ -163,6 +164,7 @@ MOST_WRITTEN = 24  # messages the agent writes before it hands the conversation 
 STARTS = ("pending",)  # the negotiations a look at the messages starts
 ANSWERS = ("talking", "closing")  # and those it answers, or sends the last message of
 LOOK_EVERY = 300  # seconds from one look at the sellers' answers to the next
+REPLY_AFTER = (120, 900)  # the seconds, drawn between these, a seller's message waits for its answer at least
 LOOK_DAILY = 86400  # seconds after which the session is used even with nothing to do, so its login stays fresh
 AWAKE = range(8, 21)  # the hours, in Germany, the agent writes in, as a person would
 GERMANY = ZoneInfo("Europe/Berlin")
@@ -271,6 +273,7 @@ class Negotiation:
     before: dict = field(default_factory=dict)  # its offer and the terms as they stood before its latest message
     why: str = ""
     notice: str = ""  # what the owner is still to hear of it
+    due: str = ""  # when the seller's latest messages are answered, a while after they came, as a person does
 
     @property
     def opened(self) -> bool:
@@ -327,11 +330,13 @@ def transcript(negotiation: Negotiation, said) -> str:
 class Negotiator:
     """Starts negotiations and answers the sellers, through the owner's Kleinanzeigen messages."""
 
-    def __init__(self, client, negotiations: Negotiations, notify, logger):
+    def __init__(self, client, negotiations: Negotiations, notify, logger,
+                 a_while=lambda: timedelta(seconds=random.uniform(*REPLY_AFTER))):
         self.client = client  # an AsyncAnthropic
         self.negotiations = negotiations
         self.notify = notify  # async (channel, text): tells the owner in the filter's channel
         self.logger = logger
+        self.a_while = a_while  # how long the next answer waits
 
     def ask_to_start(self, negotiation: Negotiation) -> bool:
         """Have the negotiation start at the next look at the messages; once per offer."""
@@ -410,6 +415,14 @@ class Negotiator:
             return
         if not said or said[-1].outbound:
             return
+        # A person answers after a while, not at once (owner rule, 12 Oct 2026)
+        now = datetime.now(GERMANY)
+        if not negotiation.due:
+            negotiation.due = (now + self.a_while()).isoformat()
+            self.negotiations.save(negotiation)
+        if now < datetime.fromisoformat(negotiation.due):
+            return
+        negotiation.due = ""
         says = await ask(self.client, READ, [{"type": "text", "text": transcript(negotiation, said)}], SellerSays)
         if says is None:
             return self._hand_over(negotiation, "the AI declined to read the seller's answer")
