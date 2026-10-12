@@ -560,6 +560,25 @@ async def test_the_owner_is_told_to_pay_only_once_the_seller_has_the_agreement(k
     assert kept.get("3535834511").status == "agreed" and notify.await_count == 1
 
 
+async def test_a_seller_who_wrote_after_the_last_word_failed_is_read_before_it_ends(kept):
+    box, notify = Box(), AsyncMock()
+    await opened(kept, box)
+    box.seller("7.550 € ok, Überweisung, Versand, Kaufvertrag, hier mein Ausweis.", pictures=1)
+    box.reply = AsyncMock(side_effect=RuntimeError("the site did not answer"))
+    await negotiator(Claude(reads=[says(accepts_offer=True, bank_transfer=True, delivery="shipping", contract=True,
+                                        id_card=True)],
+                            writes=["Danke! Der Kaufvertrag kommt gleich, dann überweise ich [BETRAG]."]), kept).follow_up(box)
+    box.seller("Keine Antwort? Dann ist sie jetzt anderweitig verkauft.")
+    del box.reply
+    talking = negotiator(Claude(reads=[says(ended=True)]), kept, notify)
+
+    await talking.follow_up(box)
+    await talking.tell_owner()
+
+    assert kept.get("3535834511").status == "ended" and notify.await_count == 0
+    assert box.said[-1].text == "Keine Antwort? Dann ist sie jetzt anderweitig verkauft."
+
+
 @pytest.mark.parametrize("words", [
     "Super, [BETRAG]! Können Sie die Uhr versichert verschicken? Für den Vertrag bitte noch ein Foto vom Perso.",
     "Super, [BETRAG]! Abholung ginge auch. Den Kaufvertrag schicke ich, dazu bräuchte ich ein Foto Ihres Ausweises.",

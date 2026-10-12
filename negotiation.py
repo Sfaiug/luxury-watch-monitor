@@ -228,6 +228,7 @@ class Negotiation:
     # agreed, ended, or owner
     ends: str = ""  # what a closing negotiation ends as once its last message reached the seller: agreed or ended
     tries: int = 0  # looks at which its offer's page took no first message
+    seen: int = 0  # the messages in the conversation when the agent wrote its latest
     why: str = ""
     notice: str = ""  # what the owner is still to hear of it
 
@@ -346,6 +347,11 @@ class Negotiator:
             # Written from the account, not by the agent: the owner took over
             return self._end(negotiation, "owner", "the owner wrote in the conversation")
         unshown = [text for text in negotiation.sent if plain(text) not in shown]
+        if unshown and negotiation.status == "closing" and len(said) > negotiation.seen:
+            # The seller wrote since its last word, which never reached them: what they wrote is read, not that word
+            negotiation.sent.remove(unshown.pop())
+            negotiation.status, negotiation.ends = "talking", ""
+            self.negotiations.save(negotiation)
         if unshown:
             # Its last answer did not reach the seller: that one, not another
             await messages.reply(negotiation.conversation, unshown[-1])
@@ -370,6 +376,7 @@ class Negotiator:
             return
         # Kept before it is sent: should sending fail partway, it is known as the agent's, and sent again
         negotiation.sent.append(text)
+        negotiation.seen = len(said)
         if answer.kind in ("offer", "final"):
             negotiation.offered = answer.price
         if answer.kind in ("done", "farewell"):
