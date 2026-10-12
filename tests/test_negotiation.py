@@ -62,6 +62,44 @@ def test_the_agent_gives_half_the_room_to_its_limit_and_no_more_than_halfway_to_
     assert move(2600, 2500, Terms(), says(price=2580), False).price == 2580  # never more than the seller asks
 
 
+def test_a_seller_who_has_not_come_down_since_its_last_offer_is_met_with_that_offer_once_then_the_next_step():
+    terms, answers, offered = Terms(), [], OPENING
+    for asked in (8500, 8500, 8500, 8450):
+        answer = move(LIMIT, offered, terms, says(price=asked), False)
+        answers.append((answer.kind, answer.price))
+        offered = answer.price or offered
+
+    assert answers == [("offer", 8000), ("hold", None), ("offer", 8250), ("offer", 8350)]  # the last: they came down
+
+
+def test_a_seller_repeating_the_asking_price_after_the_opening_offer_is_met_with_it_once():
+    terms = Terms()
+    assert move(LIMIT, OPENING, terms, says(price=9900), False, opening=True).kind == "offer"
+
+    assert move(LIMIT, OPENING, terms, says(price=9900), False).kind == "hold"
+
+
+def test_the_agent_offers_whole_steps_its_last_below_a_limit_that_is_none():
+    assert move(8366, 8250, Terms(), says(price=9000), False) == Move("final", 8350, "the seller asks 9.000 €")
+    assert move(8366, 8350, Terms(), says(price=8400), False).kind == "farewell"
+    assert move(8366, 8350, Terms(), says(price=8366), False) == Move("agreed", 8366, "next: payment by bank transfer")
+
+
+def test_a_seller_holding_out_to_the_agent_s_last_offer_then_agreeing_term_by_term_is_not_handed_over():
+    terms, offered, written = Terms(), OPENING, ["first", "offer"]
+    terms.asked = 11000
+    while (answer := move(LIMIT, offered, terms, says(price=11000), False)).kind != "final":
+        written.append(answer.kind)
+        offered = answer.price or offered
+    written.append("final")
+    move(LIMIT, LIMIT, terms, says(accepts_offer=True), False)
+    for agreed in (dict(bank_transfer=True), dict(delivery="shipping"), dict(contract=True), dict(id_card=True)):
+        written.append(move(LIMIT, LIMIT, terms, says(**agreed), True).kind)
+
+    assert written[-1] == "done" and written.count("hold") == 5
+    assert len(written) <= negotiation.MOST_WRITTEN
+
+
 @pytest.mark.parametrize("agreed, refusing", [
     (dict(), dict(bank_transfer=False)),
     (dict(bank_transfer=True, delivery="shipping"), dict(contract=False)),
@@ -556,11 +594,12 @@ async def test_its_own_answer_shown_after_a_failed_send_is_not_taken_for_the_own
     box.reply = sent_but_answered_at_once
     await negotiator(Claude(reads=[says(price=8500)], writes=["Wie wäre es\nmit [BETRAG]?"]), kept).follow_up(box)
     del box.reply
-    await negotiator(Claude(reads=[says(price=8500, question="Und mit Versand?")], writes=["Versichert, im Preis: [BETRAG]."]),
-                     kept).follow_up(box)
+    await negotiator(Claude(reads=[says(price=8500, question="Und mit Versand?")],
+                            writes=["Versichert, im Preis. Was ginge bei Ihnen noch?"]), kept).follow_up(box)
 
     assert kept.get("3535834511").status == "talking"
-    assert box.said[-1].text == "Versichert, im Preis: 8.250 €."  # the next counter, the seller holding at 8.500 €
+    assert box.said[-1].text == "Versichert, im Preis. Was ginge bei Ihnen noch?"  # it keeps 8.000 €, the seller holding
+    assert kept.get("3535834511").offered == 8000
 
 
 async def test_an_answer_that_did_not_reach_the_seller_is_sent_again_not_decided_again(kept):
