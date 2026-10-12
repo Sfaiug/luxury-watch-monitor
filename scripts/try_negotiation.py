@@ -51,8 +51,9 @@ class DirectMessages:
     def __init__(self, api: DiscordApi, channel: str):
         self.api, self.channel = api, channel
 
-    async def post(self, content: str) -> dict:
-        status, answer = await self.api.call("POST", f"/channels/{self.channel}/messages", {"content": content})
+    async def reply(self, conversation_id: str | None, text: str) -> dict:
+        # The DM is the one conversation, whichever is named
+        status, answer = await self.api.call("POST", f"/channels/{self.channel}/messages", {"content": text})
         if 400 <= status < 500:  # refused: nothing was sent
             raise Unsent(f"Discord answered {status}: {answer}")
         if status not in (200, 201):  # it may have been sent all the same
@@ -61,13 +62,14 @@ class DirectMessages:
 
     async def contact(self, ad_id: str, text: str) -> str:
         try:
-            start = await self.post(
+            start = await self.reply(
+                None,
                 f"**{NOTE}.** You are the seller now. Your ad: *{TITLE}*, asking {euros(ASKING)}. The agent pays at "
                 f"most {euros(LIMIT)}. Answer it here as a seller would, in German; a picture you send counts as "
                 "the ID card. The buyer's messages follow.")
         except Exception as e:
             raise Unsent(str(e)) from e
-        await self.post(text)
+        await self.reply(start["id"], text)
         return start["id"]
 
     async def conversation(self, conversation_id: str) -> Conversation:
@@ -88,9 +90,6 @@ class DirectMessages:
             Message(bool(m["author"].get("bot")), m["content"], len(m.get("attachments") or []), m["timestamp"])
             for m in said])
 
-    async def reply(self, conversation_id: str, text: str):
-        await self.post(text)
-
 
 async def main() -> int:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s")
@@ -106,7 +105,7 @@ async def main() -> int:
             box = DirectMessages(api, dm["id"])
 
             async def notify(channel, text):
-                await box.post(f"{NOTE}, what you would be told: {text}")
+                await box.reply(None, f"{NOTE}, what you would be told: {text}")
 
             negotiator = Negotiator(AsyncAnthropic(), negotiations, notify, logger,
                                     a_while=lambda: timedelta(seconds=random.uniform(*A_WHILE)))
