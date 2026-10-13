@@ -24,7 +24,7 @@ class Claude(AsyncAnthropic):
 
 
 def read(**said):
-    return {"price": None, "accepts_offer": False, "bank_transfer": None, "delivery": None, "contract": None,
+    return {"price": None, "accepts_offer": False, "turns_down": False, "bank_transfer": None, "delivery": None, "contract": None,
             "id_card": None, "ended": False, "red_flags": [], "question": None, **said}
 
 
