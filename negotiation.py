@@ -78,8 +78,8 @@ class Terms:
 
 @dataclass
 class Move:
-    """The agent's answer: an offer, its final offer (the limit), its offer kept, the price agreed and the first term
-    asked for, the next term asked for, done, a farewell, or the end without a word."""
+    """The agent's answer: an offer, its final offer (the limit), its offer kept, the seller's price asked for, the
+    price agreed and the first term asked for, the next term asked for, done, a farewell, or the end without a word."""
 
     kind: str
     price: Optional[int] = None
@@ -125,6 +125,8 @@ def _price(limit: int, offered: int, terms: Terms, asked: Optional[int], accepts
         offered, terms.price = max(offered, terms.price), None
     agreed = terms.price is not None
     if not agreed:
+        if asked is None and not opening:
+            asked = terms.asked  # a seller naming no price stands where they last did
         if accepts_offer:
             terms.price = offered
         elif asked is not None and (asked <= offered or (
@@ -150,7 +152,8 @@ def _price(limit: int, offered: int, terms: Terms, asked: Optional[int], accepts
                 return Move("final", top, f"the seller asks {euros(asked)}")
             terms.price = asked  # or the seller's price below it, met
         else:
-            return Move("offer", offered, "the seller names no price")
+            # Turned down, or passed over, with no price ever named: the seller is asked theirs, not offered the same
+            return Move("ask", why="the seller names no price")
     if terms.open():
         # The price agreed just now is named with the first term asked for; each term after it alone
         return Move("settle" if agreed else "agreed", None if agreed else terms.price, "next: " + next(iter(terms.open())))
@@ -223,6 +226,8 @@ TASKS = {
     "final": "Offer the amount, as the most the buyer can pay.",
     "hold": "The seller has not come down since the buyer's last offer: make no new one, and ask what the seller "
             "could do towards it, without naming it again; say nothing of keeping it, of a limit or a last word.",
+    "ask": "The seller has named no price of their own: make no new offer, and ask what they would sell for, without "
+           "naming the buyer's offer again.",
     "agreed": "The seller agreed to the price, the amount: confirm it, and ask for {term} alone, by its word.",
     "settle": "Ask for {term} alone, by its word.",
     "done": "All is agreed at the amount: thank the seller and sum the deal up in one sentence; the buyer sends the "

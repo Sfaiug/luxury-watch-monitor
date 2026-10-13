@@ -79,6 +79,21 @@ def test_a_seller_repeating_the_asking_price_after_the_opening_offer_is_met_with
     assert move(LIMIT, OPENING, terms, says(price=9900), False).kind == "hold"
 
 
+def test_a_seller_turning_the_offer_down_with_no_price_is_asked_theirs_not_offered_the_same():
+    terms = Terms()
+    move(LIMIT, OPENING, terms, says(), False, opening=True)
+
+    assert move(LIMIT, OPENING, terms, says(), False) == Move("ask", None, "the seller names no price")
+
+
+def test_a_seller_naming_no_price_now_stands_at_the_one_named_before():
+    terms = Terms()
+    assert move(LIMIT, OPENING, terms, says(price=8500), False) == Move("offer", 8000, "the seller asks 8.500 €")
+
+    assert move(LIMIT, 8000, terms, says(), False).kind == "hold"
+    assert move(LIMIT, 8000, terms, says(), False) == Move("offer", 8250, "the seller asks 8.500 €")
+
+
 def test_the_agent_offers_whole_steps_its_last_below_a_limit_that_is_none():
     assert move(8366, 8250, Terms(), says(price=9000), False) == Move("final", 8350, "the seller asks 9.000 €")
     assert move(8366, 8350, Terms(), says(price=8400), False).kind == "farewell"
@@ -888,7 +903,7 @@ async def test_what_the_seller_wrote_before_the_end_is_not_read_again_only_what_
     assert kept.get("3535834511").status == "ended" and quiet.asked == []
 
     box.seller("Der Käufer ist abgesprungen, noch Interesse?")
-    claude = Claude(reads=[says()], writes=["Ja, gern, für [BETRAG]."])
+    claude = Claude(reads=[says()], writes=["Ja, gern. Was wäre Ihr Preis?"])
     await negotiator(claude, kept).follow_up(box)
 
     assert claude.asked == ["read", "write"] and kept.get("3535834511").status == "talking"
