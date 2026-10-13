@@ -214,6 +214,12 @@ def test_a_watch_the_owner_picks_up_needs_the_id_card_shown_there_not_as_a_pictu
         "settle", None, "next: a picture of the seller's ID card")
 
 
+def test_a_pickup_agreed_before_the_owner_had_a_word_in_it_is_asked_to_ship():
+    terms = Terms(price=OPENING, bank_transfer=True, delivery="pickup", contract=True)  # kept before 13 Oct 2026
+
+    assert move(LIMIT, OPENING, terms, says(), False) == Move("settle", None, "next: insured shipping")
+
+
 TITLE = "Rolex Submariner Date 126610LN"
 
 
@@ -633,10 +639,11 @@ async def test_once_the_owner_says_pick_it_up_the_deal_goes_on_the_seller_to_sho
     await talking.tell_owner()
 
     assert kept.get("3535834511").status == "agreed"
-    assert "a handover in person suits him" in instructed(claude)
+    assert "needs no picture of the ID card then" in instructed(claude)
     assert "pays at the handover, where they show him their ID card" in asked_to_write(claude)
     channel, text, buttons = notify.await_args.args
-    assert "pickup" in text and "shows their ID card at the handover" in text and buttons == []
+    assert "pickup" in text and "shows their ID card at the handover. Send the Kaufvertrag, and pay there" in text
+    assert buttons == []
 
 
 async def test_once_the_owner_holds_to_shipping_the_seller_is_bid_farewell(kept):
@@ -670,6 +677,21 @@ async def test_the_owner_is_asked_with_buttons_that_answer_the_agent(monkeypatch
     assert (pickup["label"], ship["label"]) == ("Pick it up", "Shipping only")
     assert monitor._negotiate_pressed({"data": {"custom_id": ship["custom_id"]}}).startswith("Shipping only")
     assert (kept.get("3535834511").status, kept.get("3535834511").terms.in_person) == ("talking", False)
+
+
+async def test_a_button_pressed_while_its_notice_is_posted_holds(kept):
+    asking = asked_for()
+    asking.status, asking.notice = "deciding", "Pick it up yourself, or hold to shipping?"
+    kept.save(asking)
+
+    async def notify(channel, text, buttons):
+        talking.pressed(buttons[0][1])  # the owner, quicker than the post's answer
+
+    talking = negotiator(Claude(), kept, notify)
+    await talking.tell_owner()
+
+    decided = kept.get("3535834511")
+    assert (decided.status, decided.terms.in_person, decided.notice) == ("talking", True, "")
 
 
 async def test_a_seller_is_answered_a_while_after_they_wrote_not_at_once(kept):
