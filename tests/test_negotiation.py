@@ -229,6 +229,14 @@ def test_a_watch_the_owner_picks_up_needs_the_id_card_shown_there_not_as_a_pictu
         "settle", None, "next: a picture of the seller's ID card")
 
 
+def test_a_pickup_the_owner_agreed_to_is_told_in_the_next_answer_even_a_new_offer():
+    terms = Terms(price=OPENING, bank_transfer=True, in_person=True)
+
+    assert move(LIMIT, OPENING, terms, says(delivery="pickup", price=9000), False) == Move(
+        "offer", 8050, "the seller asks 9.000 €", pickup=True)
+    assert move(LIMIT, 8050, terms, says(accepts_offer=True), False).pickup is False  # told once
+
+
 def test_a_pickup_agreed_before_the_owner_had_a_word_in_it_is_asked_to_ship():
     terms = Terms(price=OPENING, bank_transfer=True, delivery="pickup", contract=True)  # kept before 13 Oct 2026
 

@@ -126,7 +126,7 @@ def move(limit: int, offered: int, terms: Terms, says: SellerSays, pictures: boo
     asked = next(iter(terms.open().values()))[2] if answer.kind in ("agreed", "settle") else None
     answer.refused = [refused[asked]] if asked in refused else []
     terms.asked_again += answer.refused
-    answer.pickup = terms.delivery == "pickup" != before and answer.kind in ("agreed", "settle", "done")
+    answer.pickup = terms.delivery == "pickup" != before
     return answer
 
 
