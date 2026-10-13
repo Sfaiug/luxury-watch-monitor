@@ -59,6 +59,7 @@ class Terms:
     asked_again: List[str] = field(default_factory=list)  # terms the seller refused once and was asked again
     asked: Optional[int] = None  # the seller's price when the agent last made or kept an offer
     held: bool = False  # the agent kept its offer once, the seller not having come down or named a price
+    stood: bool = False  # its final offer stood once, for a seller naming no price who asked something
     in_person: Optional[bool] = None  # the owner's word on a handover in person: fine, or shipping only; else none yet
 
     def open(self) -> Dict[str, Tuple[str, str, str]]:
@@ -150,9 +151,11 @@ def _price(limit: int, offered: int, terms: Terms, asked: Optional[int], accepts
         else:
             # Turned down, at a price above the limit or with none ever named
             top = limit // STEP * STEP  # its own offers in whole steps, as a person names them
-            # A seller naming no price who asks something has not turned its last offer down: it stands, the question
-            # answered
-            if offered >= top and (asked is not None or not question):
+            if offered >= top:
+                if asked is None and question and not terms.stood:
+                    # A seller naming no price who asks something may not have turned it down: it stands, once
+                    terms.stood = True
+                    return Move("final", top, "the seller names no price")
                 return Move("farewell", why=f"the seller asks {euros(asked)}, above the limit of {euros(limit)}"
                             if asked is not None else "the seller turns its last offer down")
             if not terms.held and (asked is None or terms.asked is not None and asked >= terms.asked):

@@ -90,10 +90,11 @@ def test_a_seller_turning_the_offer_down_with_no_price_is_asked_theirs_not_offer
     # Asked once: still naming none, they are offered more, up to the limit, then let go
     assert move(LIMIT, OPENING, terms, says(), False) == Move("offer", 8050, "the seller names no price")
     assert move(LIMIT, 8300, terms, says(), False) == Move("final", LIMIT, "the seller names no price")
-    # Asking something has not turned the last offer down: it stands
-    assert move(LIMIT, LIMIT, terms, says(question="Ist der Versand inbegriffen?"), False) == Move(
-        "final", LIMIT, "the seller names no price")
     assert move(LIMIT, LIMIT, terms, says(), False) == Move("farewell", why="the seller turns its last offer down")
+    # Asked something instead, it may not have been turned down: it stands, once
+    asking = says(question="Ist der Versand inbegriffen?")
+    assert move(LIMIT, LIMIT, terms, asking, False) == Move("final", LIMIT, "the seller names no price")
+    assert move(LIMIT, LIMIT, terms, asking, False).kind == "farewell"
 
 
 def test_a_seller_naming_no_price_now_stands_at_the_one_named_before():
