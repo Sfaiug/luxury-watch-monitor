@@ -655,6 +655,7 @@ async def test_once_the_owner_says_pick_it_up_the_deal_goes_on_the_seller_to_sho
 
     assert kept.get("3535834511").status == "agreed"
     assert "needs no picture of the ID card then" in instructed(claude)
+    assert "for this one he makes an exception" in instructed(claude)  # having said he buys shipped
     assert "pays at the handover, where they show him their ID card" in asked_to_write(claude)
     channel, text, buttons = notify.await_args.args
     assert "pickup" in text and "shows their ID card at the handover. Send the Kaufvertrag, and pay there" in text
