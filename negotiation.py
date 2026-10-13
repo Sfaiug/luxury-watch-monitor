@@ -129,9 +129,12 @@ def move(limit: int, offered: int, terms: Terms, says: SellerSays, pictures: boo
 
 
 def _price(limit: int, offered: int, terms: Terms, asked: Optional[int], accepts_offer: bool, opening: bool) -> Move:
-    if terms.price is not None and asked is not None and asked > terms.price:
-        # A seller asking more than was agreed opens the price again, the agent holding at the agreed one
-        offered, terms.price = max(offered, terms.price), None
+    if terms.price is not None and asked is not None:
+        if asked > terms.price:
+            # A seller asking more than was agreed opens the price again, the agent holding at the agreed one
+            offered, terms.price = max(offered, terms.price), None
+        else:
+            terms.price = asked
     agreed = terms.price is not None
     if not agreed:
         if asked is None and not opening:
