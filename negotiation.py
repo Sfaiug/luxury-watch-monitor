@@ -337,8 +337,8 @@ _ELSEWHERE = re.compile(r"vergleich|ähnlich|\bmarkt|\bander\w*\s+(?-i:Angebot|I
 
 
 def _first(message: str, at: int) -> bool:
-    """Whether the word at `at` begins a sentence or a line of the message."""
-    return bool(re.search(r"(?:^|[.!?\n])\s*$", message[:at]))
+    """Whether the word at `at` begins a sentence of the message."""
+    return bool(re.search(r"(?:^|[.!?])\s*$", message[:at]))
 
 
 def unlike_the_buyer(message: str) -> Optional[str]:
@@ -348,7 +348,7 @@ def unlike_the_buyer(message: str) -> Optional[str]:
         if formal.group() != "Sie" or not _first(message, formal.start()):
             return f'"{formal.group()}" says "Sie" to the seller, not "du"'
     for elsewhere in _ELSEWHERE.finditer(message):
-        if not (elsewhere.group().startswith("Angebot") and _first(message, elsewhere.start())):
+        if not (elsewhere.group() == "Angeboten" and _first(message, elsewhere.start())):
             return f'"{elsewhere.group()}" points to other offers or the market'
     return None
 
