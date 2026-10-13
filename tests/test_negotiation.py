@@ -37,7 +37,7 @@ def test_an_offer_the_seller_accepts_is_the_price_and_the_rest_is_settled_next()
     answer = move(LIMIT, OPENING, terms, says(accepts_offer=True), pictures=False)
 
     assert (answer.kind, answer.price, terms.price) == ("agreed", 7550, 7550)
-    assert list(terms.open()) == ["payment by bank transfer", "insured shipping, or else pickup",
+    assert list(terms.open()) == ["payment by bank transfer", "insured shipping",
                                   "the purchase contract the buyer sends to sign", "a picture of the seller's ID card"]
 
 
@@ -139,7 +139,7 @@ def test_a_term_refused_before_its_turn_waits_for_it():
     assert move(LIMIT, OPENING, terms, says(accepts_offer=True, id_card=False), False) == Move(
         "agreed", OPENING, "next: payment by bank transfer")
     assert move(LIMIT, OPENING, terms, says(bank_transfer=True, id_card=False), False) == Move(
-        "settle", None, "next: insured shipping, or else pickup")
+        "settle", None, "next: insured shipping")
     assert move(LIMIT, OPENING, terms, says(delivery="shipping", contract=True, id_card=False), False) == Move(
         "settle", None, "next: a picture of the seller's ID card", ["a picture of the ID card"])
 
@@ -159,7 +159,7 @@ def test_the_seller_is_asked_for_one_term_at_a_time_in_turn():
         asked.append((answer.kind, answer.price, answer.why))
         move(LIMIT, OPENING, terms, says(**agreed), False)
 
-    assert asked == [("settle", None, "next: payment by bank transfer"), ("settle", None, "next: insured shipping, or else pickup"),
+    assert asked == [("settle", None, "next: payment by bank transfer"), ("settle", None, "next: insured shipping"),
                      ("settle", None, "next: the purchase contract the buyer sends to sign")]
     assert move(LIMIT, OPENING, terms, says(), False).why == "next: a picture of the seller's ID card"
 
@@ -190,6 +190,34 @@ def test_all_is_agreed_once_the_id_card_is_shown_not_only_promised():
 
     assert move(LIMIT, OPENING, terms, says(id_card=True), pictures=False).kind == "settle"
     assert move(LIMIT, OPENING, terms, says(id_card=True), pictures=True) == Move("done", OPENING, "all agreed")
+
+
+def test_a_seller_handing_it_over_in_person_only_is_asked_once_more_to_ship_then_left_to_the_owner():
+    terms = Terms(price=OPENING, bank_transfer=True)
+
+    first = move(LIMIT, OPENING, terms, says(delivery="pickup"), False)
+    assert (first.kind, first.refused, terms.delivery) == ("settle", ["insured shipping"], None)
+    assert move(LIMIT, OPENING, terms, says(delivery="pickup"), False) == Move(
+        "decide", None, "the seller hands it over in person only")
+
+    terms.in_person = False  # the owner's word: shipping only
+    assert move(LIMIT, OPENING, terms, says(delivery="pickup"), False).kind == "farewell"
+
+
+def test_a_watch_the_owner_picks_up_needs_the_id_card_shown_there_not_as_a_picture():
+    terms = Terms(price=OPENING, bank_transfer=True, in_person=True)
+
+    assert move(LIMIT, OPENING, terms, says(delivery="pickup", contract=True), pictures=False) == Move(
+        "done", OPENING, "all agreed")
+    # Shipped after all, it needs the picture
+    assert move(LIMIT, OPENING, terms, says(delivery="shipping"), False) == Move(
+        "settle", None, "next: a picture of the seller's ID card")
+
+
+def test_a_pickup_agreed_before_the_owner_had_a_word_in_it_is_asked_to_ship():
+    terms = Terms(price=OPENING, bank_transfer=True, delivery="pickup", contract=True)  # kept before 13 Oct 2026
+
+    assert move(LIMIT, OPENING, terms, says(), False) == Move("settle", None, "next: insured shipping")
 
 
 TITLE = "Rolex Submariner Date 126610LN"
@@ -329,7 +357,7 @@ async def test_a_first_message_written_wrong_twice_goes_to_the_owner_who_hears_u
 
     assert box.said == [] and kept.get("3535834511").status == "owner"
     assert notify.await_count == 2  # once failed, once told, then no more
-    channel, text = notify.await_args.args
+    channel, text = notify.await_args.args[:2]
     assert channel == "filter:42" and text.startswith("The agent hands this negotiation to you")
 
 
@@ -548,8 +576,122 @@ async def test_the_owner_hears_once_all_is_agreed_and_the_id_card_shown(kept):
 
     assert box.said[-1].text == "Danke! Der Kaufvertrag kommt gleich, dann überweise ich 7.550 €."
     assert kept.get("3535834511").status == "agreed"
-    channel, text = notify.await_args.args
+    channel, text = notify.await_args.args[:2]
     assert channel == "filter:42" and "7.550 €" in text and "shipping" in text and "Kaufvertrag" in text
+
+
+def instructed(claude):
+    """What the AI was told to write the latest draft as."""
+    return json.loads(claude.requests[-1])["system"]
+
+
+async def test_a_seller_handing_it_over_in_person_only_is_asked_to_ship_it_with_a_reason(kept):
+    box = Box()
+    await opened(kept, box)
+    box.seller("Ok, 7.550 € passt, Überweisung geht klar. Aber nur Abholung.")
+    claude = Claude(reads=[says(accepts_offer=True, bank_transfer=True, delivery="pickup")],
+                    writes=["Super, [BETRAG] passt! Ich kaufe meine Uhren immer versichert verschickt, ginge das?"])
+
+    await negotiator(claude, kept).follow_up(box)
+
+    assert kept.get("3535834511").terms.delivery is None
+    assert "The seller refuses insured shipping" in asked_to_write(claude)
+    assert "does not come by to see or pick them up" in instructed(claude)
+    assert "handover in person" not in instructed(claude)
+
+
+async def insisting_on_a_handover(kept, box, notify):
+    """A seller asked once more to ship the watch, refusing again: the owner is asked, with a button for each choice."""
+    await opened(kept, box)
+    asking = kept.get("3535834511")
+    asking.terms = Terms(price=OPENING, bank_transfer=True, asked_again=["insured shipping"])
+    kept.save(asking)
+    box.seller("Nein, wirklich nur Abholung.")
+    talking = negotiator(Claude(reads=[says(delivery="pickup")]), kept, notify)
+    await talking.follow_up(box)
+    await talking.tell_owner()
+    await talking.follow_up(box)  # the seller waits while the owner decides
+    return talking
+
+
+async def test_a_seller_insisting_on_a_handover_in_person_waits_for_the_owner_s_word(kept):
+    box, notify = Box(), AsyncMock()
+    talking = await insisting_on_a_handover(kept, box, notify)
+
+    assert kept.get("3535834511").status == "deciding" and box.said[-1].text == "Nein, wirklich nur Abholung."
+    channel, text, buttons = notify.await_args.args
+    assert channel == "filter:42" and "hands it over in person only" in text and "3535834511" in text
+    assert [label for label, _ in buttons] == ["Pick it up", "Shipping only"]
+    assert talking.pressed("negotiate:3535834511") is None  # a match's own button, not a decision's
+
+
+async def test_once_the_owner_says_pick_it_up_the_deal_goes_on_the_seller_to_show_their_id_card_there(kept):
+    box, notify = Box(), AsyncMock()
+    await insisting_on_a_handover(kept, box, notify)
+    (_, pickup), _ = notify.await_args.args[2]
+    claude = Claude(reads=[says(delivery="pickup", contract=True)],
+                    writes=["Gut, dann hole ich sie bei Ihnen ab und überweise [BETRAG] direkt vor Ort."])
+    talking = negotiator(claude, kept, notify)
+
+    assert talking.pressed(pickup) == "Pick it up: the agent goes on from there with the seller."
+    assert talking.pressed(pickup) == "There is nothing to decide on this one any more."
+    await talking.follow_up(box)
+    await talking.tell_owner()
+
+    assert kept.get("3535834511").status == "agreed"
+    assert "needs no picture of the ID card then" in instructed(claude)
+    assert "pays at the handover, where they show him their ID card" in asked_to_write(claude)
+    channel, text, buttons = notify.await_args.args
+    assert "pickup" in text and "shows their ID card at the handover. Send the Kaufvertrag, and pay there" in text
+    assert buttons == []
+
+
+async def test_once_the_owner_holds_to_shipping_the_seller_is_bid_farewell(kept):
+    box, notify = Box(), AsyncMock()
+    await insisting_on_a_handover(kept, box, notify)
+    _, (_, ship) = notify.await_args.args[2]
+    talking = negotiator(Claude(reads=[says(delivery="pickup")],
+                                writes=["Schade, abholen kann ich sie leider nicht. Melden Sie sich gern, falls doch."]), kept)
+
+    talking.pressed(ship)
+    await talking.follow_up(box)
+
+    assert kept.get("3535834511").status == "ended"
+    assert box.said[-1].text == "Schade, abholen kann ich sie leider nicht. Melden Sie sich gern, falls doch."
+
+
+async def test_the_owner_is_asked_with_buttons_that_answer_the_agent(monkeypatch, kept):
+    posted = AsyncMock(return_value=(200, {"id": "1"}))
+    monkeypatch.setattr("monitor.DiscordApi.call", posted)
+    monitor = WatchMonitor(log_level="ERROR")
+    asking = asked_for()
+    asking.status, asking.notice = "deciding", "Pick it up yourself, or hold to shipping?"
+    kept.save(asking)
+    monitor.negotiator = negotiator(Claude(), kept, monitor._tell_owner)
+
+    await monitor.negotiator.tell_owner()
+
+    method, path, message = posted.await_args.args
+    assert (method, path, message["content"]) == ("POST", "/channels/42/messages", "Pick it up yourself, or hold to shipping?")
+    pickup, ship = message["components"][0]["components"]
+    assert (pickup["label"], ship["label"]) == ("Pick it up", "Shipping only")
+    assert monitor._negotiate_pressed({"data": {"custom_id": ship["custom_id"]}}).startswith("Shipping only")
+    assert (kept.get("3535834511").status, kept.get("3535834511").terms.in_person) == ("talking", False)
+
+
+async def test_a_button_pressed_while_its_notice_is_posted_holds(kept):
+    asking = asked_for()
+    asking.status, asking.notice = "deciding", "Pick it up yourself, or hold to shipping?"
+    kept.save(asking)
+
+    async def notify(channel, text, buttons):
+        talking.pressed(buttons[0][1])  # the owner, quicker than the post's answer
+
+    talking = negotiator(Claude(), kept, notify)
+    await talking.tell_owner()
+
+    decided = kept.get("3535834511")
+    assert (decided.status, decided.terms.in_person, decided.notice) == ("talking", True, "")
 
 
 async def test_a_seller_is_answered_a_while_after_they_wrote_not_at_once(kept):
@@ -664,7 +806,7 @@ async def test_a_settling_message_twice_leaving_a_term_unnamed_goes_to_the_owner
                      kept).follow_up(box)
 
     gone = kept.get("3535834511")
-    assert gone.status == "owner" and "the AI wrote no message naming insured shipping, or else pickup" in gone.notice
+    assert gone.status == "owner" and "the AI wrote no message naming insured shipping" in gone.notice
 
 
 async def test_a_word_that_only_holds_a_term_s_word_does_not_name_it(kept):

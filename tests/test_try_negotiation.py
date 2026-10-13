@@ -64,6 +64,18 @@ def test_the_conversation_is_what_the_bot_and_the_owner_wrote_in_order_without_t
         (True, "Hallo, ist die Uhr noch zu haben?", 0), (False, "Ja, noch da.", 0), (False, "", 1)]
 
 
+def test_the_owner_s_word_on_what_the_agent_asked_is_no_part_of_the_conversation():
+    discord = Discord([
+        {"id": "11", "author": {"id": "owner"}, "content": "Nur Abholung.", "timestamp": "t1"},
+        {"id": "12", "author": {"id": "owner"}, "content": " Pickup", "timestamp": "t2"},
+    ])
+    box = trying.DirectMessages(discord, "dm")
+
+    assert [m.text for m in asyncio.run(box.conversation("10")).messages] == ["Nur Abholung."]
+    assert asyncio.run(box.decision("10")) == "pickup"
+    assert asyncio.run(trying.DirectMessages(Discord(discord.messages[:1]), "dm").decision("10")) is None
+
+
 def test_the_conversation_is_read_past_the_page_discord_gives():
     discord = Discord([{"id": str(n), "author": {"id": "owner"}, "content": str(n), "timestamp": "t"}
                        for n in range(11, 11 + trying.DirectMessages.PAGE + 1)])
