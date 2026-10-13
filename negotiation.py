@@ -122,7 +122,7 @@ def move(limit: int, offered: int, terms: Terms, says: SellerSays, pictures: boo
     terms.contract = terms.contract if says.contract is None else says.contract
     terms.id_card = terms.id_card if says.id_card is None else says.id_card and (pictures or terms.id_card)
 
-    answer = _price(limit, offered, terms, says.price, says.accepts_offer and not opening, opening)
+    answer = _price(limit, offered, terms, says.price, says.accepts_offer and not opening, bool(says.question), opening)
     # The term asked for, refused, is asked for once more; any other refused waits for its turn
     asked = next(iter(terms.open().values()))[2] if answer.kind in ("agreed", "settle") else None
     answer.refused = [refused[asked]] if asked in refused else []
@@ -130,7 +130,8 @@ def move(limit: int, offered: int, terms: Terms, says: SellerSays, pictures: boo
     return answer
 
 
-def _price(limit: int, offered: int, terms: Terms, asked: Optional[int], accepts_offer: bool, opening: bool) -> Move:
+def _price(limit: int, offered: int, terms: Terms, asked: Optional[int], accepts_offer: bool, question: bool,
+           opening: bool) -> Move:
     if terms.price is not None and asked is not None and asked > terms.price:
         # A seller asking more than was agreed opens the price again, the agent holding at the agreed one
         offered, terms.price = max(offered, terms.price), None
@@ -149,7 +150,9 @@ def _price(limit: int, offered: int, terms: Terms, asked: Optional[int], accepts
         else:
             # Turned down, at a price above the limit or with none ever named
             top = limit // STEP * STEP  # its own offers in whole steps, as a person names them
-            if offered >= top:
+            # A seller naming no price who asks something has not turned its last offer down: it stands, the question
+            # answered
+            if offered >= top and (asked is not None or not question):
                 return Move("farewell", why=f"the seller asks {euros(asked)}, above the limit of {euros(limit)}"
                             if asked is not None else "the seller turns its last offer down")
             if not terms.held and (asked is None or terms.asked is not None and asked >= terms.asked):
