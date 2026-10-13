@@ -20,9 +20,10 @@ import chrono24
 import controlling
 from prices import Prices
 from agent import Agent, Deals, Verdict, opening
-from negotiation import Negotiation, Negotiations, Negotiator, euros, keep_talking
+from negotiation import Negotiation, Negotiations, Negotiator, Terms, euros, keep_talking
 from scrapers.kleinanzeigen import offer_url
 from prices_page import PricesPage
+from worth import fetched
 from discord_interactions import DiscordInteractionServer, discord_route_enabled
 from muv_service import MUVActionService
 from filters import Filter, FilterStore
@@ -608,6 +609,7 @@ class WatchMonitor:
             address=watch.url,
             limit=int(limit),
             offered=int(offered),
+            terms=Terms(in_person=fetched(self.prices, limit)),
         )
         return asked if self.negotiator.ask_to_start(asked) else None
 

@@ -1,6 +1,6 @@
 """What a watch is worth, and the most to pay for it, from its Chrono24 offers inside the EU."""
 
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
 
@@ -9,9 +9,10 @@ import pytest
 import chrono24
 from chrono24 import FULL_SET, USED
 from config import APP_CONFIG
+from controlling import Trade
 from models import WatchData
 from prices import Prices
-from worth import least_profit, most_to_pay, worth
+from worth import fetched, least_profit, most_to_pay, worth
 
 SEARCHED = datetime(2026, 10, 10, 11, 0)
 PAGE = (Path(__file__).parent / "pages" / "chrono24.html").read_text(encoding="utf-8")
@@ -136,3 +137,14 @@ def test_the_owner_moves_the_least_profit(monkeypatch):
 
 def test_a_watch_too_cheap_to_leave_the_least_profit_is_worth_buying_at_no_price():
     assert most_to_pay(Decimal("400")) == Decimal("0")
+
+
+def test_only_a_watch_as_dear_as_the_dearest_twentieth_bought_within_the_year_is_fetched_in_person(prices):
+    assert not fetched(prices, Decimal("1000000"))  # nothing bought: shipped
+
+    bought = [Trade("116610LN", False, date.today() - timedelta(days=n), Decimal(1000 * n), None, None) for n in range(1, 41)]
+    older = [Trade("116610LN", False, date.today() - timedelta(days=400), Decimal("100"), None, None)] * 20
+    prices.traded(bought + older)
+
+    # Bought for 1.000 to 40.000 € within the year: 38 of the 40 for less than 39.000 €
+    assert fetched(prices, Decimal("39000")) and not fetched(prices, Decimal("38999"))

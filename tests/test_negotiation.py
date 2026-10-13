@@ -4,7 +4,7 @@ import asyncio
 import json
 import logging
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from decimal import Decimal
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
@@ -15,11 +15,13 @@ from anthropic import AsyncAnthropic
 
 import negotiation
 from agent import Verdict
+from controlling import Trade
 from filters import Filter, FilterStore
 from kleinanzeigen_messages import Unsent
 from models import WatchData
 from monitor import WatchMonitor
 from negotiation import Move, Negotiation, Negotiations, Negotiator, SellerSays, Terms, filled, move
+from prices import Prices
 
 LIMIT, OPENING = 8600, 7550
 
@@ -37,7 +39,7 @@ def test_an_offer_the_seller_accepts_is_the_price_and_the_rest_is_settled_next()
     answer = move(LIMIT, OPENING, terms, says(accepts_offer=True), pictures=False)
 
     assert (answer.kind, answer.price, terms.price) == ("agreed", 7550, 7550)
-    assert list(terms.open()) == ["payment by bank transfer", "insured shipping, or else pickup",
+    assert list(terms.open()) == ["payment by bank transfer", "insured shipping",
                                   "the purchase contract the buyer sends to sign", "a picture of the seller's ID card"]
 
 
@@ -123,6 +125,7 @@ def test_a_seller_holding_out_to_the_agent_s_last_offer_then_agreeing_term_by_te
     (dict(), dict(bank_transfer=False)),
     (dict(bank_transfer=True, delivery="shipping"), dict(contract=False)),
     (dict(bank_transfer=True, delivery="shipping", contract=True), dict(id_card=False)),
+    (dict(bank_transfer=True), dict(delivery="pickup")),  # a deal too small to fetch: handing it over refuses shipping
 ])
 def test_a_seller_refusing_the_term_asked_for_is_asked_once_more_then_bid_farewell(agreed, refusing):
     terms = Terms(**agreed)
@@ -139,7 +142,7 @@ def test_a_term_refused_before_its_turn_waits_for_it():
     assert move(LIMIT, OPENING, terms, says(accepts_offer=True, id_card=False), False) == Move(
         "agreed", OPENING, "next: payment by bank transfer")
     assert move(LIMIT, OPENING, terms, says(bank_transfer=True, id_card=False), False) == Move(
-        "settle", None, "next: insured shipping, or else pickup")
+        "settle", None, "next: insured shipping")
     assert move(LIMIT, OPENING, terms, says(delivery="shipping", contract=True, id_card=False), False) == Move(
         "settle", None, "next: a picture of the seller's ID card", ["a picture of the ID card"])
 
@@ -159,7 +162,7 @@ def test_the_seller_is_asked_for_one_term_at_a_time_in_turn():
         asked.append((answer.kind, answer.price, answer.why))
         move(LIMIT, OPENING, terms, says(**agreed), False)
 
-    assert asked == [("settle", None, "next: payment by bank transfer"), ("settle", None, "next: insured shipping, or else pickup"),
+    assert asked == [("settle", None, "next: payment by bank transfer"), ("settle", None, "next: insured shipping"),
                      ("settle", None, "next: the purchase contract the buyer sends to sign")]
     assert move(LIMIT, OPENING, terms, says(), False).why == "next: a picture of the seller's ID card"
 
@@ -190,6 +193,16 @@ def test_all_is_agreed_once_the_id_card_is_shown_not_only_promised():
 
     assert move(LIMIT, OPENING, terms, says(id_card=True), pictures=False).kind == "settle"
     assert move(LIMIT, OPENING, terms, says(id_card=True), pictures=True) == Move("done", OPENING, "all agreed")
+
+
+def test_only_a_big_deal_is_handed_over_in_person_the_id_card_shown_there_not_as_a_picture():
+    terms = Terms(price=OPENING, bank_transfer=True, in_person=True)
+
+    assert move(LIMIT, OPENING, terms, says(delivery="pickup", contract=True), pictures=False) == Move(
+        "done", OPENING, "all agreed")
+    # Shipped after all, it needs the picture
+    assert move(LIMIT, OPENING, terms, says(delivery="shipping"), False) == Move(
+        "settle", None, "next: a picture of the seller's ID card")
 
 
 TITLE = "Rolex Submariner Date 126610LN"
@@ -437,6 +450,8 @@ def test_a_match_worth_contacting_is_negotiated_where_its_filter_says_so(tmp_pat
     monitor.filter_store.add(Filter("43", "1", "kleinanzeigen", "private", "Omega"))
     monitor._sync_filters()
     monitor.negotiator = negotiator(Claude(), kept)
+    monitor.prices = Prices(tmp_path / "prices.sqlite3")
+    monitor.prices.traded([Trade("116610LN", False, date.today(), Decimal("8000"), None, None)])
 
     def match(key, ad_id):
         return WatchData(title="Rolex Submariner", url=f"https://www.kleinanzeigen.de/s-anzeige/{ad_id}",
@@ -448,6 +463,7 @@ def test_a_match_worth_contacting_is_negotiated_where_its_filter_says_so(tmp_pat
     monitor._negotiate_if_asked(match("filter:42", "3"), Verdict(False, "asks too much above the limit"))
 
     assert [(n.ad_id, n.channel, n.limit, n.offered) for n in kept.with_status("pending")] == [("1", "filter:42", 8608, 7550)]
+    assert kept.get("1").terms.in_person  # dearer than all the business bought within the year
 
 
 async def test_with_nothing_to_do_the_session_is_used_once_a_day_to_keep_the_login_fresh(monkeypatch, kept):
@@ -550,6 +566,46 @@ async def test_the_owner_hears_once_all_is_agreed_and_the_id_card_shown(kept):
     assert kept.get("3535834511").status == "agreed"
     channel, text = notify.await_args.args
     assert channel == "filter:42" and "7.550 €" in text and "shipping" in text and "Kaufvertrag" in text
+
+
+def instructed(claude):
+    """What the AI was told to write the latest draft as."""
+    return json.loads(claude.requests[-1])["system"]
+
+
+async def test_a_seller_handing_over_in_person_a_deal_too_small_to_fetch_is_asked_to_ship_it(kept):
+    box = Box()
+    await opened(kept, box)
+    box.seller("Ok, 7.550 € passt, Überweisung geht klar. Aber nur Abholung.")
+    claude = Claude(reads=[says(accepts_offer=True, bank_transfer=True, delivery="pickup")],
+                    writes=["Super, [BETRAG] passt! Ich kaufe meine Uhren immer versichert verschickt, ginge das?"])
+
+    await negotiator(claude, kept).follow_up(box)
+
+    assert kept.get("3535834511").terms.delivery is None
+    assert "The seller refuses insured shipping" in asked_to_write(claude)
+    assert "neither picks it up" in instructed(claude) and "handover in person" not in instructed(claude)
+
+
+async def test_a_big_deal_handed_over_in_person_is_agreed_the_seller_to_show_their_id_card_there(kept):
+    box, notify = Box(), AsyncMock()
+    await opened(kept, box)
+    big = kept.get("3535834511")
+    big.terms.in_person = True
+    kept.save(big)
+    box.seller("Ok, 7.550 € passt. Überweisung und Kaufvertrag gehen klar, aber nur Abholung.")
+    claude = Claude(reads=[says(accepts_offer=True, bank_transfer=True, delivery="pickup", contract=True)],
+                    writes=["Super, dann hole ich sie ab und überweise [BETRAG] direkt vor Ort."])
+    talking = negotiator(claude, kept, notify)
+
+    await talking.follow_up(box)
+    await talking.tell_owner()
+
+    assert kept.get("3535834511").status == "agreed"
+    assert "a handover in person suits him" in instructed(claude)
+    assert "pays at the handover, where they show him their ID card" in asked_to_write(claude)
+    channel, text = notify.await_args.args
+    assert "pickup" in text and "shows their ID card at the handover" in text
 
 
 async def test_a_seller_is_answered_a_while_after_they_wrote_not_at_once(kept):
@@ -664,7 +720,7 @@ async def test_a_settling_message_twice_leaving_a_term_unnamed_goes_to_the_owner
                      kept).follow_up(box)
 
     gone = kept.get("3535834511")
-    assert gone.status == "owner" and "the AI wrote no message naming insured shipping, or else pickup" in gone.notice
+    assert gone.status == "owner" and "the AI wrote no message naming insured shipping" in gone.notice
 
 
 async def test_a_word_that_only_holds_a_term_s_word_does_not_name_it(kept):
@@ -934,6 +990,7 @@ def by_hand(tmp_path, kept):
     monitor.filter_store.add(Filter("43", "1", "kleinanzeigen", "private", "Omega"))
     monitor._sync_filters()
     monitor.negotiator = negotiator(Claude(), kept)
+    monitor.prices = Prices(tmp_path / "prices.sqlite3")
     monitor._tell_owner = AsyncMock()
     return monitor
 

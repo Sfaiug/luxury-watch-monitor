@@ -206,6 +206,15 @@ class Prices:
             )
         ]
 
+    def paid_since(self, since: date) -> List[float]:
+        """What the business paid for each watch it bought since that day, cheapest first."""
+        return [
+            paid
+            for (paid,) in self._db.execute(
+                "SELECT paid FROM trades WHERE bought >= ? AND paid IS NOT NULL ORDER BY paid", (since.isoformat(),)
+            )
+        ]
+
     def buy_price(self, reference: str) -> Optional[float]:
         """The owner's own buy price for a reference, if they set one."""
         row = self._db.execute("SELECT price FROM buy_prices WHERE reference = ?", (reference_key(reference),)).fetchone()
