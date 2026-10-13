@@ -90,6 +90,34 @@ def test_a_seller_turning_the_offer_down_with_no_price_is_asked_theirs_not_offer
     assert move(LIMIT, OPENING, terms, says(turns_down=True), False) == Move("ask", None, "the seller names no price")
 
 
+def test_a_seller_asking_for_the_best_price_gets_three_offers_then_their_price_is_agreed():
+    terms, offered = Terms(), 7350
+    assert move(8366, offered, terms, says(), False, opening=True).kind == "offer"
+    best = says(turns_down=True, question="Was ist dein bester Preis?")
+    answers = []
+    for _ in range(3):
+        answer = move(8366, offered, terms, best, False)
+        answers.append((answer.kind, answer.price))
+        offered = answer.price or offered
+
+    assert answers == [("ask", None), ("offer", 7850), ("offer", 8100)]
+    assert move(8366, offered, terms, says(price=8300), False).price == terms.price == 8300
+
+
+def test_a_seller_never_naming_a_price_gets_one_request_then_offers_up_to_the_limit_and_a_farewell():
+    terms, offered, answers = Terms(), 7350, []
+    move(8366, offered, terms, says(), False, opening=True)
+    for _ in range(10):
+        answer = move(8366, offered, terms, says(turns_down=True), False)
+        answers.append((answer.kind, answer.price))
+        offered = answer.price or offered
+        if answer.kind == "farewell":
+            break
+
+    assert answers == [("ask", None), ("offer", 7850), ("offer", 8100), ("offer", 8200),
+                       ("offer", 8250), ("final", 8350), ("farewell", None)]
+
+
 ANSWERED = Move("answer", why="the seller turns its offer down no more than before")
 
 
