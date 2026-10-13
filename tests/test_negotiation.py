@@ -41,14 +41,17 @@ def test_an_offer_the_seller_accepts_is_the_price_and_the_rest_is_settled_next()
                                   "the purchase contract the buyer sends to sign", "a picture of the seller's ID card"]
 
 
-def test_a_seller_asking_a_little_more_is_met_at_their_price():
+def test_once_it_has_offered_a_price_the_seller_names_within_the_limit_is_agreed_at_once():
     answer = move(LIMIT, OPENING, Terms(), says(price=7700), False)
     assert (answer.kind, answer.price) == ("agreed", 7700)
+    assert move(LIMIT, OPENING, Terms(), says(price=LIMIT), False).price == LIMIT
+    assert move(8366, 8100, Terms(), says(price=8300), False) == Move("agreed", 8300, "next: payment by bank transfer")
     assert move(LIMIT, OPENING, Terms(), says(price=7000), False).price == 7000  # below the offer: theirs
+    assert move(LIMIT, OPENING, Terms(), says(price=LIMIT + 1), False).kind == "offer"
 
 
-def test_the_agent_gives_half_the_room_to_its_limit_and_no_more_than_halfway_to_the_seller():
-    assert move(LIMIT, OPENING, Terms(), says(price=8500), False) == Move("offer", 8000, "the seller asks 8.500 €")
+def test_the_agent_gives_half_the_room_left_to_its_limit():
+    assert move(LIMIT, OPENING, Terms(), says(price=9000), False) == Move("offer", 8050, "the seller asks 9.000 €")
 
     # A seller who holds out far above the limit: 8.000, 8.300, 8.450, 8.500, then the limit as the last offer
     offers, offered = [], 8000
@@ -59,17 +62,16 @@ def test_the_agent_gives_half_the_room_to_its_limit_and_no_more_than_halfway_to_
     assert offers == [("offer", 8300), ("offer", 8450), ("offer", 8500), ("final", LIMIT)]
 
     assert move(LIMIT, LIMIT, Terms(), says(price=9500), False).kind == "farewell"
-    assert move(2600, 2500, Terms(), says(price=2580), False).price == 2580  # never more than the seller asks
 
 
 def test_a_seller_who_has_not_come_down_since_its_last_offer_is_met_with_that_offer_once_then_the_next_step():
     terms, answers, offered = Terms(), [], OPENING
-    for asked in (8500, 8500, 8500, 8450):
+    for asked in (9500, 9500, 9500, 9400):
         answer = move(LIMIT, offered, terms, says(price=asked), False)
         answers.append((answer.kind, answer.price))
         offered = answer.price or offered
 
-    assert answers == [("offer", 8000), ("hold", None), ("offer", 8250), ("offer", 8350)]  # the last: they came down
+    assert answers == [("offer", 8050), ("hold", None), ("offer", 8300), ("offer", 8450)]  # the last: they came down
 
 
 def test_a_seller_repeating_the_asking_price_after_the_opening_offer_is_met_with_it_once():
@@ -88,13 +90,13 @@ def test_a_seller_turning_the_offer_down_with_no_price_is_asked_theirs_not_offer
 
 def test_a_seller_naming_no_price_now_stands_at_the_one_named_before():
     terms = Terms()
-    assert move(LIMIT, OPENING, terms, says(price=8500), False) == Move("offer", 8000, "the seller asks 8.500 €")
+    assert move(LIMIT, OPENING, terms, says(price=9000), False) == Move("offer", 8050, "the seller asks 9.000 €")
 
-    assert move(LIMIT, 8000, terms, says(), False).kind == "hold"
-    assert move(LIMIT, 8000, terms, says(), False) == Move("offer", 8250, "the seller asks 8.500 €")
+    assert move(LIMIT, 8050, terms, says(), False).kind == "hold"
+    assert move(LIMIT, 8050, terms, says(), False) == Move("offer", 8300, "the seller asks 9.000 €")
 
-    assert move(LIMIT, 8250, terms, says(price=12000), False).kind == "hold"
-    assert move(LIMIT, 8250, terms, says(), False) == Move("offer", 8400, "the seller asks 12.000 €")  # their latest
+    assert move(LIMIT, 8300, terms, says(price=12000), False).kind == "hold"
+    assert move(LIMIT, 8300, terms, says(), False) == Move("offer", 8450, "the seller asks 12.000 €")  # their latest
 
 
 def test_the_agent_offers_whole_steps_its_last_below_a_limit_that_is_none():
@@ -176,7 +178,7 @@ def test_a_seller_asking_more_than_the_agreed_price_opens_the_price_again_from_i
     terms = Terms(price=OPENING, bank_transfer=True, delivery="shipping", contract=True, id_card=True)
 
     assert move(LIMIT, OPENING, terms, says(price=OPENING), False).kind == "done"  # the agreed price named again
-    assert move(LIMIT, 7000, terms, says(price=8000), False) == Move("offer", 7750, "the seller asks 8.000 €")
+    assert move(LIMIT, 7000, terms, says(price=9000), False) == Move("offer", 8050, "the seller asks 9.000 €")
     assert terms.price is None
 
 
@@ -551,11 +553,11 @@ async def test_the_seller_s_counter_is_answered_and_nothing_new_asks_nothing(kep
     await negotiator(quiet, kept).follow_up(box)
     assert quiet.asked == []
 
-    box.seller("Unter 8.500 € geht nichts.")
-    await negotiator(Claude(reads=[says(price=8500)], writes=["Wie wäre es mit [BETRAG]?"]), kept).follow_up(box)
+    box.seller("Unter 9.500 € geht nichts.")
+    await negotiator(Claude(reads=[says(price=9500)], writes=["Wie wäre es mit [BETRAG]?"]), kept).follow_up(box)
 
-    assert box.said[-1].text == "Wie wäre es mit 8.000 €?"
-    assert kept.get("3535834511").offered == 8000
+    assert box.said[-1].text == "Wie wäre es mit 8.050 €?"
+    assert kept.get("3535834511").offered == 8050
 
 
 async def test_the_owner_hears_once_all_is_agreed_and_the_id_card_shown(kept):
@@ -697,8 +699,8 @@ async def test_a_button_pressed_while_its_notice_is_posted_holds(kept):
 async def test_a_seller_is_answered_a_while_after_they_wrote_not_at_once(kept):
     box = Box()
     await opened(kept, box)
-    box.seller("Unter 8.500 € geht nichts.")
-    claude = Claude(reads=[says(price=8500)], writes=["Wie wäre es mit [BETRAG]?"])
+    box.seller("Unter 9.500 € geht nichts.")
+    claude = Claude(reads=[says(price=9500)], writes=["Wie wäre es mit [BETRAG]?"])
     talking = Negotiator(claude, kept, AsyncMock(), logging.getLogger("test"), a_while=lambda: timedelta(minutes=10))
 
     await talking.follow_up(box)
@@ -712,7 +714,7 @@ async def test_a_seller_is_answered_a_while_after_they_wrote_not_at_once(kept):
     kept.save(waiting)
     await talking.follow_up(box)
 
-    assert box.said[-1].text == "Wie wäre es mit 8.000 €?" and kept.get("3535834511").due == ""
+    assert box.said[-1].text == "Wie wäre es mit 8.050 €?" and kept.get("3535834511").due == ""
 
 
 def test_the_while_an_answer_waits_is_drawn_anew_each_time_within_minutes():
@@ -730,58 +732,58 @@ def asked_to_write(claude):
 async def test_a_draft_saying_again_what_an_earlier_message_said_is_written_anew_told_what(kept):
     box = Box()
     await opened(kept, box)
-    box.seller("Unter 8.500 € geht nichts.")
-    claude = Claude(reads=[says(price=8500)], writes=["Ist die Uhr noch zu haben? Sonst [BETRAG].", "Wie wäre es mit [BETRAG]?"])
+    box.seller("Unter 9.500 € geht nichts.")
+    claude = Claude(reads=[says(price=9500)], writes=["Ist die Uhr noch zu haben? Sonst [BETRAG].", "Wie wäre es mit [BETRAG]?"])
 
     await negotiator(claude, kept).follow_up(box)
 
-    assert box.said[-1].text == "Wie wäre es mit 8.000 €?"
+    assert box.said[-1].text == "Wie wäre es mit 8.050 €?"
     assert '"ist die uhr noch" says again what the buyer wrote before' in asked_to_write(claude)
 
 
 async def test_a_draft_saying_again_what_the_ad_says_is_written_anew_told_what(kept):
     box = Box()
     await opened(kept, box)
-    box.seller("Unter 8.500 € geht nichts.")
-    claude = Claude(reads=[says(price=8500)], writes=["Für die Submariner Date wären [BETRAG] fair.", "Wie wäre es mit [BETRAG]?"])
+    box.seller("Unter 9.500 € geht nichts.")
+    claude = Claude(reads=[says(price=9500)], writes=["Für die Submariner Date wären [BETRAG] fair.", "Wie wäre es mit [BETRAG]?"])
 
     await negotiator(claude, kept).follow_up(box)
 
-    assert box.said[-1].text == "Wie wäre es mit 8.000 €?"
+    assert box.said[-1].text == "Wie wäre es mit 8.050 €?"
     assert '"submariner date" says again what the ad says' in asked_to_write(claude)
 
 
 async def test_a_second_draft_saying_something_again_goes_out_all_the_same(kept):
     box = Box()
     await opened(kept, box)
-    box.seller("Unter 8.500 € geht nichts.")
+    box.seller("Unter 9.500 € geht nichts.")
 
-    await negotiator(Claude(reads=[says(price=8500)], writes=["Ich biete [BETRAG]."] * 2), kept).follow_up(box)
+    await negotiator(Claude(reads=[says(price=9500)], writes=["Ich biete [BETRAG]."] * 2), kept).follow_up(box)
 
-    assert box.said[-1].text == "Ich biete 8.000 €." and kept.get("3535834511").status == "talking"
+    assert box.said[-1].text == "Ich biete 8.050 €." and kept.get("3535834511").status == "talking"
 
 
 async def test_a_draft_saying_something_again_goes_out_should_its_rewrite_be_refused(kept):
     box = Box()
     await opened(kept, box)
-    box.seller("Unter 8.500 € geht nichts.")
-    claude = Claude(reads=[says(price=8500)], writes=["Ist die Uhr noch zu haben? Sonst [BETRAG].", "Maximal 9.000 €."])
+    box.seller("Unter 9.500 € geht nichts.")
+    claude = Claude(reads=[says(price=9500)], writes=["Ist die Uhr noch zu haben? Sonst [BETRAG].", "Maximal 9.000 €."])
 
     await negotiator(claude, kept).follow_up(box)
 
-    assert box.said[-1].text == "Ist die Uhr noch zu haben? Sonst 8.000 €."
+    assert box.said[-1].text == "Ist die Uhr noch zu haben? Sonst 8.050 €."
     assert kept.get("3535834511").status == "talking"
 
 
 async def test_a_draft_naming_a_sum_itself_is_written_anew_told_why(kept):
     box = Box()
     await opened(kept, box)
-    box.seller("Unter 8.500 € geht nichts.")
-    claude = Claude(reads=[says(price=8500)], writes=["8.500 € ist mir zu viel. [BETRAG]?", "Das ist mir zu viel. [BETRAG]?"])
+    box.seller("Unter 9.500 € geht nichts.")
+    claude = Claude(reads=[says(price=9500)], writes=["8.500 € ist mir zu viel. [BETRAG]?", "Das ist mir zu viel. [BETRAG]?"])
 
     await negotiator(claude, kept).follow_up(box)
 
-    assert box.said[-1].text == "Das ist mir zu viel. 8.000 €?"
+    assert box.said[-1].text == "Das ist mir zu viel. 8.050 €?"
     assert "not even one the seller wrote" in asked_to_write(claude)
 
 
@@ -837,7 +839,7 @@ async def test_once_the_owner_writes_in_the_conversation_the_agent_stays_out(kep
 async def test_its_own_answer_shown_after_a_failed_send_is_not_taken_for_the_owner_s(kept):
     box = Box()
     await opened(kept, box)
-    box.seller("Unter 8.500 € geht nichts.")
+    box.seller("Unter 9.500 € geht nichts.")
 
     async def sent_but_answered_at_once(conversation_id, text):
         box.said.append(Said(True, " ".join(text.split("\n"))))
@@ -845,47 +847,47 @@ async def test_its_own_answer_shown_after_a_failed_send_is_not_taken_for_the_own
         raise RuntimeError("conversation c1 does not end with the message written")
 
     box.reply = sent_but_answered_at_once
-    await negotiator(Claude(reads=[says(price=8500)], writes=["Wie wäre es\nmit [BETRAG]?"]), kept).follow_up(box)
+    await negotiator(Claude(reads=[says(price=9500)], writes=["Wie wäre es\nmit [BETRAG]?"]), kept).follow_up(box)
     del box.reply
-    await negotiator(Claude(reads=[says(price=8500, question="Und mit Versand?")],
+    await negotiator(Claude(reads=[says(price=9500, question="Und mit Versand?")],
                             writes=["Versichert, im Preis. Was ginge bei Ihnen noch?"]), kept).follow_up(box)
 
     assert kept.get("3535834511").status == "talking"
-    assert box.said[-1].text == "Versichert, im Preis. Was ginge bei Ihnen noch?"  # it keeps 8.000 €, the seller holding
-    assert kept.get("3535834511").offered == 8000
+    assert box.said[-1].text == "Versichert, im Preis. Was ginge bei Ihnen noch?"  # it keeps 8.050 €, the seller holding
+    assert kept.get("3535834511").offered == 8050
 
 
 async def test_an_answer_that_did_not_reach_the_seller_is_sent_again_not_decided_again(kept):
     box = Box()
     await opened(kept, box)
-    box.seller("Unter 8.500 € geht nichts.")
+    box.seller("Unter 9.500 € geht nichts.")
     box.reply = AsyncMock(side_effect=RuntimeError("the site did not answer"))
-    await negotiator(Claude(reads=[says(price=8500)], writes=["Wie wäre es mit [BETRAG]?"]), kept).follow_up(box)
+    await negotiator(Claude(reads=[says(price=9500)], writes=["Wie wäre es mit [BETRAG]?"]), kept).follow_up(box)
     del box.reply
     again = Claude()
 
     await negotiator(again, kept).follow_up(box)
 
-    assert again.asked == [] and box.said[-1].text == "Wie wäre es mit 8.000 €?"
+    assert again.asked == [] and box.said[-1].text == "Wie wäre es mit 8.050 €?"
 
 
 async def test_a_seller_who_wrote_after_an_answer_failed_is_read_and_the_answer_taken_back(kept):
     box = Box()
     await opened(kept, box)
-    box.seller("Unter 8.500 € geht nichts, und nur bar.")
+    box.seller("Unter 9.500 € geht nichts, und nur bar.")
     box.reply = AsyncMock(side_effect=RuntimeError("the site did not answer"))
-    await negotiator(Claude(reads=[says(price=8500, bank_transfer=False)], writes=["Wie wäre es mit [BETRAG] per Überweisung?"]),
+    await negotiator(Claude(reads=[says(price=9500, bank_transfer=False)], writes=["Wie wäre es mit [BETRAG] per Überweisung?"]),
                      kept).follow_up(box)
-    box.seller("Keine Antwort? Dann eben 8.200 €, aber bar.")
+    box.seller("Keine Antwort? Dann eben 9.200 €, aber bar.")
     del box.reply
-    claude = Claude(reads=[says(price=8200, bank_transfer=False)], writes=["Für [BETRAG] gern, aber nur per Überweisung."])
+    claude = Claude(reads=[says(price=9200, bank_transfer=False)], writes=["Für [BETRAG] gern, aber nur per Überweisung."])
 
     await negotiator(claude, kept).follow_up(box)
 
     assert [s.text for s in box.said if s.outbound] == ["Ist die Uhr noch zu haben?", "Ich biete 7.550 €.",
-                                                        "Für 7.850 € gern, aber nur per Überweisung."]
+                                                        "Für 8.050 € gern, aber nur per Überweisung."]
     now = kept.get("3535834511")
-    assert (now.status, now.offered, now.terms.asked_again) == ("talking", 7850, [])  # the refusal waits for its turn
+    assert (now.status, now.offered, now.terms.asked_again) == ("talking", 8050, [])  # the refusal waits for its turn
 
 
 async def test_a_refusal_an_answer_taken_back_asked_again_counts_once(kept):
