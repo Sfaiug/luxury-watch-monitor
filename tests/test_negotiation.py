@@ -61,7 +61,7 @@ def test_the_agent_gives_half_the_room_left_to_its_limit():
         answer = move(LIMIT, offered, Terms(), says(price=11000), False)
         offers.append((answer.kind, answer.price))
         offered = answer.price
-    assert offers == [("offer", 8300), ("offer", 8450), ("offer", 8500), ("final", LIMIT)]
+    assert offers == [("offer", 8300), ("final", LIMIT)]  # 8.450 € would leave less than 2% of the limit to it
 
     assert move(LIMIT, LIMIT, Terms(), says(price=9500), False).kind == "farewell"
 
@@ -74,7 +74,7 @@ def test_a_seller_who_has_not_come_down_since_its_last_offer_is_met_with_that_of
         answers.append((answer.kind, answer.price))
         offered = answer.price or offered
 
-    assert answers == [("offer", 8050), ("hold", None), ("offer", 8300), ("offer", 8450)]
+    assert answers == [("offer", 8050), ("hold", None), ("offer", 8300), ("final", LIMIT)]
 
 
 def test_a_seller_repeating_the_asking_price_after_the_opening_offer_is_met_with_it_once():
@@ -115,8 +115,7 @@ def test_a_seller_never_naming_a_price_gets_one_request_then_offers_up_to_the_li
         if answer.kind == "farewell":
             break
 
-    assert answers == [("ask", None), ("offer", 7850), ("offer", 8100), ("offer", 8200),
-                       ("offer", 8250), ("final", 8350), ("farewell", None)]
+    assert answers == [("ask", None), ("offer", 7850), ("offer", 8100), ("final", 8350), ("farewell", None)]
 
 
 ANSWERED = Move("answer", why="the seller turns its offer down no more than before")
@@ -143,8 +142,8 @@ def test_a_seller_naming_no_price_now_stands_at_the_one_named_before():
     assert move(LIMIT, 8050, terms, no, False).kind == "hold"
     assert move(LIMIT, 8050, terms, no, False) == Move("offer", 8300, "the seller asks 9.000 €")
 
-    assert move(LIMIT, 8300, terms, says(price=12000), False) == Move("offer", 8450, "the seller asks 12.000 €")
-    assert move(LIMIT, 8450, terms, no, False) == Move("offer", 8500, "the seller asks 12.000 €")  # their latest
+    assert move(LIMIT, 8300, terms, says(price=12000), False) == Move("final", LIMIT, "the seller asks 12.000 €")
+    assert move(LIMIT, LIMIT, terms, no, False).why == "the seller asks 12.000 €, above the limit of 8.600 €"  # their latest
 
 
 def test_the_agent_offers_whole_steps_its_last_below_a_limit_that_is_none():

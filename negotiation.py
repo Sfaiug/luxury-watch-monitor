@@ -31,6 +31,8 @@ from kleinanzeigen_messages import Messages, Unsent, plain
 from prices_page import euros
 from scrapers.kleinanzeigen import BASE_URL
 
+NEAR = 0.02  # an offer leaving less than this share of the limit to it is the limit: a buyer's last steps are no 50 €
+
 class SellerSays(BaseModel):
     """Where the seller stands after their latest messages, as the AI reads it."""
 
@@ -172,7 +174,7 @@ def _price(limit: int, offered: int, terms: Terms, asked: Optional[int], accepts
             terms.asked = asked
             # Half the room left up to the limit, 50 euros at a time
             counter = max(offered + STEP, (offered + top) // 2 // STEP * STEP)
-            if counter < top - STEP:
+            if top - counter >= max(STEP, limit * NEAR):
                 return Move("offer", counter, why)
             return Move("final", top, why)  # the last step is the limit itself
     if terms.open():
