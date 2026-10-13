@@ -66,14 +66,15 @@ def test_the_agent_gives_half_the_room_left_to_its_limit():
     assert move(LIMIT, LIMIT, Terms(), says(price=9500), False).kind == "farewell"
 
 
-def test_a_seller_who_has_not_come_down_since_its_last_offer_is_met_with_that_offer_once_then_the_next_step():
+@pytest.mark.parametrize("asks", [(9500, 9500, 9500, 9500), (9500, 9500, 9400, 9300)], ids=["holding", "coming down"])
+def test_a_seller_who_has_not_come_down_since_its_last_offer_is_met_with_that_offer_once_in_the_negotiation(asks):
     terms, answers, offered = Terms(), [], OPENING
-    for asked in (9500, 9500, 9500, 9400):
+    for asked in asks:
         answer = move(LIMIT, offered, terms, says(price=asked), False)
         answers.append((answer.kind, answer.price))
         offered = answer.price or offered
 
-    assert answers == [("offer", 8050), ("hold", None), ("offer", 8300), ("offer", 8450)]  # the last: they came down
+    assert answers == [("offer", 8050), ("hold", None), ("offer", 8300), ("offer", 8450)]
 
 
 def test_a_seller_repeating_the_asking_price_after_the_opening_offer_is_met_with_it_once():
@@ -142,8 +143,8 @@ def test_a_seller_naming_no_price_now_stands_at_the_one_named_before():
     assert move(LIMIT, 8050, terms, no, False).kind == "hold"
     assert move(LIMIT, 8050, terms, no, False) == Move("offer", 8300, "the seller asks 9.000 €")
 
-    assert move(LIMIT, 8300, terms, says(price=12000), False).kind == "hold"
-    assert move(LIMIT, 8300, terms, no, False) == Move("offer", 8450, "the seller asks 12.000 €")  # their latest
+    assert move(LIMIT, 8300, terms, says(price=12000), False) == Move("offer", 8450, "the seller asks 12.000 €")
+    assert move(LIMIT, 8450, terms, no, False) == Move("offer", 8500, "the seller asks 12.000 €")  # their latest
 
 
 def test_the_agent_offers_whole_steps_its_last_below_a_limit_that_is_none():
@@ -164,7 +165,7 @@ def test_a_seller_holding_out_to_the_agent_s_last_offer_then_agreeing_term_by_te
     for agreed in (dict(bank_transfer=True), dict(delivery="shipping"), dict(contract=True), dict(id_card=True)):
         written.append(move(LIMIT, LIMIT, terms, says(**agreed), True).kind)
 
-    assert written[-1] == "done" and written.count("hold") == 5
+    assert written[-1] == "done" and written.count("hold") == 1
     assert len(written) <= negotiation.MOST_WRITTEN
 
 

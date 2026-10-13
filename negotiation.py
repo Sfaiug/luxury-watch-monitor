@@ -57,7 +57,7 @@ class Terms:
     id_card: bool = False
     asked_again: List[str] = field(default_factory=list)  # terms the seller refused once and was asked again
     asked: Optional[int] = None  # the seller's price when the agent last made or kept an offer
-    held: bool = False  # the seller has been asked to move on price before the agent raises its offer
+    held: bool = False  # the agent kept its offer, or asked the seller's price, as it does once in a negotiation
     in_person: Optional[bool] = None  # the owner's word on a handover in person: fine, or shipping only; else none yet
 
     def open(self) -> Dict[str, Tuple[str, str, str]]:
@@ -169,7 +169,7 @@ def _price(limit: int, offered: int, terms: Terms, asked: Optional[int], accepts
                 # The seller has not come down since its last offer: it keeps that one, once, for them to move
                 terms.asked, terms.held = asked, True
                 return Move("hold", why=f"the seller holds at {euros(asked)}")
-            terms.asked, terms.held = asked, asked is None
+            terms.asked = asked
             # Half the room left up to the limit, 50 euros at a time
             counter = max(offered + STEP, (offered + top) // 2 // STEP * STEP)
             if counter < top - STEP:
