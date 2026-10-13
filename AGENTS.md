@@ -42,6 +42,10 @@ tests: scripts/test.sh
 - The agent writes as a person chatting does (12 Oct 2026: "we dont want that the agent always instnaly writes, this is not human at all", "Every time writing hello and greetings? Alwas repeating itself?"): it answers after a while, greets only at the start and repeats nothing.
 - The seller is asked one thing at a time, until the deal stands (12 Oct 2026: "the agent should also not isntanly bombard the seller with all the requests, it should be one after another. Psychological trick, we get the seller in a 'yes loop' until we have the deal. Use psychological tricks."): first whether the watch is still there, then the price, then each term in turn.
 - Asked where the buyer is from, the agent says Berlin (12 Oct 2026, asked which city it may name: "Berlin").
+- The agent says "du" to every seller, as people on Kleinanzeigen do (13 Oct 2026: "The buyer should feel less AI, I think we should use du instead of sie").
+- The agent explains no amount by other offers, the market or what other watches cost (13 Oct 2026, of "das ergibt sich aus dem Vergleich mit aktuellen Angeboten": "should never compare to other listings").
+- Once the agent has offered, a price the seller names that is no more than the most it may pay is agreed at once (13 Oct 2026, of a seller asking 8.300 € where 8.366 € was the most: "when I said 8300 should have just agreed, we said 8366 can be paid max").
+- The agent is tried against AI sellers of many kinds, not by the owner playing one (13 Oct 2026: "it would make more sense if we get 2 agents doing this simulation instead of me. One simulationg the seller one the buyer. Then I am out of the loop and you improve along the way", "we simualte a large variatey of sellers").
 
 ## Lessons
 
