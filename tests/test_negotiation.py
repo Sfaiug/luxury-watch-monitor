@@ -93,6 +93,9 @@ def test_a_seller_naming_no_price_now_stands_at_the_one_named_before():
     assert move(LIMIT, 8000, terms, says(), False).kind == "hold"
     assert move(LIMIT, 8000, terms, says(), False) == Move("offer", 8250, "the seller asks 8.500 €")
 
+    assert move(LIMIT, 8250, terms, says(price=12000), False).kind == "hold"
+    assert move(LIMIT, 8250, terms, says(), False) == Move("offer", 8400, "the seller asks 12.000 €")  # their latest
+
 
 def test_the_agent_offers_whole_steps_its_last_below_a_limit_that_is_none():
     assert move(8366, 8250, Terms(), says(price=9000), False) == Move("final", 8350, "the seller asks 9.000 €")
