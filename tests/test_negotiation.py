@@ -578,7 +578,7 @@ async def test_the_owner_hears_once_all_is_agreed_and_the_id_card_shown(kept):
     await opened(kept, box)
     box.seller("Ok, 7.550 € passt. Überweisung, Versand und Kaufvertrag sind ok.")
     await negotiator(Claude(reads=[says(accepts_offer=True, bank_transfer=True, delivery="shipping", contract=True)],
-                            writes=["Super, [BETRAG] passt! Schicken Sie mir noch ein Foto Ihres Ausweises für den Kaufvertrag?"]),
+                            writes=["Super, [BETRAG] passt! Schickst du mir noch ein Foto deines Ausweises für den Kaufvertrag?"]),
                      kept).follow_up(box)
     assert kept.get("3535834511").status == "talking"
     assert box.said[-1].text.startswith("Super, 7.550 € passt!")  # an agreed price is named again with the rest
@@ -645,7 +645,7 @@ async def test_once_the_owner_says_pick_it_up_the_deal_goes_on_the_seller_to_sho
     await insisting_on_a_handover(kept, box, notify)
     (_, pickup), _ = notify.await_args.args[2]
     claude = Claude(reads=[says(delivery="pickup", contract=True)],
-                    writes=["Gut, dann hole ich sie bei Ihnen ab und überweise [BETRAG] direkt vor Ort."])
+                    writes=["Gut, dann hole ich sie bei dir ab und überweise [BETRAG] direkt vor Ort."])
     talking = negotiator(claude, kept, notify)
 
     assert talking.pressed(pickup) == "Pick it up: the agent goes on from there with the seller."
@@ -666,13 +666,13 @@ async def test_once_the_owner_holds_to_shipping_the_seller_is_bid_farewell(kept)
     await insisting_on_a_handover(kept, box, notify)
     _, (_, ship) = notify.await_args.args[2]
     talking = negotiator(Claude(reads=[says(delivery="pickup")],
-                                writes=["Schade, abholen kann ich sie leider nicht. Melden Sie sich gern, falls doch."]), kept)
+                                writes=["Schade, abholen kann ich sie leider nicht. Melde dich gern, falls doch."]), kept)
 
     talking.pressed(ship)
     await talking.follow_up(box)
 
     assert kept.get("3535834511").status == "ended"
-    assert box.said[-1].text == "Schade, abholen kann ich sie leider nicht. Melden Sie sich gern, falls doch."
+    assert box.said[-1].text == "Schade, abholen kann ich sie leider nicht. Melde dich gern, falls doch."
 
 
 async def test_the_owner_is_asked_with_buttons_that_answer_the_agent(monkeypatch, kept):
@@ -800,6 +800,48 @@ async def test_a_draft_naming_a_sum_itself_is_written_anew_told_why(kept):
     assert "not even one the seller wrote" in asked_to_write(claude)
 
 
+@pytest.mark.parametrize("written, why", [
+    ("Passt für Sie eine Überweisung?", '"Sie" says "Sie" to the seller, not "du"'),
+    ("Hallo, würden Ihnen [BETRAG] passen?", '"Ihnen" says "Sie" to the seller, not "du"'),
+    ("Ok. Was wäre Ihr Preis?", '"Ihr" says "Sie" to the seller, not "du"'),
+    ("Ihr Preis ist mir zu hoch, [BETRAG] passt für mich.", '"Ihr" says "Sie" to the seller, not "du"'),
+    ("[BETRAG], das ergibt sich aus dem Vergleich mit aktuellen Angeboten.", '"Vergleich" points to other offers or the market'),
+    ("Das liegt über dem, was ich bei ähnlichen Uhren sehe.", '"ähnlich" points to other offers or the market'),
+    ("Der Marktpreis liegt eher bei [BETRAG].", '"Marktpreis" points to other offers or the market'.replace("Marktpreis", "Markt")),
+    ("Die Preise sind gerade gefallen.", '"Preise" points to other offers or the market'),
+    ("[BETRAG] wäre ok, bei anderen Angeboten zahle ich weniger.", '"anderen Angebot" points to other offers or the market'),
+    ("[BETRAG] ergibt sich aus aktuellen Angeboten.", '"Angeboten" points to other offers or the market'),
+    ("In den Inseraten wird weniger verlangt.", '"Inseraten" points to other offers or the market'),
+    ("[BETRAG] ergibt sich aus den Preisen anderer Uhren.", '"Preisen" points to other offers or the market'),
+    ("Ich habe ein anderes Inserat für [BETRAG] gesehen.", '"anderes Inserat" points to other offers or the market'),
+    ("Wie angeboten, [BETRAG]. Dein Inserat ist ja noch online.", None),
+    ("Sie ist noch da? Passt dir eine Überweisung?", None),  # at a sentence's start, the watch
+    ("Hallo, ist sie noch zu haben?", None),
+    ("Mehr ist sie mir nicht wert, [BETRAG] ginge.", None),
+])
+def test_the_buyer_says_du_and_points_to_no_other_offer(written, why):
+    assert negotiation.unlike_the_buyer(written) == why
+
+
+async def test_a_draft_saying_sie_or_pointing_to_other_offers_is_written_anew_told_why_and_twice_goes_to_the_owner(kept):
+    box = Box()
+    await opened(kept, box)
+    box.seller("Unter 9.500 € geht nichts.")
+    claude = Claude(reads=[says(price=9500)], writes=["Wären [BETRAG] für Sie ok?", "Wären [BETRAG] für dich ok?"])
+
+    await negotiator(claude, kept).follow_up(box)
+
+    assert box.said[-1].text == "Wären 8.050 € für dich ok?"
+    assert 'refused: "Sie" says "Sie" to the seller, not "du"' in asked_to_write(claude)
+
+    box.seller("Na gut, 9.400 €.")
+    twice = ["Ähnliche Uhren gehen für [BETRAG] weg.", "Im Vergleich sind [BETRAG] fair."]
+    await negotiator(Claude(reads=[says(price=9400)], writes=twice), kept).follow_up(box)
+
+    gone = kept.get("3535834511")
+    assert gone.status == "owner" and "points to other offers or the market" in gone.notice
+
+
 async def test_an_answer_written_wrong_twice_goes_to_the_owner(kept):
     box = Box()
     await opened(kept, box)
@@ -815,7 +857,7 @@ async def test_a_settling_message_twice_leaving_a_term_unnamed_goes_to_the_owner
     box = Box()
     await opened(kept, box)
     box.seller("Ok, 7.550 passt. Überweisung und Kaufvertrag gehen klar.")
-    unnamed = "Super, [BETRAG] passt! Schicken Sie mir noch ein Foto Ihres Ausweises?"
+    unnamed = "Super, [BETRAG] passt! Schickst du mir noch ein Foto deines Ausweises?"
 
     await negotiator(Claude(reads=[says(accepts_offer=True, bank_transfer=True, contract=True)], writes=[unnamed, unnamed]),
                      kept).follow_up(box)
@@ -863,10 +905,10 @@ async def test_its_own_answer_shown_after_a_failed_send_is_not_taken_for_the_own
     await negotiator(Claude(reads=[says(price=9500)], writes=["Wie wäre es\nmit [BETRAG]?"]), kept).follow_up(box)
     del box.reply
     await negotiator(Claude(reads=[says(price=9500, question="Und mit Versand?")],
-                            writes=["Versichert, im Preis. Was ginge bei Ihnen noch?"]), kept).follow_up(box)
+                            writes=["Versichert, im Preis. Was ginge bei dir noch?"]), kept).follow_up(box)
 
     assert kept.get("3535834511").status == "talking"
-    assert box.said[-1].text == "Versichert, im Preis. Was ginge bei Ihnen noch?"  # it keeps 8.050 €, the seller holding
+    assert box.said[-1].text == "Versichert, im Preis. Was ginge bei dir noch?"  # it keeps 8.050 €, the seller holding
     assert kept.get("3535834511").offered == 8050
 
 
@@ -998,8 +1040,8 @@ async def test_a_seller_who_wrote_after_the_last_word_failed_is_read_before_it_e
 
 
 @pytest.mark.parametrize("words", [
-    "Super, [BETRAG]! Können Sie die Uhr versichert verschicken?",
-    "Super, [BETRAG]! Würden Sie sie mir versichert zuschicken? Dann ist sie am schnellsten bei mir.",
+    "Super, [BETRAG]! Kannst du die Uhr versichert verschicken?",
+    "Super, [BETRAG]! Würdest du sie mir versichert zuschicken? Dann ist sie am schnellsten bei mir.",
 ])
 async def test_a_settling_message_asks_for_the_next_term_alone_named_as_people_do(kept, words):
     box = Box()
@@ -1036,7 +1078,7 @@ async def test_a_seller_who_writes_again_after_the_agent_let_them_go_is_answered
     at_limit = kept.get("3535834511")
     at_limit.offered = LIMIT
     kept.save(at_limit)
-    await negotiator(Claude(reads=[says(price=12000)], writes=["Schade, da komme ich nicht mit. Melden Sie sich gern."]),
+    await negotiator(Claude(reads=[says(price=12000)], writes=["Schade, da komme ich nicht mit. Melde dich gern."]),
                      kept).follow_up(box)
     assert kept.get("3535834511").status == "ended"
     quiet = Claude()
@@ -1044,12 +1086,12 @@ async def test_a_seller_who_writes_again_after_the_agent_let_them_go_is_answered
     assert quiet.asked == []  # its own farewell is the last word
 
     box.seller("Ok, dann machen wir 8.600 €.")
-    claude = Claude(reads=[says(price=8600)], writes=["Prima, [BETRAG]! Passt Ihnen Überweisung?"])
+    claude = Claude(reads=[says(price=8600)], writes=["Prima, [BETRAG]! Passt dir Überweisung?"])
     talking = negotiator(claude, kept)
     assert [n.ad_id for n in talking.waiting()] == ["3535834511"]
     await talking.follow_up(box)
 
-    assert box.said[-1].text == "Prima, 8.600 €! Passt Ihnen Überweisung?"
+    assert box.said[-1].text == "Prima, 8.600 €! Passt dir Überweisung?"
     assert (kept.get("3535834511").status, kept.get("3535834511").terms.price) == ("talking", 8600)
 
 
@@ -1063,7 +1105,7 @@ async def test_what_the_seller_wrote_before_the_end_is_not_read_again_only_what_
     assert kept.get("3535834511").status == "ended" and quiet.asked == []
 
     box.seller("Der Käufer ist abgesprungen, noch Interesse?")
-    claude = Claude(reads=[says()], writes=["Ja, gern. Was wäre Ihr Preis?"])
+    claude = Claude(reads=[says()], writes=["Ja, gern. Was wäre dein Preis?"])
     await negotiator(claude, kept).follow_up(box)
 
     assert claude.asked == ["read", "write"] and kept.get("3535834511").status == "talking"
