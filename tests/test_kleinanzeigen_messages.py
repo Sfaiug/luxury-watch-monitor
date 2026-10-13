@@ -85,7 +85,7 @@ async def test_a_conversation_reads_as_it_was_written():
 
     read = await Messages(site).conversation("abc:1:xyz")
 
-    assert (read.id, read.ad_id, read.seller) == ("abc:1:xyz", "3535834511", "Tim")
+    assert (read.id, read.ad_id, read.seller, read.buyer) == ("abc:1:xyz", "3535834511", "Tim", "Owner")
     assert [(m.outbound, m.text, m.attachments) for m in read.messages] == [
         (True, "Hallo, wäre bei 9.000 € dabei.", 0),
         (False, "Gern, hier mein Ausweis.", 1),  # whole, though its short text is cut

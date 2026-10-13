@@ -102,6 +102,7 @@ SELLERS = {
                      f"{AGREES}", "agreed", DATEJUST),
 }
 
+BUYER = "Jonas M."  # the buyer's name as Kleinanzeigen shows it to the seller: a pretend one
 TURNS = MOST_WRITTEN + 6  # the seller's messages at most: the agent hands over after its own most
 SELLER = """You are a private person selling a watch on Kleinanzeigen, chatting with a buyer in German, short and
 casual, as people write on their phone. The ad: {title}, asking {asking}. {brief}
@@ -125,7 +126,7 @@ class Box:
         return ad_id
 
     async def conversation(self, conversation_id: str) -> Conversation:
-        return Conversation(conversation_id, conversation_id, "the seller", list(self.said))
+        return Conversation(conversation_id, conversation_id, "the seller", list(self.said), BUYER)
 
     async def reply(self, conversation_id: str, text: str):
         self.said.append(Message(True, text, 0, ""))
