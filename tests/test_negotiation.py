@@ -174,6 +174,19 @@ def test_before_its_first_offer_the_agent_opens_with_it_whatever_the_seller_asks
     assert move(LIMIT, OPENING, Terms(), says(price=7000), False, opening=True) == Move("agreed", 7000, "next: payment by bank transfer")
 
 
+@pytest.mark.parametrize("accepts_offer", [False, True])
+@pytest.mark.parametrize("bank_transfer", [False, True])
+def test_a_seller_lowering_the_agreed_price_keeps_the_lower_price(accepts_offer, bank_transfer):
+    terms = Terms(price=8300, bank_transfer=bank_transfer, delivery="shipping", contract=True, id_card=True)
+
+    answer = move(8366, 8100, terms, says(price=8250, accepts_offer=accepts_offer), False)
+
+    assert terms.price == 8250
+    assert answer == (Move("done", 8250, "all agreed") if bank_transfer else
+                      Move("settle", None, "next: payment by bank transfer"))
+    assert move(8366, 8100, terms, says(bank_transfer=True), False) == Move("done", 8250, "all agreed")
+
+
 def test_a_seller_asking_more_than_the_agreed_price_opens_the_price_again_from_it():
     terms = Terms(price=OPENING, bank_transfer=True, delivery="shipping", contract=True, id_card=True)
 
