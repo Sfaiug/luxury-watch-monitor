@@ -639,12 +639,11 @@ class Negotiator:
             elif unlike := unlike_the_buyer(message):
                 why, told = f"the AI wrote what the buyer would not: {unlike}", unlike
             elif draft == 0 and (again := said_again(message, negotiation.sent, negotiation.title)):
-                again_said, refused = message, f"\n\nYour last draft was refused: {again}. Say it anew or not at all."
-                continue
+                why, told, again_said = again, f"{again}. Say it anew or not at all", message
             else:
                 return message
             self.logger.warning(f"Negotiation: a draft refused, {why}: {written.message if written else '(declined)'}")
-            if again_said:
+            if draft and again_said:
                 return again_said
             refused = f"\n\nYour last draft was refused: {told}."
         self._hand_over(negotiation, why)
