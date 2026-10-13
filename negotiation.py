@@ -87,6 +87,7 @@ class Move:
     price: Optional[int] = None
     why: str = ""
     refused: List[str] = field(default_factory=list)  # terms the seller refuses, to be asked again
+    pickup: bool = False  # the handover in person agreed just now, by the owner's word: the seller is told
 
 
 def move(limit: int, offered: int, terms: Terms, says: SellerSays, pictures: bool, opening: bool = False) -> Move:
@@ -115,7 +116,7 @@ def move(limit: int, offered: int, terms: Terms, says: SellerSays, pictures: boo
         return Move("farewell", why="the seller refuses " + " and ".join(refused.values()))
     # A refusal takes back what was agreed; the ID card counts once said and shown
     terms.bank_transfer = terms.bank_transfer if says.bank_transfer is None else says.bank_transfer
-    delivery = terms.delivery if says.delivery is None else says.delivery
+    delivery, before = terms.delivery if says.delivery is None else says.delivery, terms.delivery
     terms.delivery = delivery if delivery != "pickup" or terms.in_person else None  # in person by the owner's word only
     terms.contract = terms.contract if says.contract is None else says.contract
     terms.id_card = terms.id_card if says.id_card is None else says.id_card and (pictures or terms.id_card)
@@ -125,6 +126,7 @@ def move(limit: int, offered: int, terms: Terms, says: SellerSays, pictures: boo
     asked = next(iter(terms.open().values()))[2] if answer.kind in ("agreed", "settle") else None
     answer.refused = [refused[asked]] if asked in refused else []
     terms.asked_again += answer.refused
+    answer.pickup = terms.delivery == "pickup" != before
     return answer
 
 
@@ -256,6 +258,8 @@ TASKS = {
                 "should they think it over.",
 }
 INSIST = " The seller refuses {refused}: say why the buyer holds to it, as for every watch he buys, and ask once more."
+# The seller told first that the buyer, having asked for shipping, comes to them for the watch after all
+PICKUP = " Before that, say in a few words that the buyer comes to the seller for the watch, as an exception."
 # Where the buyer pays, said once all is agreed: handed the watch in person, on the spot, the seller's ID card shown
 PAID = {False: "", True: " at the handover, where they show him their ID card"}
 
@@ -612,6 +616,8 @@ class Negotiator:
                                          paid=PAID[negotiation.terms.delivery == "pickup"])
         if answer.refused:
             task += INSIST.format(refused=" and ".join(answer.refused))
+        if answer.pickup:
+            task += PICKUP
         content = f"{transcript(negotiation, said)}\n\nTask: {task}"
         if question:
             content += f"\nThe seller's open question: {question}"

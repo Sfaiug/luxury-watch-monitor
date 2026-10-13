@@ -223,10 +223,18 @@ def test_a_watch_the_owner_picks_up_needs_the_id_card_shown_there_not_as_a_pictu
     terms = Terms(price=OPENING, bank_transfer=True, in_person=True)
 
     assert move(LIMIT, OPENING, terms, says(delivery="pickup", contract=True), pictures=False) == Move(
-        "done", OPENING, "all agreed")
+        "done", OPENING, "all agreed", pickup=True)  # agreed just now: the seller is told
     # Shipped after all, it needs the picture
     assert move(LIMIT, OPENING, terms, says(delivery="shipping"), False) == Move(
         "settle", None, "next: a picture of the seller's ID card")
+
+
+def test_a_pickup_the_owner_agreed_to_is_told_in_the_next_answer_even_a_new_offer():
+    terms = Terms(price=OPENING, bank_transfer=True, in_person=True)
+
+    assert move(LIMIT, OPENING, terms, says(delivery="pickup", price=9000), False) == Move(
+        "offer", 8050, "the seller asks 9.000 €", pickup=True)
+    assert move(LIMIT, 8050, terms, says(accepts_offer=True), False).pickup is False  # told once
 
 
 def test_a_pickup_agreed_before_the_owner_had_a_word_in_it_is_asked_to_ship():
@@ -657,6 +665,7 @@ async def test_once_the_owner_says_pick_it_up_the_deal_goes_on_the_seller_to_sho
     assert "needs no picture of the ID card then" in instructed(claude)
     assert "for this one he makes an exception" in instructed(claude)  # having said he buys shipped
     assert "pays at the handover, where they show him their ID card" in asked_to_write(claude)
+    assert "the buyer comes to the seller for the watch, as an exception" in asked_to_write(claude)
     channel, text, buttons = notify.await_args.args
     assert "pickup" in text and "shows their ID card at the handover. Send the Kaufvertrag, and pay there" in text
     assert buttons == []
