@@ -368,9 +368,10 @@ def test_a_first_message_from_before_it_only_asked_whether_the_watch_is_there_ha
     assert negotiation.opened
 
 
-async def test_a_first_message_written_wrong_twice_goes_to_the_owner_who_hears_until_told(kept):
+async def test_a_first_message_written_wrong_each_time_goes_to_the_owner_who_hears_until_told(kept):
     box, notify = Box(), AsyncMock(side_effect=[RuntimeError("Discord is down"), None])
-    talking = negotiator(Claude(writes=["Ich biete 8,5k.", "Ich biete [BETRAG] oder fünfhundert mehr."]), kept, notify)
+    wrong = ["Ich biete 8,5k.", "Ich biete [BETRAG] oder fünfhundert mehr.", "Hallo, 8.000 €?"]
+    talking = negotiator(Claude(writes=wrong), kept, notify)
     talking.ask_to_start(asked_for())
 
     await talking.start(box)
@@ -833,7 +834,7 @@ def test_the_buyer_says_du_and_points_to_no_other_offer(written, why):
     assert negotiation.unlike_the_buyer(written) == why
 
 
-async def test_a_draft_saying_sie_or_pointing_to_other_offers_is_written_anew_told_why_and_twice_goes_to_the_owner(kept):
+async def test_a_draft_saying_sie_or_pointing_to_other_offers_is_written_anew_told_why_and_each_time_goes_to_the_owner(kept):
     box = Box()
     await opened(kept, box)
     box.seller("Unter 9.500 € geht nichts.")
@@ -845,31 +846,44 @@ async def test_a_draft_saying_sie_or_pointing_to_other_offers_is_written_anew_to
     assert 'refused: "Sie" says "Sie" to the seller, not "du"' in asked_to_write(claude)
 
     box.seller("Na gut, 9.400 €.")
-    twice = ["Ähnliche Uhren gehen für [BETRAG] weg.", "Im Vergleich sind [BETRAG] fair."]
-    await negotiator(Claude(reads=[says(price=9400)], writes=twice), kept).follow_up(box)
+    each = ["Ähnliche Uhren gehen für [BETRAG] weg.", "Im Vergleich sind [BETRAG] fair.", "Passt Ihnen [BETRAG]?"]
+    await negotiator(Claude(reads=[says(price=9400)], writes=each), kept).follow_up(box)
 
     gone = kept.get("3535834511")
-    assert gone.status == "owner" and "points to other offers or the market" in gone.notice
+    assert gone.status == "owner" and '"Ihnen" says "Sie" to the seller' in gone.notice  # the last refusal
 
 
-async def test_an_answer_written_wrong_twice_goes_to_the_owner(kept):
+async def test_an_answer_written_wrong_each_time_goes_to_the_owner_the_drafts_logged(kept, caplog):
     box = Box()
     await opened(kept, box)
     box.seller("Was ist Ihr bestes Angebot?")
 
-    await negotiator(Claude(reads=[says()], writes=["Maximal 9.000 €.", "Bis neuntausend."]), kept).follow_up(box)
+    await negotiator(Claude(reads=[says()], writes=["Maximal 9.000 €.", "Bis neuntausend.", "Für 9k?"]), kept).follow_up(box)
 
     assert box.said[-1].text == "Was ist Ihr bestes Angebot?"
     assert kept.get("3535834511").status == "owner" and "amount decided alone" in kept.get("3535834511").notice
+    assert [r.message.rsplit(": ", 1)[1] for r in caplog.records if "draft refused" in r.message] == [
+        "Maximal 9.000 €.", "Bis neuntausend.", "Für 9k?"]
 
 
-async def test_a_settling_message_twice_leaving_a_term_unnamed_goes_to_the_owner_told_which(kept):
+async def test_a_draft_refused_twice_has_a_third_try(kept):
+    box = Box()
+    await opened(kept, box)
+    box.seller("Was ist dein bestes Angebot?")
+
+    await negotiator(Claude(reads=[says()], writes=["Maximal 9.000 €.", "Bis neuntausend.", "Was wäre denn dein Preis?"]),
+                     kept).follow_up(box)
+
+    assert box.said[-1].text == "Was wäre denn dein Preis?" and kept.get("3535834511").status == "talking"
+
+
+async def test_a_settling_message_each_time_leaving_a_term_unnamed_goes_to_the_owner_told_which(kept):
     box = Box()
     await opened(kept, box)
     box.seller("Ok, 7.550 passt. Überweisung und Kaufvertrag gehen klar.")
     unnamed = "Super, [BETRAG] passt! Schickst du mir noch ein Foto deines Ausweises?"
 
-    await negotiator(Claude(reads=[says(accepts_offer=True, bank_transfer=True, contract=True)], writes=[unnamed, unnamed]),
+    await negotiator(Claude(reads=[says(accepts_offer=True, bank_transfer=True, contract=True)], writes=[unnamed] * 3),
                      kept).follow_up(box)
 
     gone = kept.get("3535834511")

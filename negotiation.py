@@ -177,6 +177,7 @@ AMOUNT = "[BETRAG]"  # where the AI leaves the amount decided, for the code to w
 CHOICES = {"pickup": ("Pick it up", True), "ship": ("Shipping only", False)}
 BUTTON = "negotiate"  # what the id of a decision's button starts with: the interactions of the agent's own buttons
 TRIES = 3  # looks at which an offer's page takes no message before the agent hands it to the owner
+DRAFTS = 3  # drafts of one message the AI writes at most before the agent hands the negotiation to the owner
 MOST_WRITTEN = 24  # messages the agent writes before it hands the conversation to the owner: half again the longest
 # way to an agreement (a seller holding out to its last offer, then each term in turn), for questions and refusals
 STARTS = ("pending",)  # the negotiations a look at the messages starts
@@ -608,9 +609,9 @@ class Negotiator:
             self.negotiations.save(negotiation)
 
     async def _write(self, negotiation: Negotiation, answer: Move, said, question: Optional[str]) -> Optional[str]:
-        """The message for the move, its amount written in; None, the negotiation handed to the owner, when the AI
-        twice writes it otherwise. A draft refused is written anew, the AI told why; one saying again what an
-        earlier message said is written anew once, and goes out should the new one be refused."""
+        """The message for the move, its amount written in; None, the negotiation handed to the owner, when each of
+        the AI's `DRAFTS` is refused. A draft refused is written anew, the AI told why, and logged; one saying again
+        what an earlier message said is written anew once, and goes out should the new one be refused."""
         asked = dict(list(negotiation.terms.open().items())[:1]) if answer.kind in ("agreed", "settle") else {}
         task = TASKS[answer.kind].format(term="".join(f'{name} ("{word}")' for name, (word, _, _) in asked.items()),
                                          paid=PAID[negotiation.terms.delivery == "pickup"])
@@ -622,33 +623,30 @@ class Negotiator:
         if question:
             content += f"\nThe seller's open question: {question}"
         refused, again_said = "", None
-        for draft in range(2):
+        for draft in range(DRAFTS):
             written = await ask(self.client, WRITE.format(handover=HANDOVER[bool(negotiation.terms.in_person)]),
                                 [{"type": "text", "text": content + refused}], Written)
             message = written and filled(written.message, answer.price, negotiation.title)
+            unnamed = message and [name for name, (_, named, _) in asked.items()
+                                   if not re.search(named, message, re.IGNORECASE)]
             if not message:
                 why = "the AI wrote no message with the amount decided alone"
                 amount = f"the amount only as {AMOUNT}, once, and " if answer.price else ""
-                refused = (f"\n\nYour last draft was refused: write {amount}no other sum of money and no number from 100 "
-                           "up, not even one the seller wrote.")
-                continue
-            unnamed = [name for name, (_, named, _) in asked.items() if not re.search(named, message, re.IGNORECASE)]
-            if unnamed:
+                told = f"write {amount}no other sum of money and no number from 100 up, not even one the seller wrote"
+            elif unnamed:
+                told = f"it did not name {' and '.join(unnamed)}"
                 why = f"the AI wrote no message naming {' and '.join(unnamed)}"
-                refused = f"\n\nYour last draft was refused: it did not name {' and '.join(unnamed)}."
+            elif unlike := unlike_the_buyer(message):
+                why, told = f"the AI wrote what the buyer would not: {unlike}", unlike
+            elif draft == 0 and (again := said_again(message, negotiation.sent, negotiation.title)):
+                again_said, refused = message, f"\n\nYour last draft was refused: {again}. Say it anew or not at all."
                 continue
-            unlike = unlike_the_buyer(message)
-            if unlike:
-                why = f"the AI wrote what the buyer would not: {unlike}"
-                refused = f"\n\nYour last draft was refused: {unlike}."
-                continue
-            again = said_again(message, negotiation.sent, negotiation.title) if draft == 0 else None
-            if again is None:
+            else:
                 return message
-            again_said = message
-            refused = f"\n\nYour last draft was refused: {again}. Say it anew or not at all."
-        if again_said:
-            return again_said
+            self.logger.warning(f"Negotiation: a draft refused, {why}: {written.message if written else '(declined)'}")
+            if again_said:
+                return again_said
+            refused = f"\n\nYour last draft was refused: {told}."
         self._hand_over(negotiation, why)
         return None
 
