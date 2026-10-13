@@ -31,9 +31,6 @@ from kleinanzeigen_messages import Messages, Unsent, plain
 from prices_page import euros
 from scrapers.kleinanzeigen import BASE_URL
 
-CLOSE = 0.02  # a seller asking this share or less above the offer is met at their price
-
-
 class SellerSays(BaseModel):
     """Where the seller stands after their latest messages, as the AI reads it."""
 
@@ -141,9 +138,9 @@ def _price(limit: int, offered: int, terms: Terms, asked: Optional[int], accepts
             asked = terms.asked  # a seller naming no price stands where they last did
         if accepts_offer:
             terms.price = offered
-        elif asked is not None and (asked <= offered or (
-                not opening and asked <= limit and asked - offered <= max(STEP, asked * CLOSE))):
-            terms.price = min(asked, limit)
+        elif asked is not None and (asked <= offered or (not opening and asked <= limit)):
+            # Once it has offered, a price within its limit is agreed at once (owner rule, 13 Oct 2026)
+            terms.price = asked
         elif opening:
             terms.asked = asked
             return Move("offer", offered, "its opening offer")
@@ -156,13 +153,11 @@ def _price(limit: int, offered: int, terms: Terms, asked: Optional[int], accepts
                 terms.asked, terms.held = asked, True
                 return Move("hold", why=f"the seller holds at {euros(asked)}")
             terms.asked, terms.held = asked, False
-            # Half the room left up to the limit, and no more than halfway towards the seller, 50 euros at a time
-            counter = max(offered + STEP, (offered + min(top - offered, asked - offered) // 2) // STEP * STEP)
+            # Half the room left up to the limit, 50 euros at a time
+            counter = max(offered + STEP, (offered + top) // 2 // STEP * STEP)
             if counter < top - STEP:
                 return Move("offer", counter, f"the seller asks {euros(asked)}")
-            if asked > top:  # the last step is the limit itself
-                return Move("final", top, f"the seller asks {euros(asked)}")
-            terms.price = asked  # or the seller's price below it, met
+            return Move("final", top, f"the seller asks {euros(asked)}")  # the last step is the limit itself
         else:
             # Turned down, or passed over, with no price ever named: the seller is asked theirs, not offered the same
             return Move("ask", why="the seller names no price")
