@@ -13,6 +13,7 @@ import tempfile
 from datetime import datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
+from typing import Optional
 
 from dotenv import load_dotenv
 
@@ -29,7 +30,7 @@ from agent import opening  # noqa: E402
 from config import APP_CONFIG  # noqa: E402
 from discord_api import DiscordApi  # noqa: E402
 from kleinanzeigen_messages import Conversation, Message, Unsent  # noqa: E402
-from negotiation import Negotiation, Negotiations, Negotiator, euros  # noqa: E402
+from negotiation import CHOICES, Negotiation, Negotiations, Negotiator, euros  # noqa: E402
 
 AD = "try"
 # The pretend watch, at what one was worth on 12 Oct 2026
@@ -64,13 +65,26 @@ class DirectMessages:
                 None,
                 f"**{NOTE}.** You are the seller now. Your ad: *{TITLE}*, asking {euros(ASKING)}. The agent pays at "
                 f"most {euros(LIMIT)}. Answer it here as a seller would, in German; a picture you send counts as "
-                "the ID card. The buyer's messages follow.")
+                "the ID card. Should the agent ask you something, answer it here with the word it names. The buyer's "
+                "messages follow.")
         except Exception as e:
             raise Unsent(str(e)) from e
         await self.reply(start["id"], text)
         return start["id"]
 
     async def conversation(self, conversation_id: str) -> Conversation:
+        said = [m for m in await self._messages(conversation_id) if not (_note(m) or _decision(m))]
+        return Conversation(conversation_id, AD, "the owner", [
+            Message(bool(m["author"].get("bot")), m["content"], len(m.get("attachments") or []), m["timestamp"])
+            for m in said])
+
+    async def decision(self, conversation_id: str) -> Optional[str]:
+        """The owner's latest word here on what the agent asked them, one of `CHOICES`; None before any."""
+        words = [_decision(m) for m in await self._messages(conversation_id) if _decision(m)]
+        return words[-1] if words else None
+
+    async def _messages(self, conversation_id: str) -> list:
+        """The DM's messages since the conversation started, oldest first."""
         # Discord gives the messages after one a page at a time
         answer, after = [], conversation_id
         while True:
@@ -82,11 +96,18 @@ class DirectMessages:
             if len(page) < self.PAGE:
                 break
             after = max(page, key=lambda m: int(m["id"]))["id"]
-        said = sorted((m for m in answer if not (m["author"].get("bot") and m["content"].startswith(NOTE))),
-                      key=lambda m: int(m["id"]))
-        return Conversation(conversation_id, AD, "the owner", [
-            Message(bool(m["author"].get("bot")), m["content"], len(m.get("attachments") or []), m["timestamp"])
-            for m in said])
+        return sorted(answer, key=lambda m: int(m["id"]))
+
+
+def _note(message: dict) -> bool:
+    """One of the bot's own notes, which are no part of the conversation."""
+    return bool(message["author"].get("bot")) and message["content"].startswith(NOTE)
+
+
+def _decision(message: dict) -> Optional[str]:
+    """The owner's word on what the agent asked them, as they would press its button: no part of the conversation."""
+    word = message["content"].strip().lower()
+    return word if not message["author"].get("bot") and word in CHOICES else None
 
 
 async def main() -> int:
@@ -102,8 +123,10 @@ async def main() -> int:
                 raise RuntimeError(f"Discord answered {status}: {dm}")
             box = DirectMessages(api, dm["id"])
 
-            async def notify(channel, text):
-                await box.reply(None, f"{NOTE}, what you would be told: {text}")
+            async def notify(channel, text, buttons=()):
+                # The buttons would answer the server, not this try: the owner writes their word instead
+                asked = f" Answer here with {' or '.join(f'**{choice}**' for choice in CHOICES)}." if buttons else ""
+                await box.reply(None, f"{NOTE}, what you would be told: {text}{asked}")
 
             # No while before an answer, as the agent waits with a seller: a try is over in minutes
             negotiator = Negotiator(AsyncAnthropic(), negotiations, notify, logger, a_while=lambda: timedelta(0))
@@ -116,6 +139,11 @@ async def main() -> int:
                 await negotiator.follow_up(box)
                 await negotiator.tell_owner()
                 n = negotiations.get(AD)
+                if n.status == "deciding" and not n.notice:
+                    choice = await box.decision(n.conversation)
+                    if choice:
+                        negotiator.decide(AD, choice)
+                        n = negotiations.get(AD)
                 if (n.status, n.offered, n.terms) != shown:
                     shown = (n.status, n.offered, n.terms)
                     logger.info(f"{n.status} at {euros(n.offered)}, {n.terms} {n.why}")

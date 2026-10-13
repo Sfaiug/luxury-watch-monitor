@@ -20,10 +20,9 @@ import chrono24
 import controlling
 from prices import Prices
 from agent import Agent, Deals, Verdict, opening
-from negotiation import Negotiation, Negotiations, Negotiator, Terms, euros, keep_talking
+from negotiation import Negotiation, Negotiations, Negotiator, euros, keep_talking
 from scrapers.kleinanzeigen import offer_url
 from prices_page import PricesPage
-from worth import fetched
 from discord_interactions import DiscordInteractionServer, discord_route_enabled
 from muv_service import MUVActionService
 from filters import Filter, FilterStore
@@ -609,7 +608,6 @@ class WatchMonitor:
             address=watch.url,
             limit=int(limit),
             offered=int(offered),
-            terms=Terms(in_person=fetched(self.prices, limit)),
         )
         return asked if self.negotiator.ask_to_start(asked) else None
 
@@ -618,7 +616,11 @@ class WatchMonitor:
         return {"type": 2, "style": 1, "label": "Negotiate", "custom_id": f"negotiate:{watch.url.rsplit('/', 1)[1]}"}
 
     def _negotiate_pressed(self, payload: dict) -> str:
-        """A match's "Negotiate" button: the agent reads the offer afresh in the background; the reply at once."""
+        """A match's "Negotiate" button: the agent reads the offer afresh in the background; the reply at once. Or the
+        owner's answer to a question of the agent's."""
+        decided = self.negotiator.pressed(payload["data"]["custom_id"])
+        if decided:
+            return decided
         ad_id = payload["data"]["custom_id"].split(":", 1)[1]
         alert = ((payload.get("message") or {}).get("embeds") or [{}])[0]
         watch = WatchData(
@@ -648,10 +650,16 @@ class WatchMonitor:
             f"The agent negotiates on {watch.url}: it opens at {euros(asked.offered)} and pays {euros(asked.limit)} at most.",
         )
 
-    async def _tell_owner(self, channel: str, text: str):
-        """Say something in a filter's channel, its key's channel id; raises unless it was posted."""
+    async def _tell_owner(self, channel: str, text: str, buttons=()):
+        """Say something in a filter's channel, its key's channel id, with buttons to answer by, each a label and its
+        id; raises unless it was posted."""
+        message = {"content": text}
+        if buttons:
+            message["components"] = [{"type": 1, "components": [
+                {"type": 2, "style": 1, "label": label, "custom_id": custom_id} for label, custom_id in buttons
+            ]}]
         status, answer = await DiscordApi(self.session, APP_CONFIG).call(
-            "POST", f"/channels/{channel.split(':', 1)[1]}/messages", {"content": text}
+            "POST", f"/channels/{channel.split(':', 1)[1]}/messages", message
         )
         if status not in (200, 201):
             raise RuntimeError(f"Discord answered {status}: {answer}")

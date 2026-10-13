@@ -4,7 +4,7 @@ import asyncio
 import json
 import logging
 from dataclasses import dataclass
-from datetime import date, datetime, timedelta
+from datetime import datetime, timedelta
 from decimal import Decimal
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
@@ -15,13 +15,11 @@ from anthropic import AsyncAnthropic
 
 import negotiation
 from agent import Verdict
-from controlling import Trade
 from filters import Filter, FilterStore
 from kleinanzeigen_messages import Unsent
 from models import WatchData
 from monitor import WatchMonitor
 from negotiation import Move, Negotiation, Negotiations, Negotiator, SellerSays, Terms, filled, move
-from prices import Prices
 
 LIMIT, OPENING = 8600, 7550
 
@@ -125,7 +123,6 @@ def test_a_seller_holding_out_to_the_agent_s_last_offer_then_agreeing_term_by_te
     (dict(), dict(bank_transfer=False)),
     (dict(bank_transfer=True, delivery="shipping"), dict(contract=False)),
     (dict(bank_transfer=True, delivery="shipping", contract=True), dict(id_card=False)),
-    (dict(bank_transfer=True), dict(delivery="pickup")),  # a deal too small to fetch: handing it over refuses shipping
 ])
 def test_a_seller_refusing_the_term_asked_for_is_asked_once_more_then_bid_farewell(agreed, refusing):
     terms = Terms(**agreed)
@@ -195,7 +192,19 @@ def test_all_is_agreed_once_the_id_card_is_shown_not_only_promised():
     assert move(LIMIT, OPENING, terms, says(id_card=True), pictures=True) == Move("done", OPENING, "all agreed")
 
 
-def test_only_a_big_deal_is_handed_over_in_person_the_id_card_shown_there_not_as_a_picture():
+def test_a_seller_handing_it_over_in_person_only_is_asked_once_more_to_ship_then_left_to_the_owner():
+    terms = Terms(price=OPENING, bank_transfer=True)
+
+    first = move(LIMIT, OPENING, terms, says(delivery="pickup"), False)
+    assert (first.kind, first.refused, terms.delivery) == ("settle", ["insured shipping"], None)
+    assert move(LIMIT, OPENING, terms, says(delivery="pickup"), False) == Move(
+        "decide", None, "the seller hands it over in person only")
+
+    terms.in_person = False  # the owner's word: shipping only
+    assert move(LIMIT, OPENING, terms, says(delivery="pickup"), False).kind == "farewell"
+
+
+def test_a_watch_the_owner_picks_up_needs_the_id_card_shown_there_not_as_a_picture():
     terms = Terms(price=OPENING, bank_transfer=True, in_person=True)
 
     assert move(LIMIT, OPENING, terms, says(delivery="pickup", contract=True), pictures=False) == Move(
@@ -342,7 +351,7 @@ async def test_a_first_message_written_wrong_twice_goes_to_the_owner_who_hears_u
 
     assert box.said == [] and kept.get("3535834511").status == "owner"
     assert notify.await_count == 2  # once failed, once told, then no more
-    channel, text = notify.await_args.args
+    channel, text = notify.await_args.args[:2]
     assert channel == "filter:42" and text.startswith("The agent hands this negotiation to you")
 
 
@@ -450,8 +459,6 @@ def test_a_match_worth_contacting_is_negotiated_where_its_filter_says_so(tmp_pat
     monitor.filter_store.add(Filter("43", "1", "kleinanzeigen", "private", "Omega"))
     monitor._sync_filters()
     monitor.negotiator = negotiator(Claude(), kept)
-    monitor.prices = Prices(tmp_path / "prices.sqlite3")
-    monitor.prices.traded([Trade("116610LN", False, date.today(), Decimal("8000"), None, None)])
 
     def match(key, ad_id):
         return WatchData(title="Rolex Submariner", url=f"https://www.kleinanzeigen.de/s-anzeige/{ad_id}",
@@ -463,7 +470,6 @@ def test_a_match_worth_contacting_is_negotiated_where_its_filter_says_so(tmp_pat
     monitor._negotiate_if_asked(match("filter:42", "3"), Verdict(False, "asks too much above the limit"))
 
     assert [(n.ad_id, n.channel, n.limit, n.offered) for n in kept.with_status("pending")] == [("1", "filter:42", 8608, 7550)]
-    assert kept.get("1").terms.in_person  # dearer than all the business bought within the year
 
 
 async def test_with_nothing_to_do_the_session_is_used_once_a_day_to_keep_the_login_fresh(monkeypatch, kept):
@@ -564,7 +570,7 @@ async def test_the_owner_hears_once_all_is_agreed_and_the_id_card_shown(kept):
 
     assert box.said[-1].text == "Danke! Der Kaufvertrag kommt gleich, dann überweise ich 7.550 €."
     assert kept.get("3535834511").status == "agreed"
-    channel, text = notify.await_args.args
+    channel, text = notify.await_args.args[:2]
     assert channel == "filter:42" and "7.550 €" in text and "shipping" in text and "Kaufvertrag" in text
 
 
@@ -573,7 +579,7 @@ def instructed(claude):
     return json.loads(claude.requests[-1])["system"]
 
 
-async def test_a_seller_handing_over_in_person_a_deal_too_small_to_fetch_is_asked_to_ship_it(kept):
+async def test_a_seller_handing_it_over_in_person_only_is_asked_to_ship_it_with_a_reason(kept):
     box = Box()
     await opened(kept, box)
     box.seller("Ok, 7.550 € passt, Überweisung geht klar. Aber nur Abholung.")
@@ -584,28 +590,86 @@ async def test_a_seller_handing_over_in_person_a_deal_too_small_to_fetch_is_aske
 
     assert kept.get("3535834511").terms.delivery is None
     assert "The seller refuses insured shipping" in asked_to_write(claude)
-    assert "neither picks it up" in instructed(claude) and "handover in person" not in instructed(claude)
+    assert "does not come by to see or pick them up" in instructed(claude)
+    assert "handover in person" not in instructed(claude)
 
 
-async def test_a_big_deal_handed_over_in_person_is_agreed_the_seller_to_show_their_id_card_there(kept):
-    box, notify = Box(), AsyncMock()
+async def insisting_on_a_handover(kept, box, notify):
+    """A seller asked once more to ship the watch, refusing again: the owner is asked, with a button for each choice."""
     await opened(kept, box)
-    big = kept.get("3535834511")
-    big.terms.in_person = True
-    kept.save(big)
-    box.seller("Ok, 7.550 € passt. Überweisung und Kaufvertrag gehen klar, aber nur Abholung.")
-    claude = Claude(reads=[says(accepts_offer=True, bank_transfer=True, delivery="pickup", contract=True)],
-                    writes=["Super, dann hole ich sie ab und überweise [BETRAG] direkt vor Ort."])
+    asking = kept.get("3535834511")
+    asking.terms = Terms(price=OPENING, bank_transfer=True, asked_again=["insured shipping"])
+    kept.save(asking)
+    box.seller("Nein, wirklich nur Abholung.")
+    talking = negotiator(Claude(reads=[says(delivery="pickup")]), kept, notify)
+    await talking.follow_up(box)
+    await talking.tell_owner()
+    await talking.follow_up(box)  # the seller waits while the owner decides
+    return talking
+
+
+async def test_a_seller_insisting_on_a_handover_in_person_waits_for_the_owner_s_word(kept):
+    box, notify = Box(), AsyncMock()
+    talking = await insisting_on_a_handover(kept, box, notify)
+
+    assert kept.get("3535834511").status == "deciding" and box.said[-1].text == "Nein, wirklich nur Abholung."
+    channel, text, buttons = notify.await_args.args
+    assert channel == "filter:42" and "hands it over in person only" in text and "3535834511" in text
+    assert [label for label, _ in buttons] == ["Pick it up", "Shipping only"]
+    assert talking.pressed("negotiate:3535834511") is None  # a match's own button, not a decision's
+
+
+async def test_once_the_owner_says_pick_it_up_the_deal_goes_on_the_seller_to_show_their_id_card_there(kept):
+    box, notify = Box(), AsyncMock()
+    await insisting_on_a_handover(kept, box, notify)
+    (_, pickup), _ = notify.await_args.args[2]
+    claude = Claude(reads=[says(delivery="pickup", contract=True)],
+                    writes=["Gut, dann hole ich sie bei Ihnen ab und überweise [BETRAG] direkt vor Ort."])
     talking = negotiator(claude, kept, notify)
 
+    assert talking.pressed(pickup) == "Pick it up: the agent goes on from there with the seller."
+    assert talking.pressed(pickup) == "There is nothing to decide on this one any more."
     await talking.follow_up(box)
     await talking.tell_owner()
 
     assert kept.get("3535834511").status == "agreed"
     assert "a handover in person suits him" in instructed(claude)
     assert "pays at the handover, where they show him their ID card" in asked_to_write(claude)
-    channel, text = notify.await_args.args
-    assert "pickup" in text and "shows their ID card at the handover" in text
+    channel, text, buttons = notify.await_args.args
+    assert "pickup" in text and "shows their ID card at the handover" in text and buttons == []
+
+
+async def test_once_the_owner_holds_to_shipping_the_seller_is_bid_farewell(kept):
+    box, notify = Box(), AsyncMock()
+    await insisting_on_a_handover(kept, box, notify)
+    _, (_, ship) = notify.await_args.args[2]
+    talking = negotiator(Claude(reads=[says(delivery="pickup")],
+                                writes=["Schade, abholen kann ich sie leider nicht. Melden Sie sich gern, falls doch."]), kept)
+
+    talking.pressed(ship)
+    await talking.follow_up(box)
+
+    assert kept.get("3535834511").status == "ended"
+    assert box.said[-1].text == "Schade, abholen kann ich sie leider nicht. Melden Sie sich gern, falls doch."
+
+
+async def test_the_owner_is_asked_with_buttons_that_answer_the_agent(monkeypatch, kept):
+    posted = AsyncMock(return_value=(200, {"id": "1"}))
+    monkeypatch.setattr("monitor.DiscordApi.call", posted)
+    monitor = WatchMonitor(log_level="ERROR")
+    asking = asked_for()
+    asking.status, asking.notice = "deciding", "Pick it up yourself, or hold to shipping?"
+    kept.save(asking)
+    monitor.negotiator = negotiator(Claude(), kept, monitor._tell_owner)
+
+    await monitor.negotiator.tell_owner()
+
+    method, path, message = posted.await_args.args
+    assert (method, path, message["content"]) == ("POST", "/channels/42/messages", "Pick it up yourself, or hold to shipping?")
+    pickup, ship = message["components"][0]["components"]
+    assert (pickup["label"], ship["label"]) == ("Pick it up", "Shipping only")
+    assert monitor._negotiate_pressed({"data": {"custom_id": ship["custom_id"]}}).startswith("Shipping only")
+    assert (kept.get("3535834511").status, kept.get("3535834511").terms.in_person) == ("talking", False)
 
 
 async def test_a_seller_is_answered_a_while_after_they_wrote_not_at_once(kept):
@@ -990,7 +1054,6 @@ def by_hand(tmp_path, kept):
     monitor.filter_store.add(Filter("43", "1", "kleinanzeigen", "private", "Omega"))
     monitor._sync_filters()
     monitor.negotiator = negotiator(Claude(), kept)
-    monitor.prices = Prices(tmp_path / "prices.sqlite3")
     monitor._tell_owner = AsyncMock()
     return monitor
 

@@ -14,7 +14,6 @@ from prices import Prices
 FEWEST = 5  # offers below which the market says too little to go by
 TRADED_WITHIN = timedelta(days=365)  # the business's own trades that count, prices changing as they do
 MARGIN_TAX = Decimal("0.19")  # VAT on a used watch's margin (Differenzbesteuerung, § 25a UStG)
-SHIPPED = 0.95  # the share of the business's own buys, the cheapest, too small a deal to be fetched in person
 
 
 def ours(prices: Prices, reference: str, kind: str, sold: bool = True) -> Tuple[int, Optional[Decimal]]:
@@ -57,15 +56,6 @@ def most_to_pay(worth: Decimal) -> Decimal:
     taxed = MARGIN_TAX / (1 + MARGIN_TAX)
     paid = (worth * (1 - taxed) - fee - shipping - least_profit(worth)) / (1 - taxed)
     return max(paid, Decimal(0)).quantize(Decimal(1), rounding=ROUND_FLOOR)
-
-
-def fetched(prices: Prices, limit: Decimal) -> bool:
-    """Whether a watch the agent pays at most this much for is a deal big enough to be fetched in person: as dear as
-    the dearest twentieth of what the business bought within the last year (owner rule, 13 Oct 2026: "it should be
-    95% delivery of the time. I dont really want to have to pickup unless its big deals"). With none known, it is
-    shipped."""
-    paid = prices.paid_since(date.today() - TRADED_WITHIN)
-    return bool(paid) and limit >= Decimal(str(paid[int(len(paid) * SHIPPED)]))
 
 
 def buy_limit(prices: Prices, reference: str, kind: str) -> Optional[Decimal]:
