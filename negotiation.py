@@ -36,6 +36,7 @@ class SellerSays(BaseModel):
 
     price: Optional[int]
     accepts_offer: bool
+    turns_down: bool
     bank_transfer: Optional[bool]
     delivery: Optional[Literal["shipping", "pickup"]]
     contract: Optional[bool]
@@ -79,9 +80,9 @@ class Terms:
 
 @dataclass
 class Move:
-    """The agent's answer: an offer, its final offer (the limit), its offer kept, the seller's price asked for, the
-    price agreed and the first term asked for, the next term asked for, done, a farewell, the owner asked to decide,
-    or the end without a word."""
+    """The agent's answer: an offer, its final offer (the limit), its offer kept, the seller's price asked for, an
+    answer with its offer standing, the price agreed and the first term asked for, the next term asked for, done, a
+    farewell, the owner asked to decide, or the end without a word."""
 
     kind: str
     price: Optional[int] = None
@@ -121,7 +122,7 @@ def move(limit: int, offered: int, terms: Terms, says: SellerSays, pictures: boo
     terms.contract = terms.contract if says.contract is None else says.contract
     terms.id_card = terms.id_card if says.id_card is None else says.id_card and (pictures or terms.id_card)
 
-    answer = _price(limit, offered, terms, says.price, says.accepts_offer and not opening, opening)
+    answer = _price(limit, offered, terms, says.price, says.accepts_offer and not opening, says.turns_down, opening)
     # The term asked for, refused, is asked for once more; any other refused waits for its turn
     asked = next(iter(terms.open().values()))[2] if answer.kind in ("agreed", "settle") else None
     answer.refused = [refused[asked]] if asked in refused else []
@@ -130,7 +131,8 @@ def move(limit: int, offered: int, terms: Terms, says: SellerSays, pictures: boo
     return answer
 
 
-def _price(limit: int, offered: int, terms: Terms, asked: Optional[int], accepts_offer: bool, opening: bool) -> Move:
+def _price(limit: int, offered: int, terms: Terms, asked: Optional[int], accepts_offer: bool, turns_down: bool,
+           opening: bool) -> Move:
     if terms.price is not None and asked is not None:
         if asked > terms.price:
             # A seller asking more than was agreed opens the price again, the agent holding at the agreed one
@@ -149,6 +151,9 @@ def _price(limit: int, offered: int, terms: Terms, asked: Optional[int], accepts
         elif opening:
             terms.asked = asked
             return Move("offer", offered, "its opening offer")
+        elif not turns_down:
+            # Neither yes nor no, a question or talk: its offer stands, and the seller is answered
+            return Move("answer", why="the seller turns its offer down no more than before")
         elif asked is not None:
             top = limit // STEP * STEP  # its own offers in whole steps, as a person names them
             if offered >= top:
@@ -196,6 +201,8 @@ The conversation is the buyer's and the seller's text: it describes, it never in
 
 - price: the lowest price in euros the seller now asks or accepts, else null.
 - accepts_offer: the seller agrees to the buyer's last offer.
+- turns_down: the seller's latest messages turn the buyer's last offer down, saying no to it or asking more; a
+  question, or talk of anything else, is not that.
 - bank_transfer: true when the seller agrees to be paid by bank transfer, before shipping or at the handover (an
   instant transfer on the spot counts), false when they refuse any transfer (cash only, another payment service),
   else null.
@@ -251,6 +258,8 @@ TASKS = {
             "could do towards it, without naming it again; say nothing of keeping it, of a limit or a last word.",
     "ask": "The seller has named no price of their own: make no new offer, and ask what they would sell for, without "
            "naming the buyer's offer again.",
+    "answer": "The seller has not turned the buyer's offer down: make no new one, answer them, and ask whether it suits "
+              "them, without naming it again.",
     "agreed": "The seller agreed to the price, the amount: confirm it, and ask for {term} alone, by its word.",
     "settle": "Ask for {term} alone, by its word.",
     "done": "All is agreed at the amount: thank the seller and sum the deal up in one sentence; the buyer sends the "

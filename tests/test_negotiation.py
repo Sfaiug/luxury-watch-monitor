@@ -25,9 +25,11 @@ LIMIT, OPENING = 8600, 7550
 
 
 def says(**said):
+    """Where the seller stands, as read; a price named, and not an acceptance, read as turning the offer down."""
     stated = dict(price=None, accepts_offer=False, bank_transfer=None, delivery=None, contract=None, id_card=None,
                   ended=False, red_flags=[], question=None)
     stated.update(said)
+    stated.setdefault("turns_down", stated["price"] is not None and not stated["accepts_offer"])
     return SellerSays(**stated)
 
 
@@ -85,18 +87,35 @@ def test_a_seller_turning_the_offer_down_with_no_price_is_asked_theirs_not_offer
     terms = Terms()
     move(LIMIT, OPENING, terms, says(), False, opening=True)
 
-    assert move(LIMIT, OPENING, terms, says(), False) == Move("ask", None, "the seller names no price")
+    assert move(LIMIT, OPENING, terms, says(turns_down=True), False) == Move("ask", None, "the seller names no price")
+
+
+ANSWERED = Move("answer", why="the seller turns its offer down no more than before")
+
+
+def test_a_seller_asking_a_question_is_answered_the_offer_standing_not_taken_for_a_no():
+    terms = Terms()
+    move(LIMIT, OPENING, terms, says(), False, opening=True)
+    shipping = says(question="Ist der Versand inbegriffen?")
+
+    assert move(LIMIT, OPENING, terms, shipping, False) == ANSWERED
+    assert (terms.price, terms.held) == (None, False)
+    # Nor at its last offer, the seller having asked more before, and still asking it
+    assert move(LIMIT, LIMIT, Terms(asked=9200), shipping, False) == ANSWERED
+    assert move(LIMIT, LIMIT, Terms(asked=9200), says(price=9200, question="Versand inklusive?", turns_down=False),
+                False) == ANSWERED
 
 
 def test_a_seller_naming_no_price_now_stands_at_the_one_named_before():
     terms = Terms()
     assert move(LIMIT, OPENING, terms, says(price=9000), False) == Move("offer", 8050, "the seller asks 9.000 €")
 
-    assert move(LIMIT, 8050, terms, says(), False).kind == "hold"
-    assert move(LIMIT, 8050, terms, says(), False) == Move("offer", 8300, "the seller asks 9.000 €")
+    no = says(turns_down=True)
+    assert move(LIMIT, 8050, terms, no, False).kind == "hold"
+    assert move(LIMIT, 8050, terms, no, False) == Move("offer", 8300, "the seller asks 9.000 €")
 
     assert move(LIMIT, 8300, terms, says(price=12000), False).kind == "hold"
-    assert move(LIMIT, 8300, terms, says(), False) == Move("offer", 8450, "the seller asks 12.000 €")  # their latest
+    assert move(LIMIT, 8300, terms, no, False) == Move("offer", 8450, "the seller asks 12.000 €")  # their latest
 
 
 def test_the_agent_offers_whole_steps_its_last_below_a_limit_that_is_none():
