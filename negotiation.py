@@ -159,6 +159,10 @@ def _price(limit: int, offered: int, terms: Terms, asked: Optional[int], accepts
             why = f"the seller asks {euros(asked)}" if asked is not None else "the seller names no price"
             top = limit // STEP * STEP  # its own offers in whole steps, as a person names them
             if offered >= top:
+                if asked is not None and terms.asked is not None and asked < terms.asked:
+                    # Still coming down towards its last offer: that offer once more, while they move
+                    terms.asked = asked
+                    return Move("final", top, why)
                 return Move("farewell", why=f"{why}, above the limit of {euros(limit)}" if asked is not None
                             else "the seller turns down the final offer")
             if asked is None and not terms.held:
