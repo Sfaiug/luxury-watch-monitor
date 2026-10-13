@@ -317,7 +317,7 @@ class Box:
         return "c1"
 
     async def conversation(self, conversation_id):
-        return SimpleNamespace(id=conversation_id, messages=list(self.said))
+        return SimpleNamespace(id=conversation_id, messages=list(self.said), buyer="Jonas M.")
 
     async def reply(self, conversation_id, text):
         self.said.append(Said(True, text))
@@ -784,6 +784,18 @@ async def test_a_draft_saying_again_what_an_earlier_message_said_is_written_anew
     assert '"ist die uhr noch" says again what the buyer wrote before' in asked_to_write(claude)
     assert [r.message.rsplit(": ", 1)[1] for r in caplog.records if "draft refused" in r.message] == [
         "Ist die Uhr noch zu haben? Sonst [BETRAG]."]
+
+
+async def test_the_buyer_writes_knowing_the_name_kleinanzeigen_shows_the_seller(kept):
+    box = Box()
+    await opened(kept, box)
+    box.seller("Ja, noch da. Wie heißt du eigentlich?")
+    claude = Claude(reads=[says(question="Wie heißt du?")], writes=["Ich bin Jonas. Was wäre denn dein Preis?"])
+
+    await negotiator(claude, kept).follow_up(box)
+
+    assert "The buyer's name, as Kleinanzeigen shows it to the seller: Jonas M." in asked_to_write(claude)
+    assert box.said[-1].text == "Ich bin Jonas. Was wäre denn dein Preis?"
 
 
 async def test_a_draft_saying_again_what_the_ad_says_is_written_anew_told_what(kept):

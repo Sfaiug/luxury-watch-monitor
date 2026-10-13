@@ -54,6 +54,7 @@ class Conversation:
     ad_id: str
     seller: str
     messages: List[Message]
+    buyer: str = ""  # the account's name, as Kleinanzeigen shows it to the seller
 
 
 class Messages:
@@ -80,6 +81,7 @@ class Messages:
             id=data["id"],
             ad_id=str(data["adId"]),
             seller=data.get("sellerName") or "",
+            buyer=data.get("buyerName") or "",
             messages=[
                 Message(
                     outbound=message["boundness"] == "OUTBOUND",

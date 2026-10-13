@@ -230,8 +230,9 @@ a private person chatting with the seller on his phone.
 - Lead the seller from one yes to the next: when they have just agreed to something, take it up in a word or two;
   give a request a short reason; ask so that "ja" or "passt" answers it. The first time they push back, show in a
   few words that you understand them; after that, hold your ground plainly.
-- The buyer tells only the truth. He lives in Berlin, and says so when asked; his name and address come with the
-  purchase contract. Asked anything else about himself, he answers warmly in a few words that claim no fact.
+- The buyer tells only the truth. He lives in Berlin, and says so when asked. Asked his name, he gives his first name
+  as Kleinanzeigen shows it to the seller, where the conversation names it; his address comes with the purchase
+  contract. Asked anything else about himself, he answers warmly in a few words that claim no fact.
 - Asked how he would do it, he pays by bank transfer and sends the seller a short purchase contract to sign;
   {{handover}} Each of these comes up when a task asks for it.
 - He gives an amount no reason unless asked, and then only that it is what the watch is worth to him; he never
@@ -424,10 +425,12 @@ class Negotiations:
         return [negotiation for negotiation in self.all() if negotiation.ad_id in ids]
 
 
-def transcript(negotiation: Negotiation, said) -> str:
-    lines = [f"Offer: {negotiation.title}",
-             f"The buyer's last offer: {euros(negotiation.offered)}" if negotiation.opened else "The buyer has offered nothing yet",
-             "Conversation:"]
+def transcript(negotiation: Negotiation, said, buyer: str = "") -> str:
+    lines = [f"Offer: {negotiation.title}"]
+    if buyer:
+        lines.append(f"The buyer's name, as Kleinanzeigen shows it to the seller: {buyer}")
+    lines += [f"The buyer's last offer: {euros(negotiation.offered)}" if negotiation.opened
+              else "The buyer has offered nothing yet", "Conversation:"]
     for message in said:
         pictures = f" [{message.attachments} pictures]" if message.attachments else ""
         lines.append(f"{'Buyer' if message.outbound else 'Seller'}: {message.text}{pictures}")
@@ -503,7 +506,8 @@ class Negotiator:
                 self.logger.warning(f"Negotiation: could not answer about {negotiation.address}: {e}")
 
     async def _answer(self, messages, negotiation: Negotiation):
-        said = (await messages.conversation(negotiation.conversation)).messages
+        talk = await messages.conversation(negotiation.conversation)
+        said = talk.messages
         shown = [plain(message.text) for message in said if message.outbound]
         if set(shown) - {plain(text) for text in negotiation.sent}:
             # Written from the account, not by the agent: the owner took over
@@ -555,7 +559,7 @@ class Negotiator:
                              f"Pick it up yourself, or hold to shipping and let them go? {negotiation.address}")
         if len(negotiation.sent) >= MOST_WRITTEN and answer.kind not in ("done", "farewell"):
             return self._hand_over(negotiation, f"no agreement after {MOST_WRITTEN} messages")
-        text = await self._write(negotiation, answer, said, says.question)
+        text = await self._write(negotiation, answer, said, says.question, talk.buyer)
         if text is None:
             return
         # Kept before it is sent: should sending fail partway, it is known as the agent's, and sent again
@@ -617,7 +621,8 @@ class Negotiator:
             negotiation.notice = ""
             self.negotiations.save(negotiation)
 
-    async def _write(self, negotiation: Negotiation, answer: Move, said, question: Optional[str]) -> Optional[str]:
+    async def _write(self, negotiation: Negotiation, answer: Move, said, question: Optional[str],
+                     buyer: str = "") -> Optional[str]:
         """The message for the move, its amount written in; None, the negotiation handed to the owner, when each of
         the AI's `DRAFTS` is refused. A draft refused is written anew, the AI told why, and logged; one saying again
         what an earlier message said is written anew once, and goes out should the new one be refused."""
@@ -628,7 +633,7 @@ class Negotiator:
             task += INSIST.format(refused=" and ".join(answer.refused))
         if answer.pickup:
             task += PICKUP
-        content = f"{transcript(negotiation, said)}\n\nTask: {task}"
+        content = f"{transcript(negotiation, said, buyer)}\n\nTask: {task}"
         if question:
             content += f"\nThe seller's open question: {question}"
         refused, again_said = "", None
