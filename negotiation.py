@@ -330,19 +330,27 @@ def repeated(message: str, earlier: List[str], length: int = RUN) -> Optional[st
 _FORMAL = re.compile(r"\b(?:Ihnen|Sie|Ihre?[mnrs]?)\b")
 # Other offers or the market, which the buyer never explains an amount by (owner rule, 13 Oct 2026): "im Vergleich",
 # "ähnliche Uhren", "Marktpreis", "aktuellen Angeboten", "den Preisen", "auf Chrono24", "andere Inserate", "ein
-# anderes Angebot"; "angeboten" in lower case is the buyer's own offer ("wie angeboten")
-_ELSEWHERE = re.compile(r"vergleich|ähnlich|\bmarkt|\bander\w*\s+(?:angebot|inserat|anzeige)|\bangebote\b|(?-i:\bAngeboten\b)"
+# anderes Angebot". "angeboten" in lower case is the verb, the buyer's own offer ("etwas anderes angeboten"), and so
+# is "Angeboten" first in a sentence ("Angeboten hätte ich dir …"): offers as a noun are written with a capital
+_ELSEWHERE = re.compile(r"vergleich|ähnlich|\bmarkt|\bander\w*\s+(?-i:Angebot|Inserat|Anzeige)|(?-i:\bAngebote[n]?\b)"
                         r"|\bpreisen?\b|\bchrono\s?24|\binseraten?\b", re.IGNORECASE)
+
+
+def _first(message: str, at: int) -> bool:
+    """Whether the word at `at` begins a sentence of the message."""
+    return bool(re.search(r"(?:^|[.!?])\s*$", message[:at]))
 
 
 def unlike_the_buyer(message: str) -> Optional[str]:
     """What of the message the buyer would not write, saying "du" to the seller and explaining no amount by other
     offers or the market; None if nothing."""
     for formal in _FORMAL.finditer(message):
-        if formal.group() != "Sie" or not re.search(r"(?:^|[.!?])\s*$", message[:formal.start()]):
+        if formal.group() != "Sie" or not _first(message, formal.start()):
             return f'"{formal.group()}" says "Sie" to the seller, not "du"'
-    elsewhere = _ELSEWHERE.search(message)
-    return elsewhere and f'"{elsewhere.group()}" points to other offers or the market'
+    for elsewhere in _ELSEWHERE.finditer(message):
+        if not (elsewhere.group() == "Angeboten" and _first(message, elsewhere.start())):
+            return f'"{elsewhere.group()}" points to other offers or the market'
+    return None
 
 
 def said_again(message: str, sent: List[str], title: str) -> Optional[str]:

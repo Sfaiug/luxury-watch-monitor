@@ -874,6 +874,7 @@ async def test_a_draft_naming_a_sum_itself_is_written_anew_told_why(kept):
 
 @pytest.mark.parametrize("written, why", [
     ("Passt für Sie eine Überweisung?", '"Sie" says "Sie" to the seller, not "du"'),
+    ("Wären\nSie mit [BETRAG] einverstanden?", '"Sie" says "Sie" to the seller, not "du"'),  # a line break ends no sentence
     ("Hallo, würden Ihnen [BETRAG] passen?", '"Ihnen" says "Sie" to the seller, not "du"'),
     ("Ok. Was wäre Ihr Preis?", '"Ihr" says "Sie" to the seller, not "du"'),
     ("Ihr Preis ist mir zu hoch, [BETRAG] passt für mich.", '"Ihr" says "Sie" to the seller, not "du"'),
@@ -887,6 +888,11 @@ async def test_a_draft_naming_a_sum_itself_is_written_anew_told_why(kept):
     ("[BETRAG] ergibt sich aus den Preisen anderer Uhren.", '"Preisen" points to other offers or the market'),
     ("Ich habe ein anderes Inserat für [BETRAG] gesehen.", '"anderes Inserat" points to other offers or the market'),
     ("Wie angeboten, [BETRAG]. Dein Inserat ist ja noch online.", None),
+    ("[BETRAG] wäre ok, bei den Angeboten anderer Verkäufer zahle ich weniger.", '"Angeboten" points to other offers or the market'),
+    ("Angeboten hätte ich dir [BETRAG]. Passt das für dich?", None),  # first in its sentence: the buyer's own
+    ("Angebote anderer Verkäufer liegen unter [BETRAG].", '"Angebote" points to other offers or the market'),
+    ("[BETRAG] wäre ok, bei den\nAngeboten anderer Verkäufer zahle ich weniger.", '"Angeboten" points to other offers or the market'),
+    ("Ich hatte dir etwas anderes angeboten, [BETRAG] wären für mich ok.", None),  # the verb
     ("Sie ist noch da? Passt dir eine Überweisung?", None),  # at a sentence's start, the watch
     ("Hallo, ist sie noch zu haben?", None),
     ("Mehr ist sie mir nicht wert, [BETRAG] ginge.", None),
