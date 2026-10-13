@@ -887,6 +887,10 @@ async def test_a_draft_naming_a_sum_itself_is_written_anew_told_why(kept):
     ("[BETRAG] ergibt sich aus den Preisen anderer Uhren.", '"Preisen" points to other offers or the market'),
     ("Ich habe ein anderes Inserat für [BETRAG] gesehen.", '"anderes Inserat" points to other offers or the market'),
     ("Wie angeboten, [BETRAG]. Dein Inserat ist ja noch online.", None),
+    ("[BETRAG] wäre ok, bei den Angeboten anderer Verkäufer zahle ich weniger.", '"Angeboten" points to other offers or the market'),
+    ("Angeboten hätte ich dir [BETRAG]. Passt das für dich?", None),  # first in its sentence: the buyer's own
+    ("Okay\nAngeboten hätte ich dir [BETRAG]. Passt das für dich?", None),  # and first on its line
+    ("Ich hatte dir etwas anderes angeboten, [BETRAG] wären für mich ok.", None),  # the verb
     ("Sie ist noch da? Passt dir eine Überweisung?", None),  # at a sentence's start, the watch
     ("Hallo, ist sie noch zu haben?", None),
     ("Mehr ist sie mir nicht wert, [BETRAG] ginge.", None),
