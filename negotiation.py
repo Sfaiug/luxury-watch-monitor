@@ -199,6 +199,7 @@ a private person chatting with the seller on his phone.
 - Do the task, and answer the seller's open question in a few words; nothing else. One thing per message: what the
   task does not ask for comes later, or never.
 - Say nothing the buyer's earlier messages said, in any words, and start and end the message unlike each of them.
+  Say nothing of the watch its offer's title says (its model, year, box and papers): the seller knows their ad.
 - Lead the seller from one yes to the next: when they have just agreed to something, take it up in a word or two;
   give a request a short reason; ask so that "ja" or "passt" answers it. The first time they push back, show in a
   few words that you understand them; after that, hold your ground plainly.
@@ -261,20 +262,31 @@ def filled(message: str, amount: Optional[int], title: str) -> Optional[str]:
 
 
 RUN = 4  # words in a row that, said in an earlier message of the buyer, make a draft say it again
+TITLE_RUN = 2  # and those that, in the offer's title, make it say again what the ad says: "mit Box und Papieren"
 
 
-def repeated(message: str, earlier: List[str]) -> Optional[str]:
-    """What of the message an earlier one already said: words in a row from it, or its ending."""
+def repeated(message: str, earlier: List[str], length: int = RUN) -> Optional[str]:
+    """What of the message an earlier one already said: `length` words in a row from it, or its ending."""
     words = re.findall(r"\w+", message.lower())
     for text in earlier:
         before = re.findall(r"\w+", text.lower())
-        said = {tuple(before[i:i + RUN]) for i in range(len(before) - RUN + 1)}
-        again = next((run for run in zip(*(words[i:] for i in range(RUN))) if run in said), None)
+        said = {tuple(before[i:i + length]) for i in range(len(before) - length + 1)}
+        again = next((run for run in zip(*(words[i:] for i in range(length))) if run in said), None)
         if again:
             return " ".join(again)
         if len(words) >= 3 and words[-3:] == before[-3:]:
             return " ".join(words[-3:])
     return None
+
+
+def said_again(message: str, sent: List[str], title: str) -> Optional[str]:
+    """What of the message the buyer's earlier messages or the offer's title already said, and which; None if
+    nothing: the seller knows both."""
+    again = repeated(message, sent)
+    if again:
+        return f'"{again}" says again what the buyer wrote before'
+    again = repeated(message, [title], TITLE_RUN)
+    return again and f'"{again}" says again what the ad says'
 
 
 class Written(BaseModel):
@@ -545,11 +557,11 @@ class Negotiator:
                 why = f"the AI wrote no message naming {' and '.join(unnamed)}"
                 refused = f"\n\nYour last draft was refused: it did not name {' and '.join(unnamed)}."
                 continue
-            again = repeated(message, negotiation.sent) if draft == 0 else None
+            again = said_again(message, negotiation.sent, negotiation.title) if draft == 0 else None
             if again is None:
                 return message
             again_said = message
-            refused = f'\n\nYour last draft was refused: "{again}" says again what the buyer wrote before. Say it anew or not at all.'
+            refused = f"\n\nYour last draft was refused: {again}. Say it anew or not at all."
         if again_said:
             return again_said
         self._hand_over(negotiation, why)

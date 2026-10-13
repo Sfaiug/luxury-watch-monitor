@@ -579,6 +579,18 @@ async def test_a_draft_saying_again_what_an_earlier_message_said_is_written_anew
     assert '"ist die uhr noch" says again what the buyer wrote before' in asked_to_write(claude)
 
 
+async def test_a_draft_saying_again_what_the_ad_says_is_written_anew_told_what(kept):
+    box = Box()
+    await opened(kept, box)
+    box.seller("Unter 8.500 € geht nichts.")
+    claude = Claude(reads=[says(price=8500)], writes=["Für die Submariner Date wären [BETRAG] fair.", "Wie wäre es mit [BETRAG]?"])
+
+    await negotiator(claude, kept).follow_up(box)
+
+    assert box.said[-1].text == "Wie wäre es mit 8.000 €?"
+    assert '"submariner date" says again what the ad says' in asked_to_write(claude)
+
+
 async def test_a_second_draft_saying_something_again_goes_out_all_the_same(kept):
     box = Box()
     await opened(kept, box)
