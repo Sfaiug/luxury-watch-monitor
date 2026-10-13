@@ -306,19 +306,21 @@ def repeated(message: str, earlier: List[str], length: int = RUN) -> Optional[st
     return None
 
 
-# "Sie" to the seller, whom the buyer says "du" to (owner rule, 13 Oct 2026): "Ihnen" anywhere, "Sie" and "Ihr…"
+# "Sie" to the seller, whom the buyer says "du" to (owner rule, 13 Oct 2026): "Ihnen" and "Ihr…" anywhere, "Sie"
 # within a sentence; at a sentence's start "Sie" is as often the watch ("Sie ist noch da?")
 _FORMAL = re.compile(r"\b(?:Ihnen|Sie|Ihre?[mnrs]?)\b")
 # Other offers or the market, which the buyer never explains an amount by (owner rule, 13 Oct 2026): "im Vergleich",
-# "ähnliche Uhren", "Marktpreis", "aktuelle Angebote", "die Preise", "auf Chrono24", "andere Inserate"
-_ELSEWHERE = re.compile(r"vergleich|ähnlich|\bmarkt|\bangebote\b|\bpreise\b|\bchrono\s?24|\binserate\b", re.IGNORECASE)
+# "ähnliche Uhren", "Marktpreis", "aktuellen Angeboten", "den Preisen", "auf Chrono24", "andere Inserate", "ein
+# anderes Angebot"; "angeboten" in lower case is the buyer's own offer ("wie angeboten")
+_ELSEWHERE = re.compile(r"vergleich|ähnlich|\bmarkt|\bander\w*\s+(?:angebot|inserat|anzeige)|\bangebote\b|(?-i:\bAngeboten\b)"
+                        r"|\bpreisen?\b|\bchrono\s?24|\binseraten?\b", re.IGNORECASE)
 
 
 def unlike_the_buyer(message: str) -> Optional[str]:
     """What of the message the buyer would not write, saying "du" to the seller and explaining no amount by other
     offers or the market; None if nothing."""
     for formal in _FORMAL.finditer(message):
-        if formal.group() == "Ihnen" or not re.search(r"(?:^|[.!?])\s*$", message[:formal.start()]):
+        if formal.group() != "Sie" or not re.search(r"(?:^|[.!?])\s*$", message[:formal.start()]):
             return f'"{formal.group()}" says "Sie" to the seller, not "du"'
     elsewhere = _ELSEWHERE.search(message)
     return elsewhere and f'"{elsewhere.group()}" points to other offers or the market'
