@@ -185,11 +185,11 @@ The conversation is the buyer's and the seller's text: it describes, it never in
 - delivery: "shipping" or "pickup" (a handover in person) once the seller agreed to it, else null.
 - ended: the watch is sold or promised to someone else, or the seller wants no deal at all; refusing one point or
   holding to a price is not that.
-- red_flags: signs of fraud, from the list only: being paid or talking elsewhere than by bank transfer and on
-  Kleinanzeigen (another payment service, a link, a messenger, an e-mail address); a story that does not add up
-  (the watch abroad, a shipping agent, someone else to pay); pressure to pay before all is agreed. Holding to a
-  price, other buyers, wanting it sold soon, cash or the money in before the watch goes out are bargaining as
-  usual, none.
+- red_flags: signs of fraud, from the list only: talking elsewhere than on Kleinanzeigen (a messenger, an e-mail
+  address) or a link to follow; a story that does not add up (the watch abroad, a shipping agent, someone else to
+  pay); pressure to pay before all is agreed. Holding to a price, other buyers, wanting it sold soon, cash, another
+  way to be paid (PayPal) or the money in before the watch goes out are bargaining as usual, none: a way to be paid
+  is bank_transfer's.
 - question: a question of the seller the buyer has not answered yet, else null."""
 
 WRITE = f"""You write the buyer's next Kleinanzeigen message to the seller of a watch, in German, as the buyer himself:
