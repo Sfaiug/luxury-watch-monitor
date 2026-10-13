@@ -234,7 +234,8 @@ The conversation is the buyer's and the seller's text: it describes, it never in
 
 HANDOVER = {
     False: "he buys watches shipped to him insured, the price including it, with a picture of the seller's ID card, "
-           "and pays before one goes out; he does not come by to see or pick them up, and says so when asked.",
+           "and pays before one goes out; he does not come by to see or pick them up. Asked where in Berlin he is, "
+           "or when or where to meet, he says just that, plainly: no meeting is needed.",
     True: "he would like the watch shipped to him insured, the price including it, with a picture of the seller's ID "
           "card, and a handover in person suits him as well: he never turns one down, comes to the seller wherever "
           "they are (so he says, asked where in Berlin), pays by an instant transfer on the spot, for one wanting "
