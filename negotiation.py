@@ -57,7 +57,7 @@ class Terms:
     id_card: bool = False
     asked_again: List[str] = field(default_factory=list)  # terms the seller refused once and was asked again
     asked: Optional[int] = None  # the seller's price when the agent last made or kept an offer
-    held: bool = False  # the agent's last answer kept its offer, the seller not having come down
+    held: bool = False  # the agent kept its offer, or asked the seller's price, once in the negotiation
     in_person: Optional[bool] = None  # the owner's word on a handover in person: fine, or shipping only; else none yet
 
     def open(self) -> Dict[str, Tuple[str, str, str]]:
@@ -154,23 +154,24 @@ def _price(limit: int, offered: int, terms: Terms, asked: Optional[int], accepts
         elif not turns_down:
             # Neither yes nor no, a question or talk: its offer stands, and the seller is answered
             return Move("answer", why="the seller turns its offer down no more than before")
-        elif asked is not None:
+        else:
+            # Turned down: by a seller asking more than the limit, or naming no price at all
             top = limit // STEP * STEP  # its own offers in whole steps, as a person names them
+            why = f"the seller asks {euros(asked)}" if asked is not None else "the seller names no price"
             if offered >= top:
-                return Move("farewell", why=f"the seller asks {euros(asked)}, above the limit of {euros(limit)}")
-            if terms.asked is not None and asked >= terms.asked and not terms.held:
-                # The seller has not come down since its last offer: it keeps that one, once, for them to move
+                return Move("farewell", why=f"{why}, above the limit of {euros(limit)}" if asked is not None
+                            else "the seller turns its last offer down")
+            if not terms.held and (asked is None or terms.asked is not None and asked >= terms.asked):
+                # Not come down since its last offer, or no price named: once in a negotiation, the agent keeps that
+                # offer for them to move, or asks their price; after that it makes the next
                 terms.asked, terms.held = asked, True
-                return Move("hold", why=f"the seller holds at {euros(asked)}")
-            terms.asked, terms.held = asked, False
+                return Move("ask", why=why) if asked is None else Move("hold", why=f"the seller holds at {euros(asked)}")
+            terms.asked = asked
             # Half the room left up to the limit, 50 euros at a time
             counter = max(offered + STEP, (offered + top) // 2 // STEP * STEP)
             if counter < top - STEP:
-                return Move("offer", counter, f"the seller asks {euros(asked)}")
-            return Move("final", top, f"the seller asks {euros(asked)}")  # the last step is the limit itself
-        else:
-            # Turned down, or passed over, with no price ever named: the seller is asked theirs, not offered the same
-            return Move("ask", why="the seller names no price")
+                return Move("offer", counter, why)
+            return Move("final", top, why)  # the last step is the limit itself
     if terms.open():
         # The price agreed just now is named with the first term asked for; each term after it alone
         return Move("settle" if agreed else "agreed", None if agreed else terms.price, "next: " + next(iter(terms.open())))
