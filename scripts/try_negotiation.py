@@ -8,7 +8,6 @@ On the server, in the checkout: venv/bin/python3 scripts/try_negotiation.py
 
 import asyncio
 import logging
-import random
 import sys
 import tempfile
 from datetime import datetime, timedelta
@@ -36,8 +35,7 @@ AD = "try"
 # The pretend watch, at what one was worth on 12 Oct 2026
 TITLE = "Rolex Submariner 124060, 2022, Box und Papiere"
 ASKING, LIMIT = 9900, 8366
-A_WHILE = (60, 180)  # the seconds an answer waits here, drawn between these; the agent itself waits longer
-LOOK_EVERY = 15  # seconds between looks at the DM
+LOOK_EVERY = 5  # seconds between looks at the DM: the agent answers at the first look after the owner wrote
 LASTS = timedelta(hours=3)  # the longest a try runs
 NOTE = "Try"  # how the bot's own notes in the DM start, which are no part of the conversation
 
@@ -107,8 +105,8 @@ async def main() -> int:
             async def notify(channel, text):
                 await box.reply(None, f"{NOTE}, what you would be told: {text}")
 
-            negotiator = Negotiator(AsyncAnthropic(), negotiations, notify, logger,
-                                    a_while=lambda: timedelta(seconds=random.uniform(*A_WHILE)))
+            # No while before an answer, as the agent waits with a seller: a try is over in minutes
+            negotiator = Negotiator(AsyncAnthropic(), negotiations, notify, logger, a_while=lambda: timedelta(0))
             negotiator.ask_to_start(Negotiation(
                 ad_id=AD, channel="this DM", title=TITLE, address="this DM", limit=LIMIT,
                 offered=int(opening(Decimal(ASKING), Decimal(LIMIT)))))
