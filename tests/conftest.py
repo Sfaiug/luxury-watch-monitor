@@ -137,6 +137,25 @@ def sample_scraping_session():
     return session
 
 
+class Offline:
+    """The web as a test sees it unless it serves its own: no page is there, at once."""
+
+    def __init__(self, **options):
+        pass
+
+    async def __aenter__(self):
+        raise RuntimeError("tests never touch the network")
+
+    async def __aexit__(self, *exc):
+        return False
+
+
+@pytest.fixture(autouse=True)
+def no_network(monkeypatch):
+    """Tests never touch the network: a page a test does not serve itself cannot be fetched."""
+    monkeypatch.setattr("utils.AsyncSession", Offline)
+
+
 @pytest.fixture(autouse=True)
 def prices_away_from_the_checkout(tmp_path, monkeypatch):
     """A monitor started by a test keeps the offers it sees in the test's own folder."""
@@ -314,14 +333,14 @@ def create_test_scraping_session(
 
 
 @pytest.fixture
-def base_scraper(test_site_config, mock_aiohttp_session, mock_logger):
+def base_scraper(test_site_config, mock_logger):
     """A real scraper with no shop of its own, for what every scraper inherits."""
 
     class ShoplessScraper(BaseScraper):
         async def _extract_watches(self, soup):
             return []
 
-    return ShoplessScraper(test_site_config, mock_aiohttp_session, mock_logger)
+    return ShoplessScraper(test_site_config, mock_logger)
 
 
 @pytest.fixture
@@ -378,7 +397,7 @@ def listed_watches():
 
     def read(site_key: str):
         scraper = SCRAPER_CLASSES[site_key](
-            SITE_CONFIGS[site_key], None, logging.getLogger("test")
+            SITE_CONFIGS[site_key], logging.getLogger("test")
         )
         page = (Path(__file__).parent / "pages" / f"{site_key}.html").read_text(
             encoding="utf-8"

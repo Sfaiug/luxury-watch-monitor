@@ -367,7 +367,7 @@ async def test_listing_with_submission_images_collects_detail_gallery(
     </html>
     """
 
-    async def fake_fetch_page(_session, url, _logger):
+    async def fake_fetch_page(url, _logger):
         assert url == "https://dealer.test/watch"
         return detail_html
 
@@ -1269,7 +1269,7 @@ async def test_monitor_offer_links_notifies_only_changed_state(
         ]
         round_index = {"value": 0}
 
-        async def fake_fetch_page(_session, _url, _logger):
+        async def fake_fetch_page(_url, _logger):
             return html_by_round[round_index["value"]]
 
         sent = []
@@ -1313,7 +1313,7 @@ async def test_monitor_offer_links_ignores_volatile_page_changes(
         ]
         round_index = {"value": 0}
 
-        async def fake_fetch_page(_session, _url, _logger):
+        async def fake_fetch_page(_url, _logger):
             return html_by_round[round_index["value"]]
 
         sent = []
@@ -1343,7 +1343,7 @@ async def test_monitor_offer_links_survives_fingerprint_schema_change(
         url = "https://www.meineuhrverkaufen.de/Sell/request-1?mt=token"
         store.save_offer_link(url)
 
-        async def fake_fetch_page(_session, _url, _logger):
+        async def fake_fetch_page(_url, _logger):
             return _offer_page_html(price=3000)
 
         sent = []
@@ -1378,7 +1378,7 @@ async def test_monitor_offer_links_stores_pending_without_notifying(
         url = "https://www.meineuhrverkaufen.de/Sell/request-1?mt=token"
         store.save_offer_link(url)
 
-        async def fake_fetch_page(_session, _url, _logger):
+        async def fake_fetch_page(_url, _logger):
             return _offer_page_html(price=None, reviewed=False)
 
         sent = []

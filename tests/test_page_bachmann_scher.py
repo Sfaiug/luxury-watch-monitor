@@ -17,7 +17,7 @@ PAGES = Path(__file__).parent / "pages"
 def watch_from_page(name, title=""):
     """A watch, listed under `title`, after the scraper has read tests/pages/<name>.html as its own page."""
     config = SITE_CONFIGS["bachmann_scher"]
-    scraper = SCRAPER_CLASSES["bachmann_scher"](config, None, logging.getLogger("test"))
+    scraper = SCRAPER_CLASSES["bachmann_scher"](config, logging.getLogger("test"))
     watch = WatchData(
         title=title,
         url=f"{config.base_url}/gebrauchte-luxusuhren-kaufen/a-watch-1.html",

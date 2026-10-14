@@ -37,7 +37,7 @@ def test_the_newest_watches_are_read(listed_watches):
 def test_a_new_watch_s_own_page_is_not_fetched(listed_watches):
     """Everything the alert shows is on the listing page."""
     scraper = SCRAPER_CLASSES["worldoftime"](
-        SITE_CONFIGS["worldoftime"], None, logging.getLogger("test")
+        SITE_CONFIGS["worldoftime"], logging.getLogger("test")
     )
     page = (Path(__file__).parent / "pages" / "worldoftime.html").read_text(encoding="utf-8")
     fetch = AsyncMock(return_value=page)

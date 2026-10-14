@@ -202,7 +202,7 @@ class MUVActionService:
         return offer_payload.get("status") in {"offered", "rejected", "canceled"}
 
     async def fetch_offer_link(self, url: str) -> Optional[Dict[str, Any]]:
-        html = await fetch_page(self.session, url, self.logger)
+        html = await fetch_page(url, self.logger)
         if not html:
             return None
         return self.parse_offer_page(html, url)
@@ -354,7 +354,7 @@ class MUVActionService:
             return self._whitelist
 
         url = APP_CONFIG.muv_base_url.rstrip("/") + "/"
-        content = await fetch_page(self.session, url, self.logger)
+        content = await fetch_page(url, self.logger)
         if not content:
             self._whitelist = []
             return self._whitelist
@@ -521,7 +521,7 @@ class MUVActionService:
             source_url = enriched.get("url")
             parsed = urlparse(source_url or "")
             if self.session and parsed.scheme in {"http", "https"}:
-                html = await fetch_page(self.session, source_url, self.logger)
+                html = await fetch_page(source_url, self.logger)
                 if html:
                     image_urls = self._merge_image_urls(
                         image_urls,

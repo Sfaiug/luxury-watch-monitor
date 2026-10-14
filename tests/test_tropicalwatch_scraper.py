@@ -41,9 +41,9 @@ def tropicalwatch_config():
 
 
 @pytest.fixture
-def tropicalwatch_scraper(tropicalwatch_config, mock_aiohttp_session, mock_logger):
+def tropicalwatch_scraper(tropicalwatch_config, mock_logger):
     """Tropical Watch scraper instance for testing."""
-    return TropicalWatchScraper(tropicalwatch_config, mock_aiohttp_session, mock_logger)
+    return TropicalWatchScraper(tropicalwatch_config, mock_logger)
 
 
 @pytest.fixture
@@ -286,15 +286,14 @@ class TestTropicalWatchScraper:
     """Test Tropical Watch scraper implementation."""
 
     def test_initialization(
-        self, tropicalwatch_config, mock_aiohttp_session, mock_logger
+        self, tropicalwatch_config, mock_logger
     ):
         """Test scraper initialization."""
         scraper = TropicalWatchScraper(
-            tropicalwatch_config, mock_aiohttp_session, mock_logger
+            tropicalwatch_config, mock_logger
         )
 
         assert scraper.config == tropicalwatch_config
-        assert scraper.session == mock_aiohttp_session
         assert len(scraper.seen_ids) == 0
 
     @pytest.mark.asyncio

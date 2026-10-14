@@ -35,9 +35,9 @@ def rueschenbeck_config():
 
 
 @pytest.fixture
-def rueschenbeck_scraper(rueschenbeck_config, mock_aiohttp_session, mock_logger):
+def rueschenbeck_scraper(rueschenbeck_config, mock_logger):
     """Rüschenbeck scraper instance for testing."""
-    return RueschenbeckScraper(rueschenbeck_config, mock_aiohttp_session, mock_logger)
+    return RueschenbeckScraper(rueschenbeck_config, mock_logger)
 
 
 @pytest.fixture
@@ -155,12 +155,11 @@ def rueschenbeck_empty_html():
 class TestRueschenbeckScraper:
     """Test Rüschenbeck scraper implementation."""
     
-    def test_initialization(self, rueschenbeck_config, mock_aiohttp_session, mock_logger):
+    def test_initialization(self, rueschenbeck_config, mock_logger):
         """Test scraper initialization."""
-        scraper = RueschenbeckScraper(rueschenbeck_config, mock_aiohttp_session, mock_logger)
+        scraper = RueschenbeckScraper(rueschenbeck_config, mock_logger)
         
         assert scraper.config == rueschenbeck_config
-        assert scraper.session == mock_aiohttp_session
         assert len(scraper.seen_ids) == 0
     
     @pytest.mark.asyncio

@@ -9,6 +9,7 @@ from urllib.parse import quote
 import aiohttp
 import pytest
 from aiohttp import web
+from curl_cffi.requests import AsyncSession
 
 from action_store import ActionStore
 from config import APP_CONFIG, SiteConfig
@@ -44,6 +45,7 @@ async def test_muv_button_to_prepared_result_and_offer_webhook_e2e(
 ):
     signing = pytest.importorskip("nacl.signing")
     signing_key = signing.SigningKey.generate()
+    monkeypatch.setattr("utils.AsyncSession", AsyncSession)  # its pages come from the site this test serves
 
     received = {"alerts": [], "results": []}
     whitelist = [

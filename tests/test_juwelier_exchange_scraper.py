@@ -37,9 +37,9 @@ def juwelier_exchange_config():
 
 
 @pytest.fixture
-def juwelier_exchange_scraper(juwelier_exchange_config, mock_aiohttp_session, mock_logger):
+def juwelier_exchange_scraper(juwelier_exchange_config, mock_logger):
     """Juwelier Exchange scraper instance for testing."""
-    return JuwelierExchangeScraper(juwelier_exchange_config, mock_aiohttp_session, mock_logger)
+    return JuwelierExchangeScraper(juwelier_exchange_config, mock_logger)
 
 
 @pytest.fixture
@@ -299,12 +299,11 @@ def juwelier_exchange_malformed_html():
 class TestJuwelierExchangeScraper:
     """Test Juwelier Exchange scraper implementation."""
     
-    def test_initialization(self, juwelier_exchange_config, mock_aiohttp_session, mock_logger):
+    def test_initialization(self, juwelier_exchange_config, mock_logger):
         """Test scraper initialization."""
-        scraper = JuwelierExchangeScraper(juwelier_exchange_config, mock_aiohttp_session, mock_logger)
+        scraper = JuwelierExchangeScraper(juwelier_exchange_config, mock_logger)
         
         assert scraper.config == juwelier_exchange_config
-        assert scraper.session == mock_aiohttp_session
         assert len(scraper.seen_ids) == 0
     
     @pytest.mark.asyncio

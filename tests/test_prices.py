@@ -145,7 +145,7 @@ async def test_a_shop_outside_the_eu_is_not_a_price_to_compare_with(monitor, pri
 async def test_a_scraper_lists_every_watch_its_scan_found_and_none_after_a_failed_one():
     page = (Path(__file__).parent / "pages" / "kleinanzeigen.html").read_text(encoding="utf-8")
     source = replace(SITE_CONFIGS["worldoftime"], key="kleinanzeigen", url="https://example.test/")
-    scraper = KleinanzeigenScraper(source, None, logging.getLogger("test"))
+    scraper = KleinanzeigenScraper(source, logging.getLogger("test"))
 
     with patch("scrapers.base.fetch_page", AsyncMock(return_value=page)):
         new = await scraper.scrape()

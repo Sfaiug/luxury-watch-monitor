@@ -50,7 +50,7 @@ class TropicalWatchScraper(BaseScraper):
 
         # Convert USD prices to EUR if enabled
         if APP_CONFIG.enable_exchange_rate_conversion and new_watches:
-            exchange_rate = await get_usd_to_eur_rate(self.session, self.logger.logger)
+            exchange_rate = await get_usd_to_eur_rate(self.logger.logger)
 
             if exchange_rate:
                 self.logger.info(
