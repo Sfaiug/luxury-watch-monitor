@@ -60,8 +60,7 @@ cd "$DEPLOY_DIR"
 # Create necessary files
 echo "📝 Creating configuration files..."
 
-# Create empty data files
-echo '{}' > seen_watches.json
+# Create session history file
 echo '[]' > session_history.json
 
 # Create logs directory
