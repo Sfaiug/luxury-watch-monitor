@@ -2,6 +2,9 @@
 
 import pytest
 import json
+import os
+import subprocess
+import sys
 import tempfile
 from pathlib import Path
 from unittest.mock import Mock, patch, mock_open
@@ -9,6 +12,154 @@ from datetime import datetime, timedelta
 
 from persistence import PersistenceManager, SeenIds
 from models import ScrapingSession
+
+
+def restarted(manager):
+    fresh = PersistenceManager(manager.logger)
+    fresh.seen_items_file = manager.seen_items_file
+    return fresh
+
+
+@pytest.fixture
+def seen_snapshot(test_persistence_manager):
+    snapshot = {
+        "site1": SeenIds.fromkeys(["old", "recent", "ü"]),
+        "filter:111": SeenIds.fromkeys(["offer1", "offer2"]),
+    }
+    test_persistence_manager.save_seen_items(snapshot)
+    return snapshot
+
+
+@pytest.mark.parametrize("operation", ["write", "sync", "replace"])
+@pytest.mark.parametrize("copy", [1, 2])
+def test_cut_short_write_keeps_last_complete_snapshot(
+    test_persistence_manager, seen_snapshot, monkeypatch, operation, copy
+):
+    manager = test_persistence_manager
+    before = manager.seen_items_file.read_bytes()
+    target, original = {
+        "write": ("persistence.json.dump", json.dump),
+        "sync": ("persistence.os.fsync", os.fsync),
+        "replace": ("persistence.Path.replace", Path.replace),
+    }[operation]
+    calls = 0
+
+    def cut_short(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        if calls == copy:
+            if operation == "write":
+                args[1].write('{"site1": [')
+                args[1].flush()
+            raise OSError("disk full")
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(target, cut_short)
+    manager.save_seen_items({
+        key: SeenIds.fromkeys([*ids, "new"]) for key, ids in seen_snapshot.items()
+    })
+
+    assert calls == copy
+    assert manager.seen_items_file.read_bytes() == before
+    assert restarted(manager).load_seen_items() == seen_snapshot
+    manager.logger.error.assert_called_with("Error saving seen items: disk full")
+
+
+@pytest.mark.parametrize("copy", [1, 2])
+def test_cut_short_process_exit_keeps_last_complete_snapshot(
+    test_persistence_manager, seen_snapshot, copy
+):
+    manager = test_persistence_manager
+    before = manager.seen_items_file.read_bytes()
+    child = subprocess.run(
+        [sys.executable, "-c", """
+import json, logging, os, sys
+from pathlib import Path
+from persistence import PersistenceManager, SeenIds
+manager = PersistenceManager(logging.getLogger(__name__))
+manager.seen_items_file = Path(sys.argv[1])
+dump = json.dump
+calls = 0
+def cut_short(data, stream, **kwargs):
+    global calls
+    calls += 1
+    if calls == int(sys.argv[2]):
+        stream.write('{"site1": [')
+        stream.flush()
+        os._exit(17)
+    dump(data, stream, **kwargs)
+json.dump = cut_short
+manager.save_seen_items({"site1": SeenIds.fromkeys(["new"])})
+""", str(manager.seen_items_file), str(copy)],
+        capture_output=True,
+        timeout=10,
+    )
+
+    assert child.returncode == 17, child.stderr.decode()
+    assert manager.seen_items_file.read_bytes() == before
+    assert restarted(manager).load_seen_items() == seen_snapshot
+
+
+@pytest.mark.parametrize("damage", [
+    b"", b'{"site1": [', b"\xff", b"[]", b'{"site1": "id"}', b'{"site1": [1]}', None,
+])
+def test_cut_short_seen_file_recovers_last_good_snapshot(
+    test_persistence_manager, seen_snapshot, damage
+):
+    manager = test_persistence_manager
+    seen_snapshot["filter:111"].add("latest")
+    manager.save_seen_items(seen_snapshot)
+    if damage is None:
+        manager.seen_items_file.unlink()
+    else:
+        manager.seen_items_file.write_bytes(damage)
+
+    loaded = restarted(manager).load_seen_items()
+
+    assert {key: list(ids) for key, ids in loaded.items()} == {
+        key: list(ids) for key, ids in seen_snapshot.items()
+    }
+    manager.logger.warning.assert_called_once()
+    assert "last good" in manager.logger.warning.call_args.args[0]
+
+    # Saving recovered state must repair the main file without copying its damage.
+    manager.save_seen_items(loaded)
+    assert json.loads(manager.seen_items_file.read_text(encoding="utf-8")) == {
+        key: list(ids) for key, ids in seen_snapshot.items()
+    }
+
+
+def test_cut_short_unreadable_seen_file_recovers_backup(
+    test_persistence_manager, seen_snapshot
+):
+    manager = test_persistence_manager
+    manager.seen_items_file.unlink()
+    manager.seen_items_file.mkdir()  # An I/O error even when tests run as root.
+
+    assert restarted(manager).load_seen_items() == seen_snapshot
+    manager.logger.warning.assert_called_once()
+
+
+@pytest.mark.parametrize("backup", [None, "not json"])
+def test_cut_short_without_good_backup_stops_and_preserves_evidence(
+    test_persistence_manager, backup
+):
+    manager = test_persistence_manager
+    manager.seen_items_file.write_text('{"site1": [', encoding="utf-8")
+    backup_file = manager.seen_items_file.with_name(manager.seen_items_file.name + ".bak")
+    if backup is not None:
+        backup_file.write_text(backup, encoding="utf-8")
+
+    with pytest.raises(RuntimeError, match="Cannot recover seen items"):
+        manager.load_seen_items()
+
+    # Production cleanup saves even when initialization failed.
+    manager.save_seen_items({})
+    assert manager.seen_items_file.read_text(encoding="utf-8") == '{"site1": ['
+    if backup is None:
+        assert not backup_file.exists()
+    else:
+        assert backup_file.read_text(encoding="utf-8") == backup
 
 
 class TestPersistenceManager:
@@ -69,12 +220,10 @@ class TestPersistenceManager:
         
         test_persistence_manager.seen_items_file = seen_file
         
-        result = test_persistence_manager.load_seen_items()
-        
-        assert result == {}
-        test_persistence_manager.logger.warning.assert_called_with(
-            "Seen items file is empty"
-        )
+        with pytest.raises(RuntimeError, match="Cannot recover seen items"):
+            test_persistence_manager.load_seen_items()
+
+        test_persistence_manager.logger.error.assert_called()
     
     def test_load_seen_items_json_error(self, test_persistence_manager, temp_dir):
         """Test loading seen items with JSON error.""" 
@@ -84,9 +233,9 @@ class TestPersistenceManager:
         
         test_persistence_manager.seen_items_file = seen_file
         
-        result = test_persistence_manager.load_seen_items()
-        
-        assert result == {}
+        with pytest.raises(RuntimeError, match="Cannot recover seen items"):
+            test_persistence_manager.load_seen_items()
+
         test_persistence_manager.logger.error.assert_called()
     
     def test_save_seen_items_success(self, test_persistence_manager, temp_dir):

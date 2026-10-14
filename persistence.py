@@ -47,6 +47,12 @@ class PersistenceManager:
         self.logger = logger
         self.seen_items_file = Path(APP_CONFIG.seen_watches_file)
         self.session_history_file = Path(APP_CONFIG.session_history_file)
+
+        self._seen_items_load_failed = False
+
+    @property
+    def _seen_items_backup_file(self) -> Path:
+        return self.seen_items_file.with_name(self.seen_items_file.name + ".bak")
     
     def load_seen_items(self) -> Dict[str, SeenIds]:
         """
@@ -55,33 +61,38 @@ class PersistenceManager:
         Returns:
             Dictionary mapping site keys to sets of seen watch IDs
         """
-        if not self.seen_items_file.exists():
+        # Cleanup must not overwrite unreadable history after a failed startup.
+        self._seen_items_load_failed = True
+        missing = 0
+        for path in (self.seen_items_file, self._seen_items_backup_file):
+            try:
+                data = json.loads(path.read_text(encoding="utf-8"))
+                if not isinstance(data, dict) or any(
+                    not isinstance(items, list)
+                    or any(not isinstance(item, str) for item in items)
+                    for items in data.values()
+                ):
+                    raise ValueError("Expected a mapping of sources to lists of seen IDs")
+                result = {key: SeenIds.fromkeys(items) for key, items in data.items()}
+            except FileNotFoundError:
+                missing += 1
+                continue
+            except (OSError, ValueError) as e:
+                self.logger.error(f"Error loading seen items from {path}: {e}")
+                continue
+
+            if path == self._seen_items_backup_file:
+                self.logger.warning(f"Recovered seen items from last good state in {path}")
+            self._seen_items_load_failed = False
+            self.logger.info(f"Loaded seen items: {sum(len(s) for s in result.values())} total")
+            return result
+
+        if missing == 2:
+            self._seen_items_load_failed = False
             self.logger.info("Seen items file does not exist, starting fresh")
             return {}
-        
-        try:
-            with open(self.seen_items_file, 'r', encoding='utf-8') as f:
-                content = f.read()
-                if not content:
-                    self.logger.warning("Seen items file is empty")
-                    return {}
-                
-                data = json.loads(content)
-                
-                # The saved order is the order they were last seen in
-                result = {}
-                for site_key, items in data.items():
-                    result[site_key] = SeenIds.fromkeys(items)
-                
-                self.logger.info(f"Loaded seen items: {sum(len(s) for s in result.values())} total")
-                return result
-                
-        except json.JSONDecodeError as e:
-            self.logger.error(f"Error parsing seen items file: {e}")
-            return {}
-        except Exception as e:
-            self.logger.error(f"Error loading seen items: {e}")
-            return {}
+
+        raise RuntimeError("Cannot recover seen items; refusing to start with an empty history")
     
     def save_seen_items(self, seen_items: Dict[str, SeenIds]):
         """
@@ -91,19 +102,23 @@ class PersistenceManager:
             seen_items: Dictionary mapping site keys to their seen watch IDs
         """
         try:
+            if self._seen_items_load_failed:
+                raise RuntimeError("Refusing to overwrite seen items after failed recovery")
             self.trim_seen_items(seen_items)
 
             # Create directory if needed
             self.seen_items_file.parent.mkdir(parents=True, exist_ok=True)
 
-            # Write to file, each shop's ids in the order they were last seen
-            with open(self.seen_items_file, 'w', encoding='utf-8') as f:
-                json.dump(
-                    {site_key: list(items) for site_key, items in seen_items.items()},
-                    f,
-                    indent=2,
-                    ensure_ascii=False,
-                )
+            data = {site_key: list(items) for site_key, items in seen_items.items()}
+            # Keep the same snapshot as a backup first; neither good file is
+            # replaced until its new contents have been written and flushed.
+            for path in (self._seen_items_backup_file, self.seen_items_file):
+                beside = path.with_name(path.name + ".tmp")
+                with open(beside, 'w', encoding='utf-8') as f:
+                    json.dump(data, f, indent=2, ensure_ascii=False)
+                    f.flush()
+                    os.fsync(f.fileno())
+                beside.replace(path)
 
             self.logger.debug("Saved seen items successfully")
 

@@ -16,6 +16,7 @@ ENV/
 
 # Data files
 seen_watches.json
+seen_watches.json.bak
 session_history.json
 filters.json
 prices.sqlite3
