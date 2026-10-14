@@ -1,18 +1,21 @@
 """What the watches the shops offer are offered for on Chrono24 inside the EU, read from its real search page."""
 
 import asyncio
+import logging
 from datetime import datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
 import pytest
+from bs4 import BeautifulSoup
 
 import chrono24
 from chrono24 import FULL_SET, KINDS, USED, NotResults, read, search_round, search_url
 from models import ScrapingSession, WatchData
 from monitor import WatchMonitor
 from prices import Prices
+from worth import buy_limit
 
 PAGES = Path(__file__).parent / "pages"
 SEEN = datetime(2026, 10, 10, 11, 0)
@@ -87,6 +90,35 @@ def test_a_search_reads_how_many_offers_it_found_and_the_ones_on_its_page():
 
 def test_a_search_that_finds_nothing_reads_as_no_offers():
     assert read(page("chrono24_none.html"), "Zqxw", "99999XYZQ", SEEN) == (0, [])
+
+
+@pytest.mark.parametrize("renamed", ["js-listing-item-container", "js-listing-item-link", "wt-listing-item-price"])
+def test_cards_unread_when_chrono24_renames_a_class(renamed):
+    html = page("chrono24.html").replace(renamed, renamed + "-changed")
+
+    with pytest.raises(NotResults, match="could not read.*0 of 120"):
+        read(html, "Rolex", "116610LN", SEEN)
+
+
+@pytest.mark.parametrize(
+    ("found", "readable", "failed"),
+    [(192, 30, True), (4, 0, True), (4, 1, True), (192, 119, False), (4, 3, False), (4, 4, False), (0, 0, False)],
+)
+def test_cards_unread_are_compared_with_the_offers_expected_on_one_page(found, readable, failed):
+    soup = BeautifulSoup(page("chrono24.html"), "lxml")
+    soup.find("strong").string = f"{found} Inserate"
+    for n, card in enumerate(soup.select(".js-listing-item-container")):
+        if n >= found:
+            card.decompose()
+        elif n >= readable:
+            card.select_one(".wt-listing-item-price").decompose()
+
+    if failed:
+        with pytest.raises(NotResults, match="could not read"):
+            read(str(soup), "Rolex", "116610LN", SEEN)
+    else:
+        count, offers = read(str(soup), "Rolex", "116610LN", SEEN)
+        assert (count, len(offers)) == (found, readable)
 
 
 def test_cloudflare_s_human_check_is_no_search_result():
@@ -219,6 +251,47 @@ async def test_a_page_that_is_no_search_result_ends_the_round_and_leaves_its_ref
     assert prices.due(list(KINDS), SEEN, 20) == [
         ("Rolex", "116610LN", USED), ("Rolex", "116610LN", FULL_SET), ("Rolex", "126610LN", USED), ("Rolex", "126610LN", FULL_SET)
     ]
+
+
+@pytest.mark.parametrize("unreadable", [120, 100])
+async def test_cards_unread_keep_the_last_good_offers_and_limit_leave_the_reference_due_and_log_it(prices, monkeypatch, caplog, unreadable):
+    prices.saw([shop_offer("116610LN")])
+    pages = {"Rolex 116610LN": "chrono24.html"}
+    last_good = datetime.now() - chrono24.FRESH - timedelta(seconds=1)
+    await search_round(prices, Chrome(pages), now=lambda: last_good)
+    kept = {
+        table: prices._db.execute(f"SELECT * FROM {table}").fetchall()
+        for table in ("offers", "searches", "searched_offers")
+    }
+    assert [buy_limit(prices, "116610LN", kind) for kind in KINDS] == [Decimal("8608")] * 2
+
+    class ChangedChrome(Chrome):
+        async def page(self, url):
+            return (await super().page(url)).replace("wt-listing-item-price", "changed-price", unreadable)
+
+    chrome = ChangedChrome(pages)
+    monkeypatch.setattr(chrono24, "Chrome", lambda ways: chrome)
+    monkeypatch.setattr(chrono24.proxies, "for_browser", lambda path: [])
+
+    async def stop_after_round(delay):
+        assert delay == chrono24.IDLE
+        raise asyncio.CancelledError
+
+    monkeypatch.setattr(chrono24.asyncio, "sleep", stop_after_round)
+    with pytest.raises(asyncio.CancelledError):
+        await chrono24.keep_up(prices, logging.getLogger(__name__))
+
+    assert chrome.asked == ["Rolex 116610LN"]
+    assert not chrome.open
+    for table, rows in kept.items():
+        assert prices._db.execute(f"SELECT * FROM {table}").fetchall() == rows
+    assert prices.due(list(KINDS), datetime.now() - chrono24.FRESH, 20) == [
+        ("Rolex", "116610LN", USED), ("Rolex", "116610LN", FULL_SET)
+    ]
+    assert [buy_limit(prices, "116610LN", kind) for kind in KINDS] == [Decimal("8608")] * 2
+    assert "Chrono24: searching stopped:" in caplog.text
+    assert "could not read" in caplog.text
+    assert f"{120 - unreadable} of 120" in caplog.text
 
 
 async def test_the_search_runs_beside_the_monitor_and_stops_with_it(monkeypatch, prices):
