@@ -9,8 +9,6 @@ contact form. A message counts as sent once its conversation shows it.
 from dataclasses import dataclass
 from typing import Callable, List, Optional
 
-from playwright.async_api import TimeoutError
-
 from scrapers.kleinanzeigen import offer_url
 
 GATEWAY = "https://gateway.kleinanzeigen.de"
@@ -113,6 +111,7 @@ class Messages:
     async def contact(self, ad_id: str, text: str, *, before_send: Callable[[int], None] = lambda before: None) -> str:
         """Write through the offer's form; before_send records the existing message count before submission."""
         form = None
+        submit = "#viewad-contact-form button.viewad-contact-submit"
         try:
             try:
                 earlier = await self.bought(ad_id)
@@ -120,14 +119,12 @@ class Messages:
                 form = await self._page.context.new_page()
                 await form.goto(offer_url(ad_id), wait_until="domcontentloaded")
                 await form.fill("#viewad-contact-message", text)
+                # A blocked button is retryable only while no click could have been dispatched.
+                await form.click(submit, trial=True)
             except Exception as e:
                 raise Unsent(f"the contact form of {ad_id} was not sent: {e}") from e
             before_send(before)
-            try:
-                # Do not let navigation after submission turn a sent click into a retryable timeout.
-                await form.click("#viewad-contact-form button.viewad-contact-submit", no_wait_after=True)
-            except TimeoutError as e:
-                raise Unsent(f"the contact form of {ad_id} could not be clicked: {e}") from e
+            await form.click(submit)
             await form.wait_for_selector(".j-viewad-contact-success", state="visible", timeout=30_000)
             conversation_id = await self.bought(ad_id)
             if conversation_id is None:
