@@ -163,4 +163,5 @@ async def test_a_proxy_that_turns_the_login_down_leaves_it_out_of_the_log(monkey
         server.shutdown()
 
     assert any("407" in line for line in lines)
-    assert not [line for line in lines if "secret" in line]
+    # dXNlcjpzZWNyZXQ is user:secret as Basic authentication sends it
+    assert not [line for line in lines if "secret" in line or "dXNlcjpzZWNyZXQ" in line]
