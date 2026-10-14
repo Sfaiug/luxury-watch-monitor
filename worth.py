@@ -65,6 +65,11 @@ def buy_limit(prices: Prices, reference: str, kind: str, brand: Optional[str] = 
     own = prices.buy_price(reference)
     if own is not None:
         return Decimal(str(own))
+    return calculated_limit(prices, reference, kind, brand)
+
+
+def calculated_limit(prices: Prices, reference: str, kind: str, brand: Optional[str] = None) -> Optional[Decimal]:
+    """The buy limit worked out from worth and past purchases, independent of the owner's price."""
     value = worth(prices, reference, kind, brand)
     if value is None:
         return None

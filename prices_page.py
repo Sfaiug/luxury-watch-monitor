@@ -7,6 +7,7 @@ import hmac
 import json
 import math
 from datetime import datetime
+from decimal import Decimal
 from html import escape
 
 from aiohttp import web
@@ -14,9 +15,9 @@ from aiohttp import web
 from agent import OPENING
 from chrono24 import FULL_SET, KINDS, USED
 from config import APP_CONFIG
-from prices import Prices
+from prices import Prices, reference_key
 from utils import parse_price
-from worth import buy_limit, ours, worth
+from worth import calculated_limit, ours, worth
 
 PATH = "/muv/prices"  # atlas.hopcomp.com hands /muv/ to the monitor
 
@@ -83,10 +84,10 @@ class PricesPage:
             if searched:
                 used, full_sets = (self.prices.market(reference, kind)[0] for kind in (USED, FULL_SET))
                 market = f"{used} used, {full_sets} of them full sets, <time>{searched[:10]}</time>"
-            # Worth and the most to pay, the owner's price in its place once set, for each kind
+            # Keep the worked-out limits visible beside the owner's price, for each kind
             numbers = "".join(
                 f"<td class=n>{euros(worth(self.prices, reference, kind, brand))}</td>"
-                f'<td class="n limit">{euros(buy_limit(self.prices, reference, kind, brand))}</td>'
+                f'<td class="n">{euros(calculated_limit(self.prices, reference, kind, brand))}</td>'
                 for kind in KINDS
             )
             # How many we bought and sold within the year, and the middle of their prices
@@ -114,10 +115,11 @@ for a full set, a quarter of the used ones with their original box and papers. W
 last year, the middle of those sales instead if lower (for a full set, of the full sets we sold).
 Most to pay: what still leaves {share}&nbsp;% and at least {euros(APP_CONFIG.least_profit_eur)} profit after Chrono24's fee,
 shipping and the margin tax, and no more than the middle of what we paid for the watch within the last year
-(for a full set, of the full sets we bought). Your price, once set, is the most to pay in its place; an empty one gives it back.</p>
+(for a full set, of the full sets we bought). Your price, once set, is the most to pay in its place; an empty one gives it back.
+A price below half or above one and a half times a worked-out limit needs confirmation.</p>
 {matches}<input type=search placeholder="Find a watch: brand, model or reference">
 <div class=table><table><thead><tr><th>Brand</th><th>Model</th><th>Reference</th><th>On Chrono24</th><th>We bought (a year)</th><th>We sold (a year)</th>
-<th>Worth used</th><th>Most to pay</th><th>Worth full set</th><th>Most to pay</th><th>Your price</th></tr></thead>
+<th>Worth used</th><th>Worked-out limit</th><th>Worth full set</th><th>Worked-out limit</th><th>Your price</th></tr></thead>
 <tbody>{"".join(rows)}</tbody></table></div>
 <script>{FILTER}</script></body></html>"""
         return web.Response(text=html, content_type="text/html")
@@ -161,6 +163,26 @@ shipping and the margin tax, and no more than the middle of what we paid for the
         price = float(parsed) if parsed is not None and parsed.is_finite() else None
         if not reference or (given and not (price and math.isfinite(price) and price > 0)):
             return web.Response(status=400, text="A buy price is a number of euros above nothing, or nothing.")
+
+        if price is not None and form.get("confirm") != given:
+            brand = next((brand for ref, brand, _, _ in self.prices.references()
+                          if ref == reference_key(reference)), None)
+            limits = {kind: calculated_limit(self.prices, reference, kind, brand) for kind in KINDS}
+            amount = Decimal(str(price))
+            if any(limit is not None and (amount < limit / 2 or amount > limit * Decimal("1.5"))
+                   for limit in limits.values()):
+                worked_out = ", ".join(f"{kind}: {euros(limit)}" for kind, limit in limits.items())
+                html = f"""<!doctype html><html lang=en><head><meta charset=utf-8>
+<meta name=viewport content="width=device-width, initial-scale=1"><title>Confirm buy price</title><style>{STYLE}</style></head>
+<body><h1>Confirm buy price for {escape(reference)}</h1>
+<p>Your price: {euros(price)}. Worked-out limit: {worked_out}.</p>
+<p>Your price is below half or above one and a half times a worked-out limit. It has not been saved.</p>
+<form method=post action="{PATH}?key={key(self.secret)}">
+<input type=hidden name=reference value="{escape(reference)}">
+<input type=hidden name=price value="{escape(given)}">
+<button name=confirm value="{escape(given)}">Confirm {euros(price)}</button>
+<a href="{PATH}?key={key(self.secret)}#{escape(reference)}">Cancel</a></form></body></html>"""
+                return web.Response(text=html, content_type="text/html")
 
         self.prices.set_buy_price(reference, price, datetime.now())
         raise web.HTTPSeeOther(f"{PATH}?key={key(self.secret)}#{reference}")
