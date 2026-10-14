@@ -5,6 +5,55 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
+import main_production
+
+
+@pytest.mark.parametrize(
+    "webhook_url, bot_channel_id",
+    [("https://discord.com/api/webhooks/test/token", ""), ("", "123456789"), ("", "")],
+)
+def test_validate_environment_webhook_or_bot_channel(
+    monkeypatch, tmp_path, test_site_config, webhook_url, bot_channel_id
+):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("TEST_WEBHOOK_URL", webhook_url)
+    monkeypatch.setenv("TEST_CHANNEL_ID", bot_channel_id)
+    monkeypatch.setenv("PYTHONIOENCODING", "utf-8")
+    monkeypatch.setattr(main_production, "SITE_CONFIGS", {"test_site": test_site_config})
+
+    is_valid, messages = main_production.validate_environment()
+
+    assert is_valid
+    if webhook_url or bot_channel_id:
+        assert messages == []
+    else:
+        assert len(messages) == 1
+        assert messages[0].startswith("⚠️")
+        assert "Test Site" in messages[0]
+        assert "TEST_WEBHOOK_URL" in messages[0]
+        assert "channel" in messages[0].lower()
+
+
+def test_validate_environment_bot_channel_keeps_write_permission_error(
+    monkeypatch, tmp_path, test_site_config
+):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("TEST_WEBHOOK_URL", "")
+    monkeypatch.setenv("TEST_CHANNEL_ID", "123456789")
+    monkeypatch.setattr(main_production, "SITE_CONFIGS", {"test_site": test_site_config})
+
+    def refuse_write(*args, **kwargs):
+        raise PermissionError("read-only directory")
+
+    monkeypatch.setattr(Path, "write_text", refuse_write)
+
+    is_valid, messages = main_production.validate_environment()
+
+    assert not is_valid
+    assert any("No write permission" in message for message in messages)
+
 
 def test_main_production_loads_cwd_dotenv_before_config_import(temp_dir):
     (temp_dir / ".env").write_text(
