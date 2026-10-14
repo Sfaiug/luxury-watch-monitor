@@ -82,6 +82,7 @@ class WatchMonitor:
         # State
         self.seen_items: Dict[str, Set[str]] = {}
         self.scrapers: Dict[str, BaseScraper] = {}
+        self._scanning: Set[str] = set()
         self.filter_store = FilterStore(APP_CONFIG.filters_file)
         self.filters: Dict[str, Filter] = {}  # as last read
         self._trades_read: Optional[float] = None  # when the controlling export read last was written
@@ -674,6 +675,9 @@ class WatchMonitor:
         self, site_key: str, scraper: BaseScraper, session: ScrapingSession
     ):
         """Scrape a single site and update session."""
+        if site_key in self._scanning:
+            return
+        self._scanning.add(site_key)
         try:
             self.logger.info(f"Starting scrape for {site_key}")
 
@@ -746,6 +750,8 @@ class WatchMonitor:
         except Exception as e:
             self.logger.exception(f"Error scraping {site_key}: {e}")
             session.add_site_result(site_key, 0, 0, 0, errors=1)
+        finally:
+            self._scanning.discard(site_key)
 
     async def _page(self, url: str) -> str:
         page = await fetch_page(url, self.logger)
