@@ -35,6 +35,10 @@ def plain(text: str) -> str:
 class NotSent(Exception):
     """The site does not show the message as sent."""
 
+    def __init__(self, message: str, before: int = 0):
+        super().__init__(message)
+        self.before = before  # messages already there before sending, for a later confirmation
+
 
 class Unsent(Exception):
     """The message went nowhere: the contact form was never sent."""
@@ -117,12 +121,15 @@ class Messages:
             await self._page.fill("#viewad-contact-message", text)
         except Exception as e:
             raise Unsent(f"the contact form of {ad_id} was not sent: {e}") from e
-        await self._page.click("#viewad-contact-form button.viewad-contact-submit")
-        await self._page.wait_for_selector(".j-viewad-contact-success", state="visible", timeout=30_000)
-        conversation_id = await self.bought(ad_id)
-        if conversation_id is None:
-            raise NotSent(f"no conversation about {ad_id} after contacting its seller")
-        await self._shows(conversation_id, text, before)
+        try:
+            await self._page.click("#viewad-contact-form button.viewad-contact-submit")
+            await self._page.wait_for_selector(".j-viewad-contact-success", state="visible", timeout=30_000)
+            conversation_id = await self.bought(ad_id)
+            if conversation_id is None:
+                raise NotSent(f"no conversation about {ad_id} after contacting its seller")
+            await self._shows(conversation_id, text, before)
+        except Exception as e:
+            raise NotSent(str(e), before=before) from e
         return conversation_id
 
     async def reply(self, conversation_id: str, text: str):

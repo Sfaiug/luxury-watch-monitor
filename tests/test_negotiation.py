@@ -441,12 +441,12 @@ async def test_a_first_message_written_wrong_each_time_goes_to_the_owner_who_hea
     assert channel == "filter:42" and text.startswith("The agent hands this negotiation to you")
 
 
-@pytest.mark.parametrize("conversation_id", [None, "c1"])
-async def test_a_first_message_shown_later_counts_as_sent_without_sending_twice(kept, conversation_id):
+@pytest.mark.parametrize("earlier", [None, [], [Said(True, "Ist die Uhr noch zu haben?")]])
+async def test_a_first_message_shown_later_counts_as_sent_without_sending_twice(kept, earlier):
     page = SimpleNamespace(goto=AsyncMock(), fill=AsyncMock(), click=AsyncMock(), wait_for_selector=AsyncMock())
     box = Messages(page)
-    box.bought = AsyncMock(return_value=conversation_id)
-    box.conversation = AsyncMock(return_value=SimpleNamespace(messages=[]))
+    box.bought = AsyncMock(return_value="c1" if earlier is not None else None)
+    box.conversation = AsyncMock(return_value=SimpleNamespace(messages=earlier or []))
     box.reply = AsyncMock()
     notify = AsyncMock()
     claude = Claude(writes=["Ist die Uhr noch zu haben?"])
@@ -459,13 +459,14 @@ async def test_a_first_message_shown_later_counts_as_sent_without_sending_twice(
 
     waiting = kept.get("3535834511")
     assert (waiting.status, waiting.sent, waiting.notice) == ("opening", ["Ist die Uhr noch zu haben?"], "")
+    assert waiting.seen == len(earlier or [])
     assert [n.ad_id for n in talking.waiting()] == [waiting.ad_id]
     notify.assert_not_awaited()
 
     # A fresh negotiator reads the saved attempt. The seller may already have answered it.
     talking = negotiator(Claude(), kept, notify)
     box.bought.return_value = "c1"
-    box.conversation.return_value.messages = [Said(True, "Ist die Uhr\nnoch zu haben?"), Said(False, "Ja.")]
+    box.conversation.return_value.messages = (earlier or []) + [Said(True, "Ist die Uhr\nnoch zu haben?"), Said(False, "Ja.")]
     await talking.start(box)
     await talking.start(box)
     await talking.tell_owner()
@@ -476,6 +477,36 @@ async def test_a_first_message_shown_later_counts_as_sent_without_sending_twice(
     page.click.assert_awaited_once()
     box.reply.assert_not_awaited()
     notify.assert_not_awaited()
+
+
+@pytest.mark.parametrize("later", [[], [Said(False, "Ja.")]])
+async def test_an_old_identical_first_message_is_not_the_one_to_be_shown_later(kept, later):
+    text = "Ist die Uhr noch zu haben?"
+    earlier = [Said(True, text)]
+    page = SimpleNamespace(goto=AsyncMock(), fill=AsyncMock(), click=AsyncMock(), wait_for_selector=AsyncMock())
+    box = Messages(page)
+    box.bought = AsyncMock(return_value="c1")
+    box.conversation = AsyncMock(return_value=SimpleNamespace(messages=earlier))
+    box.reply = AsyncMock()
+    notify = AsyncMock()
+    talking = negotiator(Claude(writes=[text]), kept, notify)
+    talking.ask_to_start(asked_for())
+
+    await talking.start(box)
+    assert kept.get("3535834511").status == "opening"
+
+    # Only messages after submission can confirm it, even if the conversation grew.
+    talking = negotiator(Claude(), kept, notify)
+    box.conversation.return_value.messages = earlier + later
+    await talking.start(box)
+    assert kept.get("3535834511").status == "owner"
+    await talking.follow_up(box)
+    await talking.tell_owner()
+
+    assert "could not see its first message reach the seller" in notify.await_args.args[1]
+    page.click.assert_awaited_once()
+    box.reply.assert_not_awaited()
+    notify.assert_awaited_once()
 
 
 @pytest.mark.parametrize("shown", [None, [], [Said(True, "A different message")], [Said(False, "Ist die Uhr noch zu haben?")]])

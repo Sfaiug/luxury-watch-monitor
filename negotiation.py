@@ -27,7 +27,7 @@ from pydantic import BaseModel, Field
 
 import chrome
 from agent import STEP, RedFlag, ask, flagged
-from kleinanzeigen_messages import Messages, Unsent, plain
+from kleinanzeigen_messages import Messages, NotSent, Unsent, plain
 from prices_page import euros
 from scrapers.kleinanzeigen import BASE_URL
 
@@ -499,7 +499,8 @@ class Negotiator:
             # The contact form may have reached the seller: look again, never send a first message twice
             conversation_id = await messages.bought(negotiation.ad_id)
             said = (await messages.conversation(conversation_id)).messages if conversation_id else []
-            if not any(message.outbound and plain(message.text) == plain(negotiation.sent[-1]) for message in said):
+            if not any(message.outbound and plain(message.text) == plain(negotiation.sent[-1])
+                       for message in said[negotiation.seen:]):
                 return self._hand_over(negotiation, "it could not see its first message reach the seller")
             negotiation.conversation = conversation_id
         else:
@@ -512,6 +513,10 @@ class Negotiator:
             self.negotiations.save(negotiation)
             try:
                 negotiation.conversation = await messages.contact(negotiation.ad_id, text)
+            except NotSent as e:
+                negotiation.seen = e.before
+                self.negotiations.save(negotiation)
+                raise
             except Unsent:
                 # Nothing reached the seller: asked for still, until the offer's page has refused it too often
                 negotiation.tries += 1
