@@ -345,7 +345,10 @@ class Box:
     def __init__(self, contact_fails=False):
         self.said, self.contact_fails = [], contact_fails
 
-    async def contact(self, ad_id, text):
+    async def contact(self, ad_id, text, *, before_send=lambda before: None):
+        if isinstance(self.contact_fails, Unsent):
+            raise self.contact_fails
+        before_send(len(self.said))
         if self.contact_fails is True:
             raise RuntimeError("the page did not answer")
         if self.contact_fails:
@@ -477,6 +480,47 @@ async def test_a_first_message_shown_later_counts_as_sent_without_sending_twice(
     page.click.assert_awaited_once()
     box.reply.assert_not_awaited()
     notify.assert_not_awaited()
+
+
+@pytest.mark.parametrize("shows_message", [False, True])
+async def test_an_interrupted_first_message_keeps_its_boundary_until_shown_later(tmp_path, shows_message):
+    path = tmp_path / "deals.sqlite3"
+    kept = Negotiations(path)
+    text = "Ist die Uhr noch zu haben?"
+    earlier = [Said(True, text)]
+    page = SimpleNamespace(goto=AsyncMock(), fill=AsyncMock(), click=AsyncMock(),
+                           wait_for_selector=AsyncMock(side_effect=asyncio.CancelledError))
+    box = Messages(page)
+    box.bought = AsyncMock(return_value="c1")
+    box.conversation = AsyncMock(return_value=SimpleNamespace(messages=earlier))
+    box.reply = AsyncMock()
+    notify = AsyncMock()
+    talking = negotiator(Claude(writes=[text]), kept, notify)
+    talking.ask_to_start(asked_for())
+
+    try:
+        with pytest.raises(asyncio.CancelledError):
+            await talking.start(box)
+        interrupted = kept.get("3535834511")
+        assert (interrupted.status, interrupted.seen, interrupted.notice) == ("opening", len(earlier), "")
+    finally:
+        kept.close()
+
+    kept = Negotiations(path)
+    try:
+        talking = negotiator(Claude(), kept, notify)
+        box.conversation.return_value.messages = earlier + ([Said(True, text)] if shows_message else [])
+        await talking.start(box)
+        await talking.tell_owner()
+
+        result = kept.get("3535834511")
+        assert result.status == ("talking" if shows_message else "owner")
+        assert result.conversation == ("c1" if shows_message else "")
+        assert notify.await_count == (0 if shows_message else 1)
+        page.click.assert_awaited_once()
+        box.reply.assert_not_awaited()
+    finally:
+        kept.close()
 
 
 @pytest.mark.parametrize("later", [[], [Said(False, "Ja.")]])

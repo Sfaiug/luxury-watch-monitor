@@ -27,7 +27,7 @@ from pydantic import BaseModel, Field
 
 import chrome
 from agent import STEP, RedFlag, ask, flagged
-from kleinanzeigen_messages import Messages, NotSent, Unsent, plain
+from kleinanzeigen_messages import Messages, Unsent, plain
 from prices_page import euros
 from scrapers.kleinanzeigen import BASE_URL
 
@@ -508,15 +508,14 @@ class Negotiator:
             text = negotiation.sent[-1] if negotiation.sent else await self._write(negotiation, Move("first"), [], None)
             if text is None:
                 return
-            negotiation.status = "opening"
             negotiation.sent[:] = [text]
-            self.negotiations.save(negotiation)
-            try:
-                negotiation.conversation = await messages.contact(negotiation.ad_id, text)
-            except NotSent as e:
-                negotiation.seen = e.before
+
+            def before_send(before):
+                negotiation.status, negotiation.seen = "opening", before
                 self.negotiations.save(negotiation)
-                raise
+
+            try:
+                negotiation.conversation = await messages.contact(negotiation.ad_id, text, before_send=before_send)
             except Unsent:
                 # Nothing reached the seller: asked for still, until the offer's page has refused it too often
                 negotiation.tries += 1
