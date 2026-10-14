@@ -81,6 +81,10 @@ class OfferTab:
         self.site = site
         self.visited, self.typed, self.clicked = [], {}, []
         self.closed = False
+        self.pressed = None
+
+    async def add_init_script(self, script):
+        pass
 
     async def goto(self, url, **options):
         self.visited.append(url)
@@ -88,9 +92,15 @@ class OfferTab:
     async def fill(self, selector, text):
         self.typed[selector] = text
 
-    async def click(self, selector, *, trial=False):
-        if trial:
-            return
+    async def evaluate(self, script):
+        if script == "window.__watchMonitorContactPressed = false":
+            self.pressed = False
+        else:
+            assert script == "window.__watchMonitorContactPressed === false"
+            return self.pressed is False
+
+    async def click(self, selector):
+        self.pressed = True
         self.clicked.append(selector)
         started = conversation(ad_id=self.visited[-1].rsplit("/", 1)[1])
         self.site.conversations.setdefault(started["id"], started)
@@ -187,23 +197,33 @@ async def test_a_contact_form_in_its_own_tab_that_never_sent_can_be_tried_again(
 
     assert site.tabs[0].closed and site.tabs[0].clicked == []
     assert await box.bought("3535834511") is None
-    before_send.assert_not_called()
+    assert before_send.call_count == (1 if failure == "click" else 0)
 
     assert await box.contact("3535834511", text) == "abc:1:xyz"
     assert len(site.tabs) == 2 and site.tabs[1].closed
     assert [m.text for m in (await box.conversation("abc:1:xyz")).messages] == [text]
 
 
-async def test_a_click_in_its_own_tab_that_times_out_after_submission_is_not_unsent():
+@pytest.mark.parametrize("inspection", ["pressed", "navigated", "crashed", "unresponsive"])
+async def test_a_click_in_its_own_tab_that_times_out_after_submission_is_not_unsent(inspection):
     site, before_send = Site(), Mock()
-    click = OfferTab.click
+    click, evaluate = OfferTab.click, OfferTab.evaluate
 
-    async def slow_click(form, selector, *, trial=False):
-        await click(form, selector, trial=trial)
-        if not trial:
-            raise TimeoutError("the click handler is still running after submission")
+    async def slow_click(form, selector):
+        await click(form, selector)
+        if inspection == "navigated":
+            form.pressed = None  # a navigation loses the marker, not the submission
+        raise TimeoutError("the click handler is still running after submission")
 
-    with patch.object(OfferTab, "click", slow_click):
+    async def inspect(form, script):
+        if script == "window.__watchMonitorContactPressed === false":
+            if inspection == "crashed":
+                raise RuntimeError("the page crashed")
+            if inspection == "unresponsive":
+                await asyncio.Event().wait()
+        return await evaluate(form, script)
+
+    with patch.object(OfferTab, "click", slow_click), patch.object(OfferTab, "evaluate", inspect):
         with pytest.raises(TimeoutError):
             await Messages(site).contact("3535834511", "Hallo, ist die Uhr noch da?", before_send=before_send)
 

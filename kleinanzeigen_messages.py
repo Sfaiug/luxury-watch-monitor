@@ -6,8 +6,11 @@ token the session hands out, and a first message is the offer page's own
 contact form. A message counts as sent once its conversation shows it.
 """
 
+import asyncio
 from dataclasses import dataclass
 from typing import Callable, List, Optional
+
+from playwright.async_api import TimeoutError
 
 from scrapers.kleinanzeigen import offer_url
 
@@ -117,14 +120,28 @@ class Messages:
                 earlier = await self.bought(ad_id)
                 before = len((await self.conversation(earlier)).messages) if earlier else 0
                 form = await self._page.context.new_page()
+                await form.add_init_script(f"""window.addEventListener('pointerdown', event => {{
+                    if (event.target.closest({submit!r})) window.__watchMonitorContactPressed = true;
+                }}, true);""")
                 await form.goto(offer_url(ad_id), wait_until="domcontentloaded")
                 await form.fill("#viewad-contact-message", text)
-                # A blocked button is retryable only while no click could have been dispatched.
-                await form.click(submit, trial=True)
+                await form.evaluate("window.__watchMonitorContactPressed = false")
             except Exception as e:
                 raise Unsent(f"the contact form of {ad_id} was not sent: {e}") from e
             before_send(before)
-            await form.click(submit)
+            try:
+                await form.click(submit)
+            except TimeoutError as e:
+                try:
+                    # A missing marker (navigation), a crash or an unresponsive handler proves nothing.
+                    untouched = await asyncio.wait_for(
+                        form.evaluate("window.__watchMonitorContactPressed === false"), timeout=1,
+                    )
+                except Exception:
+                    raise e
+                if untouched:
+                    raise Unsent(f"the contact form of {ad_id} could not be clicked: {e}") from e
+                raise
             await form.wait_for_selector(".j-viewad-contact-success", state="visible", timeout=30_000)
             conversation_id = await self.bought(ad_id)
             if conversation_id is None:

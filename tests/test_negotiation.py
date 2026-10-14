@@ -448,10 +448,11 @@ async def test_a_first_message_written_wrong_each_time_goes_to_the_owner_who_hea
 @pytest.mark.parametrize("earlier", [None, [], [Said(True, "Ist die Uhr noch zu haben?")]])
 @pytest.mark.parametrize("click_times_out", [False, True])
 async def test_a_first_message_shown_later_counts_as_sent_without_sending_twice(kept, earlier, click_times_out):
-    page = SimpleNamespace(goto=AsyncMock(), fill=AsyncMock(), click=AsyncMock(), wait_for_selector=AsyncMock(), close=AsyncMock())
+    page = SimpleNamespace(goto=AsyncMock(), fill=AsyncMock(), click=AsyncMock(), wait_for_selector=AsyncMock(), close=AsyncMock(),
+                           add_init_script=AsyncMock(), evaluate=AsyncMock(return_value=False))
 
-    async def click(selector, *, trial=False):
-        if not trial and click_times_out:
+    async def click(selector):
+        if click_times_out:
             raise TimeoutError("the click handler is still running after submission")
 
     page.click.side_effect = click
@@ -485,7 +486,7 @@ async def test_a_first_message_shown_later_counts_as_sent_without_sending_twice(
     opened = kept.get("3535834511")
     assert (opened.status, opened.conversation, opened.sent) == ("talking", "c1", waiting.sent)
     assert claude.asked == ["write"]
-    assert [call.kwargs for call in page.click.await_args_list] == [{"trial": True}, {}]
+    page.click.assert_awaited_once()
     box.reply.assert_not_awaited()
     notify.assert_not_awaited()
 
@@ -497,7 +498,8 @@ async def test_an_interrupted_first_message_keeps_its_boundary_until_shown_later
     text = "Ist die Uhr noch zu haben?"
     earlier = [Said(True, text)]
     page = SimpleNamespace(goto=AsyncMock(), fill=AsyncMock(), click=AsyncMock(),
-                           wait_for_selector=AsyncMock(side_effect=asyncio.CancelledError), close=AsyncMock())
+                           wait_for_selector=AsyncMock(side_effect=asyncio.CancelledError), close=AsyncMock(),
+                           add_init_script=AsyncMock(), evaluate=AsyncMock())
     box = Messages(SimpleNamespace(context=SimpleNamespace(new_page=AsyncMock(return_value=page))))
     box.bought = AsyncMock(return_value="c1")
     box.conversation = AsyncMock(return_value=SimpleNamespace(messages=earlier))
@@ -525,7 +527,7 @@ async def test_an_interrupted_first_message_keeps_its_boundary_until_shown_later
         assert result.status == ("talking" if shows_message else "owner")
         assert result.conversation == ("c1" if shows_message else "")
         assert notify.await_count == (0 if shows_message else 1)
-        assert [call.kwargs for call in page.click.await_args_list] == [{"trial": True}, {}]
+        page.click.assert_awaited_once()
         box.reply.assert_not_awaited()
     finally:
         kept.close()
@@ -535,7 +537,8 @@ async def test_an_interrupted_first_message_keeps_its_boundary_until_shown_later
 async def test_an_old_identical_first_message_is_not_the_one_to_be_shown_later(kept, later):
     text = "Ist die Uhr noch zu haben?"
     earlier = [Said(True, text)]
-    page = SimpleNamespace(goto=AsyncMock(), fill=AsyncMock(), click=AsyncMock(), wait_for_selector=AsyncMock(), close=AsyncMock())
+    page = SimpleNamespace(goto=AsyncMock(), fill=AsyncMock(), click=AsyncMock(), wait_for_selector=AsyncMock(), close=AsyncMock(),
+                           add_init_script=AsyncMock(), evaluate=AsyncMock())
     box = Messages(SimpleNamespace(context=SimpleNamespace(new_page=AsyncMock(return_value=page))))
     box.bought = AsyncMock(return_value="c1")
     box.conversation = AsyncMock(return_value=SimpleNamespace(messages=earlier))
@@ -556,7 +559,7 @@ async def test_an_old_identical_first_message_is_not_the_one_to_be_shown_later(k
     await talking.tell_owner()
 
     assert "could not see its first message reach the seller" in notify.await_args.args[1]
-    assert [call.kwargs for call in page.click.await_args_list] == [{"trial": True}, {}]
+    page.click.assert_awaited_once()
     box.reply.assert_not_awaited()
     notify.assert_awaited_once()
 
