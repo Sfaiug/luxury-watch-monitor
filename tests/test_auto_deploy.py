@@ -35,13 +35,16 @@ class Server:
         self.push("requirements.txt", "aiohttp\n")
         git(tmp_path, "clone", "-q", str(self.origin), str(self.checkout))
 
-        self.recorder(self.checkout / "venv" / "bin" / "pip")
+        self.recorder(
+            self.checkout / "venv" / "bin" / "pip", commands='cat "$4" > /dev/null'
+        )
         self.recorder(self.bin / "sudo")
 
-    def recorder(self, path, exit_code=0):
+    def recorder(self, path, exit_code=0, commands=""):
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(
-            f'#!/bin/sh\necho "{path.name} $*" >> "{self.log}"\nexit {exit_code}\n'
+            f'#!/bin/sh\nset -e\necho "{path.name} $*" >> "{self.log}"\n'
+            f'{commands}\nexit {exit_code}\n'
         )
         path.chmod(0o755)
 
@@ -63,7 +66,7 @@ class Server:
 
 
 RESTART = "sudo -n systemctl restart extras-luxury-watch-monitor"
-INSTALL = "pip install --quiet -r requirements.txt"
+INSTALL = "pip install --quiet -r /dev/stdin"
 
 
 @pytest.fixture
@@ -89,6 +92,45 @@ def test_a_failed_restart_is_tried_again(server):
 
     server.recorder(server.bin / "sudo")
     assert server.deploy() == (0, [INSTALL, RESTART])
+    assert server.deploy() == (0, [])
+
+
+def test_requirements_first_leaves_old_code_on_install_failure_and_retries(server):
+    assert server.deploy() == (0, [INSTALL, RESTART])
+    deployed = (server.checkout / ".git" / "deployed").read_text()
+    old_requirements = (server.checkout / "requirements.txt").read_text()
+    requirements = "aiohttp\ncurl_cffi\n"
+    server.push("requirements.txt", requirements)
+    server.push("monitor.py", "print('new')\n")
+
+    installed = server.checkout / "installed.txt"
+    head_at_install = server.checkout / "head-at-install.txt"
+    fail_install = server.checkout / "fail-install"
+    fail_install.touch()
+    server.recorder(
+        server.checkout / "venv" / "bin" / "pip",
+        commands=(
+            f'cat "$4" > "{installed}"\n'
+            f'git rev-parse HEAD > "{head_at_install}"\n'
+            f'test ! -e "{fail_install}"'
+        ),
+    )
+
+    code, ran = server.deploy()
+    assert code != 0 and ran == [INSTALL]
+    assert installed.read_text() == requirements
+    assert head_at_install.read_text() == deployed
+    assert (server.checkout / "requirements.txt").read_text() == old_requirements
+    assert not (server.checkout / "monitor.py").exists()
+    assert (server.checkout / ".git" / "deployed").read_text() == deployed
+
+    fail_install.unlink()
+    assert server.deploy() == (0, [INSTALL, RESTART])
+    assert installed.read_text() == requirements
+    assert head_at_install.read_text() == deployed
+    assert (server.checkout / "requirements.txt").read_text() == requirements
+    assert (server.checkout / "monitor.py").read_text() == "print('new')\n"
+    assert (server.checkout / ".git" / "deployed").read_text() != deployed
     assert server.deploy() == (0, [])
 
 
