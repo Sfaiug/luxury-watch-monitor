@@ -12,12 +12,12 @@ import platform
 from pathlib import Path
 from datetime import datetime
 
-# Load environment before importing modules that initialize APP_CONFIG.
+# Load .env defaults before importing modules that initialize APP_CONFIG.
 if Path(".env").exists():
     try:
         from dotenv import load_dotenv
 
-        load_dotenv(dotenv_path=Path(".env"), override=True)
+        load_dotenv(dotenv_path=Path(".env"))
         print("✅ Loaded configuration from .env file")
     except ImportError:
         print(

@@ -6,9 +6,10 @@ services:
     container_name: watch-monitor
     environment:
       - PYTHONUNBUFFERED=1
+      - SEEN_WATCHES_FILE=/app/data/seen_watches.json
     volumes:
       - ./logs:/app/logs
-      - ./seen_watches.json:/app/seen_watches.json
+      - ./data:/app/data
       - ./session_history.json:/app/session_history.json
       - ./.env:/app/.env
     restart: unless-stopped
