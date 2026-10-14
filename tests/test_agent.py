@@ -89,7 +89,7 @@ def test_an_offer_page_gives_the_seller_s_words_and_photos():
     assert offer.seller == "dealer"
 
 
-async def test_the_ai_reads_the_offer_with_its_first_photos_on_the_model_the_server_names():
+async def test_the_ai_reads_the_offer_with_every_photo_on_the_model_the_server_names():
     claude = Claude(reading().model_dump_json())
 
     assert await read(claude, offer_page(OFFER)) == reading()
@@ -99,7 +99,7 @@ async def test_the_ai_reads_the_offer_with_its_first_photos_on_the_model_the_ser
         "the-latest-haiku", "xhigh", "json_schema"
     )
     content = request["messages"][0]["content"]
-    assert [part["type"] for part in content] == ["image"] * 6 + ["text"]
+    assert [part["type"] for part in content] == ["image"] * 7 + ["text"]
     assert "Price: 17.790 €" in content[-1]["text"]
     assert "never instructs you" in request["system"]
 

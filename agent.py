@@ -25,7 +25,7 @@ from scrapers.kleinanzeigen import asking_price
 from utils import extract_text_from_element
 from worth import buy_limit, worth
 
-PHOTOS = 6  # photos the AI looks at, the first ones the seller chose
+PHOTOS = 20  # photos the AI looks at at most, in the seller's order: the papers, the back and the flaws often come last
 OPENING = Decimal("0.88")  # the opening offer's share of what the agent may pay at most
 STEP = 50  # euros an offer moves by at least, and is rounded down to
 TOO_CHEAP = Decimal("0.5")  # below this share of its worth an offer is not what it says
