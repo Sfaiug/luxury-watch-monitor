@@ -41,9 +41,9 @@ def grimmeissen_config():
 
 
 @pytest.fixture
-def grimmeissen_scraper(grimmeissen_config, mock_aiohttp_session, mock_logger):
+def grimmeissen_scraper(grimmeissen_config, mock_logger):
     """Create Grimmeissen scraper instance for testing."""
-    return GrimmeissenScraper(grimmeissen_config, mock_aiohttp_session, mock_logger)
+    return GrimmeissenScraper(grimmeissen_config, mock_logger)
 
 
 @pytest.fixture

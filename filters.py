@@ -56,7 +56,7 @@ class Filter:
             self.words, self.min_price, self.max_price, self.seller, self.conditions
         )
 
-    def scraper(self, session, logger) -> BaseScraper:
+    def scraper(self, logger) -> BaseScraper:
         """The filter as the monitor sees it: one more site to scan."""
         store = STORES[self.store]
         source = SiteConfig(
@@ -68,7 +68,7 @@ class Filter:
             base_url=store.base_url,
             channel_id=self.channel_id,
         )
-        return store.scraper(source, session, logger)
+        return store.scraper(source, logger)
 
 
 class FilterStore:

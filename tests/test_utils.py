@@ -7,6 +7,7 @@ import aiohttp
 from decimal import Decimal, InvalidOperation
 from unittest.mock import AsyncMock, Mock, patch
 from bs4 import BeautifulSoup
+from curl_cffi.requests import exceptions as curl
 
 from utils import (
     clear_exchange_rate_cache,
@@ -96,87 +97,114 @@ class TestRetryWithBackoff:
         assert call_count == 2
 
 
+class Browser:
+    """The session fetch_page asks with: answers every page with its text, or fails as told; remembers how it was
+    opened and what it was asked for."""
+
+    def __init__(self, answer):
+        self.answer = answer
+        self.opened = []
+        self.asked = []
+
+    def __call__(self, **options):
+        self.opened.append(options)
+        return self
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *exc):
+        return False
+
+    async def get(self, url, **options):
+        self.asked.append(url)
+        if isinstance(self.answer, Exception):
+            raise self.answer
+        response = Mock(status_code=200, text=self.answer)
+        response.raise_for_status = Mock()
+        return response
+
+
 class TestFetchPage:
     """Test web page fetching functionality."""
-    
+
     @pytest.mark.asyncio
-    async def test_fetch_page_success(self, mock_aiohttp_session):
-        """Test successful page fetch."""
-        mock_aiohttp_session.get.return_value.__aenter__.return_value.text.return_value = "<html>Test</html>"
-        
-        result = await fetch_page(mock_aiohttp_session, "https://example.com")
-        
+    async def test_a_page_is_asked_for_as_chrome_asks(self, monkeypatch):
+        """Shops turn other clients away by how they open the connection (Watch Out, 13 Oct 2026)."""
+        browser = Browser("<html>Test</html>")
+        monkeypatch.setattr("utils.AsyncSession", browser)
+
+        result = await fetch_page("https://example.com")
+
         assert result == "<html>Test</html>"
-        mock_aiohttp_session.get.assert_called_once()
-    
+        assert browser.opened == [{"impersonate": "chrome"}]
+        assert browser.asked == ["https://example.com"]
+
     @pytest.mark.asyncio
-    async def test_fetch_page_with_logger(self, mock_aiohttp_session, mock_logger):
+    async def test_fetch_page_with_logger(self, monkeypatch, mock_logger):
         """Test page fetch with logger."""
-        mock_aiohttp_session.get.return_value.__aenter__.return_value.text.return_value = "<html>Test</html>"
-        
-        result = await fetch_page(mock_aiohttp_session, "https://example.com", mock_logger)
-        
+        monkeypatch.setattr("utils.AsyncSession", Browser("<html>Test</html>"))
+
+        result = await fetch_page("https://example.com", mock_logger)
+
         assert result == "<html>Test</html>"
         # Logger should not have error calls for successful request
         mock_logger.error.assert_not_called()
-    
+
     @pytest.mark.asyncio
-    async def test_fetch_page_network_error(self, mock_aiohttp_session, mock_logger):
+    async def test_fetch_page_network_error(self, monkeypatch, mock_logger):
         """Test page fetch with network error."""
-        mock_aiohttp_session.get.side_effect = aiohttp.ClientError("Network error")
-        
-        result = await fetch_page(mock_aiohttp_session, "https://example.com", mock_logger)
-        
+        monkeypatch.setattr("utils.AsyncSession", Browser(curl.ConnectionError("Network error")))
+
+        result = await fetch_page("https://example.com", mock_logger)
+
         assert result is None
         mock_logger.error.assert_called()
-    
+
     @pytest.mark.asyncio
-    async def test_fetch_page_timeout(self, mock_aiohttp_session, mock_logger):
+    async def test_fetch_page_timeout(self, monkeypatch, mock_logger):
         """Test page fetch with timeout."""
-        mock_aiohttp_session.get.side_effect = asyncio.TimeoutError()
-        
-        result = await fetch_page(mock_aiohttp_session, "https://example.com", mock_logger)
-        
+        monkeypatch.setattr("utils.AsyncSession", Browser(curl.Timeout("timed out")))
+
+        result = await fetch_page("https://example.com", mock_logger)
+
         assert result is None
         mock_logger.error.assert_called()
 
 
 class TestExchangeRate:
     """Test exchange rate fetching."""
-    
-    @pytest.mark.asyncio 
-    async def test_get_exchange_rate_success(self, mock_aiohttp_session, mock_logger):
-        """Test successful exchange rate fetch."""
-        # Mock response with exchange rate data
-        mock_response = AsyncMock()
-        mock_response.text.return_value = '{"rates": {"EUR": 0.85}}'
-        mock_aiohttp_session.get.return_value.__aenter__.return_value = mock_response
-        
-        with patch('utils.fetch_page', return_value='{"rates": {"EUR": 0.85}}'):
-            rate = await get_usd_to_eur_rate(mock_aiohttp_session, mock_logger)
-        
-        assert rate == 0.85
-    
+
     @pytest.mark.asyncio
-    async def test_get_exchange_rate_cached(self, mock_aiohttp_session, mock_logger):
+    async def test_get_exchange_rate_success(self, mock_logger):
+        """Test successful exchange rate fetch."""
+        with patch('utils.fetch_page', return_value='{"rates": {"EUR": 0.85}}'):
+            rate = await get_usd_to_eur_rate(mock_logger)
+
+        assert rate == 0.85
+
+    @pytest.mark.asyncio
+    async def test_get_exchange_rate_cached(self, mock_logger):
         """Test cached exchange rate."""
         # Set up cache
         with patch('utils._exchange_rate_cache', {"rate": 0.85, "last_fetched": 999999999999}):
-            rate = await get_usd_to_eur_rate(mock_aiohttp_session, mock_logger)
-        
+            with patch('utils.fetch_page') as fetch:
+                rate = await get_usd_to_eur_rate(mock_logger)
+
         assert rate == 0.85
         # Should not make HTTP request due to cache
-        mock_aiohttp_session.get.assert_not_called()
+        fetch.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_get_exchange_rate_error(self, mock_aiohttp_session, mock_logger):
+    async def test_get_exchange_rate_error(self, mock_logger):
         """Test exchange rate fetch error."""
         clear_exchange_rate_cache()
         with patch('utils.fetch_page', return_value=None):
-            rate = await get_usd_to_eur_rate(mock_aiohttp_session, mock_logger)
-        
+            rate = await get_usd_to_eur_rate(mock_logger)
+
         assert rate is None
-    
+
+
 class TestPriceParsing:
     """Test price parsing functionality."""
     

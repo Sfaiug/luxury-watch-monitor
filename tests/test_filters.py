@@ -86,7 +86,7 @@ async def cycle(monitor, page=RESULT_PAGE):
         for watches, source in (
             call.args for call in monitor.notification_manager.send_notifications.call_args_list
         )
-    ], [call.args[1] for call in fetch.call_args_list]
+    ], [call.args[0] for call in fetch.call_args_list]
 
 
 async def test_a_filter_s_matches_go_to_its_channel_from_the_first_scan(monitor):

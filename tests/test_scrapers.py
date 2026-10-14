@@ -14,17 +14,16 @@ from config import SiteConfig
 class TestBaseScraper:
     """Test BaseScraper abstract class functionality."""
     
-    def test_base_scraper_initialization(self, test_site_config, mock_aiohttp_session, mock_logger):
+    def test_base_scraper_initialization(self, test_site_config, mock_logger):
         """Test BaseScraper initialization."""
         # Create a concrete implementation for testing
         class ConcreteScraper(BaseScraper):
             async def _extract_watches(self, soup):
                 return []
         
-        scraper = ConcreteScraper(test_site_config, mock_aiohttp_session, mock_logger)
+        scraper = ConcreteScraper(test_site_config, mock_logger)
         
         assert scraper.config == test_site_config
-        assert scraper.session == mock_aiohttp_session
         assert len(scraper.seen_ids) == 0
     
     def test_set_seen_ids(self, base_scraper):
@@ -35,7 +34,7 @@ class TestBaseScraper:
         assert base_scraper.seen_ids == seen_ids
 
     @pytest.mark.asyncio
-    async def test_scrape_success(self, test_site_config, mock_aiohttp_session, mock_logger, sample_html_content):
+    async def test_scrape_success(self, test_site_config, mock_logger, sample_html_content):
         """Test successful scraping."""
         class TestScraper(BaseScraper):
             async def _extract_watches(self, soup):
@@ -54,7 +53,7 @@ class TestBaseScraper:
                     )
                 ]
         
-        scraper = TestScraper(test_site_config, mock_aiohttp_session, mock_logger)
+        scraper = TestScraper(test_site_config, mock_logger)
         
         # Mock fetch_page to return HTML content
         with patch('scrapers.base.fetch_page', return_value=sample_html_content):
@@ -69,7 +68,7 @@ class TestBaseScraper:
         assert len(scraper.seen_ids) == 2
     
     @pytest.mark.asyncio
-    async def test_scrape_with_seen_watches(self, test_site_config, mock_aiohttp_session, mock_logger, sample_html_content):
+    async def test_scrape_with_seen_watches(self, test_site_config, mock_logger, sample_html_content):
         """Test scraping with some watches already seen."""
         class TestScraper(BaseScraper):
             async def _extract_watches(self, soup):
@@ -88,7 +87,7 @@ class TestBaseScraper:
                     )
                 ]
         
-        scraper = TestScraper(test_site_config, mock_aiohttp_session, mock_logger)
+        scraper = TestScraper(test_site_config, mock_logger)
         
         # Pre-populate seen IDs with one watch
         seen_watch = WatchData(
@@ -110,13 +109,13 @@ class TestBaseScraper:
         assert result[0].title == "New Watch"
     
     @pytest.mark.asyncio
-    async def test_scrape_fetch_page_failure(self, test_site_config, mock_aiohttp_session, mock_logger):
+    async def test_scrape_fetch_page_failure(self, test_site_config, mock_logger):
         """Test scraping when page fetch fails."""
         class TestScraper(BaseScraper):
             async def _extract_watches(self, soup):
                 return []
         
-        scraper = TestScraper(test_site_config, mock_aiohttp_session, mock_logger)
+        scraper = TestScraper(test_site_config, mock_logger)
         
         with patch('scrapers.base.fetch_page', return_value=None):
             result = await scraper.scrape()
@@ -124,7 +123,7 @@ class TestBaseScraper:
         assert result == []
     
     @pytest.mark.asyncio
-    async def test_scrape_with_detail_fetching(self, test_site_config, mock_aiohttp_session, mock_logger, sample_html_content):
+    async def test_scrape_with_detail_fetching(self, test_site_config, mock_logger, sample_html_content):
         """Test scraping with detail page fetching enabled.""" 
         class TestScraper(BaseScraper):
             async def _extract_watches(self, soup):
@@ -141,7 +140,7 @@ class TestBaseScraper:
                 watch.reference = "123456"
                 watch.year = "2020"
         
-        scraper = TestScraper(test_site_config, mock_aiohttp_session, mock_logger)
+        scraper = TestScraper(test_site_config, mock_logger)
         
         with patch('scrapers.base.fetch_page', return_value=sample_html_content):
             with patch('scrapers.base.APP_CONFIG') as mock_config:
@@ -157,13 +156,13 @@ class TestBaseScraper:
         assert result[0].year == "2020"
     
     @pytest.mark.asyncio
-    async def test_scrape_extraction_error(self, test_site_config, mock_aiohttp_session, mock_logger, sample_html_content):
+    async def test_scrape_extraction_error(self, test_site_config, mock_logger, sample_html_content):
         """Test scraping when watch extraction raises an error."""
         class TestScraper(BaseScraper):
             async def _extract_watches(self, soup):
                 raise Exception("Extraction error")
         
-        scraper = TestScraper(test_site_config, mock_aiohttp_session, mock_logger)
+        scraper = TestScraper(test_site_config, mock_logger)
         
         with patch('scrapers.base.fetch_page', return_value=sample_html_content):
             result = await scraper.scrape()
@@ -235,7 +234,7 @@ class TestBaseScraper:
 class TestWorldOfTimeScraper:
     """Test WorldOfTimeScraper implementation."""
     
-    def test_worldoftime_scraper_initialization(self, mock_aiohttp_session, mock_logger):
+    def test_worldoftime_scraper_initialization(self, mock_logger):
         """Test WorldOfTimeScraper initialization."""
         config = SiteConfig(
             name="World of Time",
@@ -252,13 +251,13 @@ class TestWorldOfTimeScraper:
             known_brands={"rolex": "Rolex", "omega": "Omega"}
         )
         
-        scraper = WorldOfTimeScraper(config, mock_aiohttp_session, mock_logger)
+        scraper = WorldOfTimeScraper(config, mock_logger)
         
         assert scraper.config == config
         assert isinstance(scraper, BaseScraper)
     
     @pytest.mark.asyncio
-    async def test_extract_watches_no_elements(self, mock_aiohttp_session, mock_logger):
+    async def test_extract_watches_no_elements(self, mock_logger):
         """Test watch extraction when no watch elements are found."""
         config = SiteConfig(
             name="World of Time",
@@ -276,7 +275,7 @@ class TestWorldOfTimeScraper:
         
         html_content = "<div class='no-watches'>No watches found</div>"
         
-        scraper = WorldOfTimeScraper(config, mock_aiohttp_session, mock_logger)  
+        scraper = WorldOfTimeScraper(config, mock_logger)  
         soup = BeautifulSoup(html_content, 'html.parser')
         
         result = await scraper._extract_watches(soup)
@@ -284,7 +283,7 @@ class TestWorldOfTimeScraper:
         assert result == []
     
     @pytest.mark.asyncio
-    async def test_extract_watches_missing_elements(self, mock_aiohttp_session, mock_logger):
+    async def test_extract_watches_missing_elements(self, mock_logger):
         """Test watch extraction with missing required elements."""
         config = SiteConfig(
             name="World of Time",
@@ -307,7 +306,7 @@ class TestWorldOfTimeScraper:
         </div>
         """
         
-        scraper = WorldOfTimeScraper(config, mock_aiohttp_session, mock_logger)
+        scraper = WorldOfTimeScraper(config, mock_logger)
         soup = BeautifulSoup(html_content, 'html.parser')
         
         result = await scraper._extract_watches(soup)
@@ -315,7 +314,7 @@ class TestWorldOfTimeScraper:
         assert result == []  # Should skip watches without required elements
     
     @pytest.mark.asyncio
-    async def test_extract_watch_details_no_table(self, mock_aiohttp_session, mock_logger):
+    async def test_extract_watch_details_no_table(self, mock_logger):
         """Test detail extraction when no table is found."""
         config = SiteConfig(
             name="World of Time",
@@ -336,7 +335,7 @@ class TestWorldOfTimeScraper:
             site_key="worldoftime"
         )
         
-        scraper = WorldOfTimeScraper(config, mock_aiohttp_session, mock_logger)
+        scraper = WorldOfTimeScraper(config, mock_logger)
         soup = BeautifulSoup(detail_html, 'html.parser')
         
         # Should not raise an error

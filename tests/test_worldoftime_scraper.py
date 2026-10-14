@@ -19,9 +19,9 @@ def worldoftime_config():
 
 
 @pytest.fixture
-def worldoftime_scraper(worldoftime_config, mock_aiohttp_session, mock_logger):
+def worldoftime_scraper(worldoftime_config, mock_logger):
     """WorldOfTime scraper instance for testing."""
-    return WorldOfTimeScraper(worldoftime_config, mock_aiohttp_session, mock_logger)
+    return WorldOfTimeScraper(worldoftime_config, mock_logger)
 
 
 @pytest.fixture
@@ -227,12 +227,11 @@ def worldoftime_malformed_html():
 class TestWorldOfTimeScraper:
     """Test WorldOfTime scraper implementation."""
     
-    def test_initialization(self, worldoftime_config, mock_aiohttp_session, mock_logger):
+    def test_initialization(self, worldoftime_config, mock_logger):
         """Test scraper initialization."""
-        scraper = WorldOfTimeScraper(worldoftime_config, mock_aiohttp_session, mock_logger)
+        scraper = WorldOfTimeScraper(worldoftime_config, mock_logger)
         
         assert scraper.config == worldoftime_config
-        assert scraper.session == mock_aiohttp_session
         assert len(scraper.seen_ids) == 0
     
     @pytest.mark.asyncio

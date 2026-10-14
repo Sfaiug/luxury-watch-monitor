@@ -1,14 +1,12 @@
 """The way to a site: straight, or through one of the owner's proxies once the site has refused the server."""
 
-from base64 import b64encode
 from pathlib import Path
 from typing import Any, Dict, List, Set, Tuple
 
 from config import APP_CONFIG
 
-# How one proxy is named to aiohttp: its address, and its login as a header
-# apart from the address, so that no error or log line that names the proxy
-# carries it
+# How one proxy is named to a request: its address, and its login apart from
+# the address, so that no error or log line that names the proxy carries it
 Proxy = Dict[str, Any]
 
 
@@ -25,13 +23,12 @@ def _listed(path: str) -> List[Tuple[str, List[str]]]:
 
 
 def load(path: str) -> List[Proxy]:
-    """The proxies in the file, as aiohttp takes them; none without the file."""
+    """The proxies in the file, as a page request takes them; none without the file."""
     listed = []
     for address, login in _listed(path):
         proxy: Proxy = {"proxy": address}
         if login:
-            basic = b64encode(":".join(login).encode("utf-8")).decode("ascii")
-            proxy["proxy_headers"] = {"Proxy-Authorization": f"Basic {basic}"}
+            proxy["proxy_auth"] = (login[0], ":".join(login[1:]))
         listed.append(proxy)
     return listed
 

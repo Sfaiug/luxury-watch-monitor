@@ -5,7 +5,6 @@ import logging
 from abc import ABC, abstractmethod
 from typing import List, Optional, Dict, Any
 from urllib.parse import urljoin
-import aiohttp
 from bs4 import BeautifulSoup
 
 from config import SiteConfig, APP_CONFIG
@@ -25,17 +24,15 @@ from utils import (
 class BaseScraper(ABC):
     """Abstract base class for all watch scrapers."""
 
-    def __init__(self, config: SiteConfig, session: aiohttp.ClientSession, logger):
+    def __init__(self, config: SiteConfig, logger):
         """
         Initialize scraper.
 
         Args:
             config: Site-specific configuration
-            session: aiohttp session for requests
             logger: Logger instance
         """
         self.config = config
-        self.session = session
         self.logger = ContextLogger(logger, {"site": config.key})
         self.seen_ids = SeenIds()
         # Every watch the last scan found listed, the known ones too
@@ -58,9 +55,7 @@ class BaseScraper(ABC):
             try:
                 # Fetch listing page
                 self.logger.info(f"Fetching listing page: {self.config.url}")
-                content = await fetch_page(
-                    self.session, self.config.url, self.logger.logger
-                )
+                content = await fetch_page(self.config.url, self.logger.logger)
 
                 if not content:
                     self.logger.error("Failed to fetch listing page")
@@ -180,7 +175,7 @@ class BaseScraper(ABC):
         """
         self.logger.debug(f"Fetching details for: {watch.url}")
 
-        content = await fetch_page(self.session, watch.url, self.logger.logger)
+        content = await fetch_page(watch.url, self.logger.logger)
         if not content:
             return
 

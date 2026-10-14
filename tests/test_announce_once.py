@@ -39,7 +39,7 @@ async def scan(shop, *listed):
 
 
 async def test_a_listed_watch_is_announced_once_and_again_at_a_new_price(test_site_config):
-    shop = Shop(test_site_config, None, logging.getLogger("test"))
+    shop = Shop(test_site_config, logging.getLogger("test"))
     a, b, c = (f"https://example.com/watches/{name}" for name in "abc")
 
     # A shop with nothing remembered (new, or reset to test it) announces all it lists
@@ -54,7 +54,7 @@ async def test_a_listed_watch_is_announced_once_and_again_at_a_new_price(test_si
 
 
 async def test_a_link_that_changes_with_the_page_is_the_same_listing(test_site_config):
-    shop = Shop(test_site_config, None, logging.getLogger("test"))
+    shop = Shop(test_site_config, logging.getLogger("test"))
 
     await scan(shop, watch("/watches/a?surroundingwotids=B,C"))
 
@@ -62,7 +62,7 @@ async def test_a_link_that_changes_with_the_page_is_the_same_listing(test_site_c
 
 
 async def test_a_watch_remembered_under_its_former_id_is_not_announced_again(test_site_config):
-    shop = Shop(test_site_config, None, logging.getLogger("test"))
+    shop = Shop(test_site_config, logging.getLogger("test"))
     a, b = watch("/watches/a"), watch("/watches/b")
     shop.set_seen_ids({a.former_id})  # announced before the ids changed
 
@@ -91,7 +91,7 @@ async def test_a_former_id_vouches_for_one_listing(test_site_config):
             price=Decimal("6900"),
         )
 
-    shop = Shop(test_site_config, None, logging.getLogger("test"))
+    shop = Shop(test_site_config, logging.getLogger("test"))
     remembered = {datejust(1).former_id}  # the former id has no link in it
     shop.set_seen_ids(remembered)
 
@@ -130,7 +130,7 @@ async def test_a_full_memory_forgets_the_watches_not_listed_for_longest(
     test_site_config, test_persistence_manager, monkeypatch
 ):
     monkeypatch.setattr(persistence.APP_CONFIG, "max_seen_items_per_site", 3)
-    shop = Shop(test_site_config, None, logging.getLogger("test"))
+    shop = Shop(test_site_config, logging.getLogger("test"))
     remembered = SeenIds()
     shop.set_seen_ids(remembered)
     a, b, c, d = (watch(f"/watches/{name}") for name in "abcd")

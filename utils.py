@@ -7,8 +7,9 @@ from decimal import Decimal, InvalidOperation
 from typing import Optional, Callable, TypeVar, List, Tuple, Dict, Any
 from functools import wraps
 from urllib.parse import urlsplit
-import aiohttp
 from bs4 import BeautifulSoup
+from curl_cffi.requests import AsyncSession
+from curl_cffi.requests.exceptions import RequestException
 
 import proxies
 from config import APP_CONFIG
@@ -67,17 +68,16 @@ async def retry_with_backoff(
     raise last_exception
 
 
-async def fetch_page(
-    session: aiohttp.ClientSession, url: str, logger=None
-) -> Optional[str]:
+async def fetch_page(url: str, logger=None) -> Optional[str]:
     """
-    Fetch a web page with error handling and retries.
+    Fetch a web page with error handling and retries, asked for as Chrome asks
+    for it: shops turn a client away by how it opens the connection (Watch
+    Out from 13 Oct 2026, whatever its address).
 
     A site that refuses the request (403, 429) is asked again, and from then
     on, through the proxies in proxies.txt, when there are any.
 
     Args:
-        session: aiohttp session
         url: URL to fetch
         logger: Optional logger instance
 
@@ -88,55 +88,46 @@ async def fetch_page(
     host = urlsplit(url).netloc
 
     async def _fetch():
-        headers = {"User-Agent": APP_CONFIG.user_agent}
-        timeout = aiohttp.ClientTimeout(total=APP_CONFIG.request_timeout)
+        async with AsyncSession(impersonate="chrome") as browser:
+            response = await browser.get(
+                url, timeout=APP_CONFIG.request_timeout, **proxies.ROUTES.way_to(host)
+            )
+        if response.status_code in (403, 429) and proxies.ROUTES.refused(host) and logger:
+            logger.warning(
+                f"{host} refused the request ({response.status_code}); "
+                "its requests go through a proxy from now on"
+            )
+        response.raise_for_status()
+        text = response.text
 
-        async with session.get(
-            url, headers=headers, timeout=timeout, **proxies.ROUTES.way_to(host)
-        ) as response:
-            if response.status in (403, 429) and proxies.ROUTES.refused(host) and logger:
+        # ENHANCED: Monitor response size to identify problematic sites
+        text_size_mb = len(text) / (1024 * 1024)
+        if text_size_mb > 1.0:  # Warn if page exceeds 1MB
+            if logger:
                 logger.warning(
-                    f"{host} refused the request ({response.status}); "
-                    "its requests go through a proxy from now on"
+                    f"Large response from {url}: {text_size_mb:.2f}MB "
+                    f"({len(text):,} bytes) - may contribute to memory pressure"
                 )
-            response.raise_for_status()
-            text = await response.text()
-            # Explicitly release response to free connection buffers
-            await response.release()
 
-            # ENHANCED: Monitor response size to identify problematic sites
-            text_size_mb = len(text) / (1024 * 1024)
-            if text_size_mb > 1.0:  # Warn if page exceeds 1MB
-                if logger:
-                    logger.warning(
-                        f"Large response from {url}: {text_size_mb:.2f}MB "
-                        f"({len(text):,} bytes) - may contribute to memory pressure"
-                    )
-
-            return text
+        return text
 
     try:
         if logger:
             with PerformanceLogger(logger, f"fetching {url}"):
-                return await retry_with_backoff(
-                    _fetch, exceptions=(aiohttp.ClientError,)
-                )
+                return await retry_with_backoff(_fetch, exceptions=(RequestException,))
         else:
-            return await retry_with_backoff(_fetch, exceptions=(aiohttp.ClientError,))
+            return await retry_with_backoff(_fetch, exceptions=(RequestException,))
     except Exception as e:
         if logger:
             logger.error(f"Failed to fetch {url}: {e}")
         return None
 
 
-async def get_usd_to_eur_rate(
-    session: aiohttp.ClientSession, logger=None
-) -> Optional[float]:
+async def get_usd_to_eur_rate(logger=None) -> Optional[float]:
     """
     Get USD to EUR exchange rate with caching.
 
     Args:
-        session: aiohttp session
         logger: Optional logger instance
 
     Returns:
@@ -156,7 +147,7 @@ async def get_usd_to_eur_rate(
         if logger:
             logger.info("Fetching fresh USD to EUR exchange rate")
 
-        content = await fetch_page(session, APP_CONFIG.exchange_rate_api_url, logger)
+        content = await fetch_page(APP_CONFIG.exchange_rate_api_url, logger)
         if not content:
             return _exchange_rate_cache["rate"]
 

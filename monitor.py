@@ -194,7 +194,7 @@ class WatchMonitor:
         for site_key, site_config in SITE_CONFIGS.items():
             scraper_class = SCRAPER_CLASSES.get(site_key)
             if scraper_class:
-                scraper = scraper_class(site_config, self.session, self.logger)
+                scraper = scraper_class(site_config, self.logger)
 
                 # Set seen IDs for the scraper
                 site_seen_ids = self.seen_items.setdefault(site_key, SeenIds())
@@ -566,7 +566,7 @@ class WatchMonitor:
             self.seen_items.pop(key, None)
         for key in filters.keys() - self.filters.keys():
             try:
-                scraper = filters[key].scraper(self.session, self.logger)
+                scraper = filters[key].scraper(self.logger)
             except Exception as e:
                 # A marketplace or seller this version does not know. Said once:
                 # the filter counts as known and waits in the file
@@ -747,7 +747,7 @@ class WatchMonitor:
             session.add_site_result(site_key, 0, 0, 0, errors=1)
 
     async def _page(self, url: str) -> str:
-        page = await fetch_page(self.session, url, self.logger)
+        page = await fetch_page(url, self.logger)
         if page is None:
             raise RuntimeError(f"{url} could not be read")
         return page

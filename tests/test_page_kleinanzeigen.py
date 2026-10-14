@@ -25,7 +25,7 @@ def offers(page=PAGE):
         color=0x86B817,
         base_url="https://www.kleinanzeigen.de",
     )
-    scraper = KleinanzeigenScraper(config, None, logging.getLogger("test"))
+    scraper = KleinanzeigenScraper(config, logging.getLogger("test"))
     return asyncio.run(scraper._extract_watches(BeautifulSoup(page, "lxml")))
 
 

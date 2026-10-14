@@ -37,9 +37,9 @@ def watch_out_config():
 
 
 @pytest.fixture
-def watch_out_scraper(watch_out_config, mock_aiohttp_session, mock_logger):
+def watch_out_scraper(watch_out_config, mock_logger):
     """Watch Out scraper instance for testing."""
-    return WatchOutScraper(watch_out_config, mock_aiohttp_session, mock_logger)
+    return WatchOutScraper(watch_out_config, mock_logger)
 
 
 @pytest.fixture
@@ -326,12 +326,11 @@ def watch_out_malformed_html():
 class TestWatchOutScraper:
     """Test Watch Out scraper implementation."""
 
-    def test_initialization(self, watch_out_config, mock_aiohttp_session, mock_logger):
+    def test_initialization(self, watch_out_config, mock_logger):
         """Test scraper initialization."""
-        scraper = WatchOutScraper(watch_out_config, mock_aiohttp_session, mock_logger)
+        scraper = WatchOutScraper(watch_out_config, mock_logger)
 
         assert scraper.config == watch_out_config
-        assert scraper.session == mock_aiohttp_session
         assert len(scraper.seen_ids) == 0
 
     def test_extract_watches_from_shopify_json(self, watch_out_scraper):

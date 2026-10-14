@@ -30,9 +30,7 @@ class WatchOutScraper(BaseScraper):
             return await super().scrape()
 
         with PerformanceLogger(self.logger.logger, f"scraping {self.config.name}"):
-            content = await fetch_page(
-                self.session, self._products_json_url(), self.logger.logger
-            )
+            content = await fetch_page(self._products_json_url(), self.logger.logger)
             if not content:
                 return await super().scrape()
 
