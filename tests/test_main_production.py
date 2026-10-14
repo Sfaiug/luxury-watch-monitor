@@ -1,5 +1,6 @@
 """Tests for production entrypoint startup behavior."""
 
+import json
 import os
 import subprocess
 import sys
@@ -53,6 +54,48 @@ def test_validate_environment_bot_channel_keeps_write_permission_error(
 
     assert not is_valid
     assert any("No write permission" in message for message in messages)
+
+
+def test_main_production_keeps_persisted_history_path_from_environment(temp_dir):
+    repo_root = Path(__file__).resolve().parents[1]
+    (temp_dir / ".env").write_text(
+        (repo_root / ".env.example").read_text(encoding="utf-8"), encoding="utf-8"
+    )
+    seen_file = temp_dir / "data" / "seen_watches.json"
+    seen_file.parent.mkdir()
+    seed = {"shop": ["old"], "filter:111": ["offer1"]}
+    seen_file.write_text(json.dumps(seed), encoding="utf-8")
+    env = {
+        **os.environ,
+        "PYTHONPATH": str(repo_root),
+        "SEEN_WATCHES_FILE": str(seen_file),
+    }
+
+    subprocess.run(
+        [sys.executable, "-c", """
+import logging, sys
+from pathlib import Path
+import main_production
+from persistence import PersistenceManager
+manager = PersistenceManager(logging.getLogger(__name__))
+assert manager.seen_items_file == Path(sys.argv[1]), "The template overrode the persisted path"
+state = manager.load_seen_items()
+assert {key: list(ids) for key, ids in state.items()} == {"shop": ["old"], "filter:111": ["offer1"]}
+state["shop"].add("new")
+state["filter:111"].add("offer2")
+manager.save_seen_items(state)
+fresh = PersistenceManager(manager.logger)
+assert fresh.load_seen_items() == state
+fresh.seen_items_file.write_text('{"shop": [', encoding="utf-8")
+assert fresh.load_seen_items() == state
+""", str(seen_file)],
+        cwd=temp_dir,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=True,
+        timeout=30,
+    )
 
 
 def test_main_production_loads_cwd_dotenv_before_config_import(temp_dir):

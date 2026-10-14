@@ -82,9 +82,10 @@ Or use Docker Compose:
 docker-compose up -d
 ```
 
-Compose keeps seen history and its backup in `./data`, mounted as a directory so
-files can be replaced atomically. When upgrading from the individual seen-file
-mount, move the existing history before restarting to avoid repeating alerts:
+Compose sets `SEEN_WATCHES_FILE=/app/data/seen_watches.json` and keeps seen history
+and its backup in `./data`, mounted as a directory so files can be replaced
+atomically. When upgrading from the individual seen-file mount, move the existing
+history before restarting to avoid repeating alerts:
 
 ```bash
 docker-compose down
@@ -96,7 +97,8 @@ docker-compose up -d --build
 
 ## 🔧 Configuration
 
-All configuration is managed through environment variables in `.env`:
+Configuration can be set in `.env`; existing process environment values take
+precedence:
 
 ```ini
 # Discord Webhooks (Required)
