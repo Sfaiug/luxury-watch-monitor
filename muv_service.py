@@ -21,7 +21,7 @@ from bs4 import BeautifulSoup
 from action_store import ActionRecord, ActionStore
 from config import APP_CONFIG
 from discord_api import DiscordApi
-from models import WatchData
+from models import WatchData, normalize_brand
 from utils import fetch_page
 
 
@@ -280,11 +280,11 @@ class MUVActionService:
         if not whitelist:
             return None
 
-        brand = self._normalize_brand(listing.get("brand") or "")
+        brand = normalize_brand(listing.get("brand") or "")
         model = self._normalize(listing.get("model") or "")
         title = self._normalize(listing.get("title") or "")
         whitelist_brands = {
-            self._normalize_brand(item.get("BrandName") or "") for item in whitelist
+            normalize_brand(item.get("BrandName") or "") for item in whitelist
         }
         brand_candidates = self._brand_candidates(brand)
         if brand and not brand_candidates.intersection(whitelist_brands):
@@ -312,7 +312,7 @@ class MUVActionService:
 
         best: Optional[Tuple[float, int, Dict[str, Any]]] = None
         for item in whitelist:
-            item_brand = self._normalize_brand(item.get("BrandName") or "")
+            item_brand = normalize_brand(item.get("BrandName") or "")
             item_model = self._normalize(item.get("ModelName") or "")
             item_full = f"{item_brand} {item_model}".strip()
             if brand_candidates and item_brand not in brand_candidates:
@@ -1255,17 +1255,6 @@ class MUVActionService:
         return re.sub(r"[^a-z0-9]+", " ", value.casefold()).strip()
 
     @classmethod
-    def _normalize_brand(cls, value: str) -> str:
-        normalized = cls._normalize(value)
-        aliases = {
-            "bulgari": "bvlgari",
-            "bvlgari": "bvlgari",
-            "glashuette": "glashutte",
-            "glashutte": "glashutte",
-        }
-        return aliases.get(normalized, normalized)
-
-    @classmethod
     def _brand_candidates(cls, normalized_brand: str) -> set[str]:
         if not normalized_brand:
             return set()
@@ -1306,9 +1295,9 @@ class MUVActionService:
             if not normalized:
                 continue
             if text == normalized or text.startswith(f"{normalized} "):
-                return cls._normalize_brand(brand_name)
+                return normalize_brand(brand_name)
             if f" {normalized} " in padded_text:
-                return cls._normalize_brand(brand_name)
+                return normalize_brand(brand_name)
         return None
 
     @classmethod

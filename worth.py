@@ -16,15 +16,16 @@ TRADED_WITHIN = timedelta(days=365)  # the business's own trades that count, pri
 MARGIN_TAX = Decimal("0.19")  # VAT on a used watch's margin (Differenzbesteuerung, § 25a UStG)
 
 
-def ours(prices: Prices, reference: str, kind: str, sold: bool = True) -> Tuple[int, Optional[Decimal]]:
+def ours(prices: Prices, reference: str, kind: str, sold: bool = True,
+         brand: Optional[str] = None) -> Tuple[int, Optional[Decimal]]:
     """How many of this kind of the watch the business sold within the last year, or bought if not sold, and the
     middle of their prices: of full sets for a full set (owner rule, 11 Oct 2026: the controlling tool's prices are
     price data)."""
-    amounts = prices.traded_for(reference, kind == FULL_SET, date.today() - TRADED_WITHIN, sold)
+    amounts = prices.traded_for(reference, kind == FULL_SET, date.today() - TRADED_WITHIN, sold, brand)
     return len(amounts), Decimal(str(statistics.median(amounts))) if amounts else None
 
 
-def worth(prices: Prices, reference: str, kind: str) -> Optional[Decimal]:
+def worth(prices: Prices, reference: str, kind: str, brand: Optional[str] = None) -> Optional[Decimal]:
     """What this kind of the watch is worth: the lower of what the market asks and what the business sold it for.
 
     The market: the price a quarter of the Chrono24 offers of this kind inside
@@ -35,7 +36,7 @@ def worth(prices: Prices, reference: str, kind: str) -> Optional[Decimal]:
     """
     found, asked = prices.market(reference, kind)
     market = Decimal(str(asked[min(math.ceil(found / 4), len(asked)) - 1])) if found >= FEWEST and asked else None
-    known = [value for value in (market, ours(prices, reference, kind)[1]) if value is not None]
+    known = [value for value in (market, ours(prices, reference, kind, brand=brand)[1]) if value is not None]
     return min(known) if known else None
 
 
@@ -58,14 +59,14 @@ def most_to_pay(worth: Decimal) -> Decimal:
     return max(paid, Decimal(0)).quantize(Decimal(1), rounding=ROUND_FLOOR)
 
 
-def buy_limit(prices: Prices, reference: str, kind: str) -> Optional[Decimal]:
+def buy_limit(prices: Prices, reference: str, kind: str, brand: Optional[str] = None) -> Optional[Decimal]:
     """The most to pay for this kind of a watch: the owner's own buy price, or else the one worked out from its worth,
     no more than the middle of what the business paid for it within the last year."""
     own = prices.buy_price(reference)
     if own is not None:
         return Decimal(str(own))
-    value = worth(prices, reference, kind)
+    value = worth(prices, reference, kind, brand)
     if value is None:
         return None
-    paid = ours(prices, reference, kind, sold=False)[1]
+    paid = ours(prices, reference, kind, sold=False, brand=brand)[1]
     return most_to_pay(value) if paid is None else min(most_to_pay(value), paid)

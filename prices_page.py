@@ -85,14 +85,14 @@ class PricesPage:
                 market = f"{used} used, {full_sets} of them full sets, <time>{searched[:10]}</time>"
             # Worth and the most to pay, the owner's price in its place once set, for each kind
             numbers = "".join(
-                f"<td class=n>{euros(worth(self.prices, reference, kind))}</td>"
-                f'<td class="n limit">{euros(buy_limit(self.prices, reference, kind))}</td>'
+                f"<td class=n>{euros(worth(self.prices, reference, kind, brand))}</td>"
+                f'<td class="n limit">{euros(buy_limit(self.prices, reference, kind, brand))}</td>'
                 for kind in KINDS
             )
             # How many we bought and sold within the year, and the middle of their prices
             traded = "".join(
                 f"<td class=n>{f'{count} for {euros(middle)}' if count else '–'}</td>"
-                for count, middle in (ours(self.prices, reference, USED, sold) for sold in (False, True))
+                for count, middle in (ours(self.prices, reference, USED, sold, brand) for sold in (False, True))
             )
             rows.append(
                 f'<tr id="{escape(reference)}" class="{"own" if own is not None else ""}">'

@@ -1,6 +1,6 @@
 """What the business itself bought and sold watches for: the owner's controlling tool, in the export the owner sends
 by hand (owner rules, 11 Oct 2026). It stays on the server, out of git, for it names sellers: of each row only the
-reference, box and papers, and the purchase and the sale with their days are read."""
+reference, brand, box and papers, and the purchase and the sale with their days are read."""
 
 import csv
 import re
@@ -20,6 +20,7 @@ class Trade:
     paid: Optional[Decimal]
     sold: Optional[date]
     sold_for: Optional[Decimal]
+    brand: str = ""
 
 
 def _day(text: str) -> Optional[date]:
@@ -54,6 +55,7 @@ def read(path: str) -> List[Trade]:
                 paid=_euros(row["EK"]),
                 sold=_day(row["Verkaufsdatum"]),
                 sold_for=_euros(row["VK realisiert"]),
+                brand=row["Marke"],
             )
             for row in csv.DictReader(export)
             if reference_key(row["Referenznummer"] or "")

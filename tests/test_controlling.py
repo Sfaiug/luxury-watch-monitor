@@ -1,6 +1,7 @@
 """What the business itself sold watches for, from the owner's controlling tool, in a watch's worth."""
 
 import os
+import sqlite3
 from datetime import date, datetime, timedelta
 from decimal import Decimal
 
@@ -60,7 +61,8 @@ def test_an_export_reads_as_the_trades_with_nothing_of_the_seller(export):
         ("116610LN", True, Decimal("8500.00"), None),
     ]
     assert trades[0].sold == date.today() - timedelta(days=40)
-    assert set(vars(trades[0])) == {"reference", "full_set", "bought", "paid", "sold", "sold_for"}
+    assert trades[0].brand == "Rolex"
+    assert set(vars(trades[0])) == {"reference", "brand", "full_set", "bought", "paid", "sold", "sold_for"}
 
 
 def chrono24(prices, kind, *asked):
@@ -118,6 +120,25 @@ def test_a_newer_export_takes_the_place_of_the_last_one(tmp_path, export, monkey
 
     assert monitor.prices.traded_for("116610LN", False, date(2000, 1, 1), True) == []
     assert monitor.prices.traded_for("126610LN", True, date(2000, 1, 1), True) == [11000.0]
+
+
+def test_existing_trades_gain_their_brand_when_the_export_is_read_again(tmp_path, export):
+    path = tmp_path / "prices.sqlite3"
+    with sqlite3.connect(path) as db:
+        db.execute("CREATE TABLE trades (reference TEXT, full_set INTEGER, bought TEXT, paid REAL, sold TEXT, sold_for REAL)")
+        db.execute("INSERT INTO trades VALUES ('116610LN', 1, NULL, NULL, ?, 9500)", (date.today().isoformat(),))
+    db.close()
+
+    prices = Prices(path)
+    assert prices.traded_for("116610LN", False, date(2000, 1, 1), True) == [9500]
+    assert prices.traded_for("116610LN", False, date(2000, 1, 1), True, "Rolex") == []
+    prices.traded(controlling.read(export))
+    prices.close()
+
+    prices = Prices(path)
+    assert prices.traded_for("116610LN", False, date.today() - timedelta(days=365), True, "Rolex") == [8800, 9900]
+    assert prices.traded_for("116610LN", False, date(2000, 1, 1), True, "Omega") == []
+    prices.close()
 
 
 async def test_the_owner_sees_what_we_bought_and_sold_a_watch_for_within_a_year(tmp_path, export):

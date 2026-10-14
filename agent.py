@@ -167,8 +167,8 @@ def decide(reading: Reading, asking: Optional[Decimal], prices: Prices) -> Verdi
     if not asking:
         return Verdict(False, "no price")
     kinds = held_against(reading)
-    kind = next((kind for kind in kinds if worth(prices, reading.reference, kind) is not None), USED)
-    value, limit = worth(prices, reading.reference, kind), buy_limit(prices, reading.reference, kind)
+    kind = next((kind for kind in kinds if worth(prices, reading.reference, kind, reading.brand) is not None), USED)
+    value, limit = worth(prices, reading.reference, kind, reading.brand), buy_limit(prices, reading.reference, kind, reading.brand)
     # A limit counts once Chrono24 was searched for every kind the offer is held against, or it is the owner's own:
     # a full set is not decided on all used watches alone because its own search has not come yet
     searched = all(prices.ever_searched(reading.reference, kind) for kind in kinds)
