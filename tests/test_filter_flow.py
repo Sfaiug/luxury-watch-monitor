@@ -199,7 +199,7 @@ async def test_from_the_button_to_a_channel_only_the_member_sees(flow, discord, 
     assert bot["id"] == BOT
 
     assert discord.said("PATCH", "/webhooks/800/tok/messages/@original") == [
-        {"content": "Your filter is running: <#101>"}
+        {"content": f"Your filter is running: <#101>\n{filter_flow.describe(made)}"}
     ]
 
 
@@ -250,6 +250,39 @@ async def test_a_price_is_read_however_it_is_typed(flow, typed):
 
     (made,) = flow.store.all()
     assert (made.min_price, made.max_price) == (5000, 9000)
+
+
+@pytest.mark.parametrize("bound", ["min_price", "max_price"])
+@pytest.mark.parametrize("typed", ["5k", "ab 3000", "5000-9000", "nan", "sNaN", "inf", "-Infinity"])
+async def test_unreadable_price_is_answered_without_making_a_filter(flow, discord, scanned, bound, typed):
+    prices = {"min_price": "5000", "max_price": "9000", bound: typed}
+
+    reply = flow.handle(form("kleinanzeigen", "any", "Rolex Submariner", **prices))
+    await finish(flow)
+
+    assert reply["type"] == 4
+    assert reply["data"]["flags"] == 64
+    assert "euros" in reply["data"]["content"]
+    assert "try again" in reply["data"]["content"]
+    assert flow.store.all() == [] and scanned == []
+    assert not flow.store.path.exists()
+    assert discord.calls == []
+
+
+async def test_unreadable_price_can_be_corrected(flow, discord, scanned):
+    flow.handle(form("kleinanzeigen", "private", "Rolex Submariner", "5k", "9000"))
+    await finish(flow)
+    flow.handle(
+        form("kleinanzeigen", "private", "Rolex Submariner", "5.000 €", "9000", ["new"], "yes")
+    )
+    await finish(flow)
+
+    (made,) = flow.store.all()
+    assert (made.min_price, made.max_price) == (5000, 9000)
+    assert scanned == [made]
+    assert discord.said("PATCH", "/messages/@original") == [
+        {"content": f"Your filter is running: <#{made.channel_id}>\n{filter_flow.describe(made)}"}
+    ]
 
 
 async def test_the_member_is_told_when_the_channel_cannot_be_made(flow, discord, scanned):
