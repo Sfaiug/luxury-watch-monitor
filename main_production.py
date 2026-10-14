@@ -37,25 +37,17 @@ def validate_environment() -> tuple[bool, list[str]]:
     Validate environment configuration before starting.
 
     Returns:
-        Tuple of (is_valid, error_messages)
+        Tuple of (is_valid, messages)
     """
     errors = []
     warnings = []
 
-    # Check for webhook environment variables
-    required_webhooks = []
-    for site_key, site_config in SITE_CONFIGS.items():
-        webhook_url = site_config.webhook_url
-        if not webhook_url:
-            required_webhooks.append(
-                f"{site_config.webhook_env_var} (for {site_config.name})"
+    for site_config in SITE_CONFIGS.values():
+        if not site_config.webhook_url and not site_config.discord_channel_id:
+            warnings.append(
+                f"⚠️  No Discord destination configured for {site_config.name}. "
+                f"Set {site_config.webhook_env_var} or a Discord channel id."
             )
-
-    if required_webhooks:
-        errors.append(
-            f"❌ Missing webhook configuration! Set these environment variables:\n"
-            + "\n".join(f"   - {webhook}" for webhook in required_webhooks)
-        )
 
     # Check for write permissions
     try:
