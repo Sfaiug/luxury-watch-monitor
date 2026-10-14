@@ -178,10 +178,17 @@ class FilterFlow:
             for field in row["components"]
         }
         # Whole euros, read as every price is: "5.000 €", "5,000" and "5000" are 5000
-        lowest, highest = (
-            int(price) if (price := parse_price(answers[bound])) else None
-            for bound in ("min_price", "max_price")
-        )
+        prices = []
+        for bound in ("min_price", "max_price"):
+            price = parse_price(answers[bound])
+            if answers[bound] and (price is None or not price.is_finite()):
+                return self._ask(
+                    RESPONSE_CHANNEL_MESSAGE,
+                    "Please enter prices as numbers of euros (e.g. 5000) and try again.",
+                    [],
+                )
+            prices.append(int(price) if price else None)
+        lowest, highest = prices
         if lowest and highest and lowest > highest:
             lowest, highest = highest, lowest
 
@@ -238,7 +245,7 @@ class FilterFlow:
                 raise RuntimeError(channel.get("message", status))
             new = Filter(channel_id=channel["id"], **answers)
             self.store.add(new)
-            said = f"Your filter is running: <#{new.channel_id}>"
+            said = f"Your filter is running: <#{new.channel_id}>\n{describe(new)}"
         except Exception as e:
             self.logger.error(f"Could not make a filter: {e!r}")
             new, said = None, f"I could not make your filter: {e}"
