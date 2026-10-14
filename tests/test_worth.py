@@ -1,17 +1,23 @@
 """What a watch is worth, and the most to pay for it, from its Chrono24 offers inside the EU."""
 
-from datetime import datetime, timedelta
+import csv
+from datetime import date, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
 
 import pytest
+from aiohttp import web
+from aiohttp.test_utils import TestClient, TestServer
 
 import chrono24
+import controlling
+from agent import Reading, decide
 from chrono24 import FULL_SET, USED
 from config import APP_CONFIG
 from models import WatchData
 from prices import Prices
-from worth import least_profit, most_to_pay, worth
+from prices_page import PATH, PricesPage, key
+from worth import buy_limit, least_profit, most_to_pay, ours, worth
 
 SEARCHED = datetime(2026, 10, 10, 11, 0)
 PAGE = (Path(__file__).parent / "pages" / "chrono24.html").read_text(encoding="utf-8")
@@ -136,3 +142,80 @@ def test_the_owner_moves_the_least_profit(monkeypatch):
 
 def test_a_watch_too_cheap_to_leave_the_least_profit_is_worth_buying_at_no_price():
     assert most_to_pay(Decimal("400")) == Decimal("0")
+
+
+@pytest.fixture
+def trades(prices, tmp_path):
+    """Synthetic exports for two brands that share reference 3800."""
+    def keep(*extra, full_set=True):
+        path = tmp_path / "controlling.csv"
+        with path.open("w", encoding="utf-8-sig", newline="") as export:
+            writer = csv.writer(export)
+            writer.writerow(["Marke", "Referenznummer", "Box", "Papiere", "Ankaufdatum", "EK",
+                             "Verkaufsdatum", "VK realisiert"])
+            for brand, complete, paid, sold_for in [
+                ("Patek Philipp", full_set, "35000", "42000"),
+                ("Patek Philippe ", full_set, "39000", "51500"),
+                *extra,
+            ]:
+                writer.writerow([brand, "38 00", "x" if complete else "", "x" if complete else "",
+                                 date.today().strftime("%d.%m.%Y"), paid,
+                                 date.today().strftime("%d.%m.%Y"), sold_for])
+        prices.traded(controlling.read(path))
+    return keep
+
+
+@pytest.mark.parametrize("kind", [USED, FULL_SET])
+@pytest.mark.parametrize("brand", ["Patek Philippe", "Patek Philipp", " pAtEk PHILIPPE "])
+@pytest.mark.parametrize("sold_for", ["4500", "60000"])
+def test_trades_of_another_brand_change_neither_worth_nor_limit(prices, trades, kind, brand, sold_for):
+    trades()
+    assert worth(prices, "3800", kind, brand) == Decimal("46750")
+    assert buy_limit(prices, "3800", kind, brand) == Decimal("37000")
+
+    trades(("Breguet", True, "1000", sold_for))
+
+    assert worth(prices, "3800", kind, brand) == Decimal("46750")
+    assert buy_limit(prices, "3800", kind, brand) == Decimal("37000")
+    assert ours(prices, "3800", kind, brand=brand) == (2, Decimal("46750"))
+    assert ours(prices, "3800", kind, sold=False, brand=brand) == (2, Decimal("37000"))
+
+
+@pytest.mark.parametrize("brand", [None, "", " \t "])
+def test_another_brand_still_counts_when_the_watchs_brand_is_unknown(prices, trades, brand):
+    trades(("Breguet", True, "1000", "4500"))
+
+    assert worth(prices, "3800", USED, brand) == Decimal("42000")
+    assert buy_limit(prices, "3800", USED, brand) == most_to_pay(Decimal("42000"))
+    assert ours(prices, "3800", USED, sold=False, brand=brand) == (3, Decimal("35000"))
+
+
+@pytest.mark.parametrize("full_set", [True, False])
+def test_the_agent_ignores_another_brand_including_when_choosing_full_sets(prices, trades, full_set):
+    trades(("Breguet", True, "1000", "4500"), full_set=full_set)
+    for kind in (USED, FULL_SET):
+        searched(prices, 0, [], reference="3800", kind=kind)
+    reading = Reading(is_watch_for_sale=True, brand="Patek Philippe", model="Nautilus", reference="3800",
+                      year=None, condition="good", box=True, papers=True)
+
+    verdict = decide(reading, Decimal("36000"), prices)
+
+    assert (verdict.contact, verdict.worth, verdict.limit) == (True, Decimal("46750"), Decimal("37000"))
+
+
+async def test_the_prices_page_ignores_another_brand_in_its_trades_worth_and_limits(prices, trades):
+    prices.saw([WatchData(title="Nautilus", brand="Patek Philippe", reference="3800", price=Decimal("60000"),
+                          url="https://shop.example/3800", site_name="Shop", site_key="shop", scraped_at=SEARCHED)])
+    trades()
+    app = web.Application()
+    PricesPage(prices, "secret").add_to(app)
+    async with TestClient(TestServer(app)) as client:
+        before = await (await client.get(PATH, params={"key": key("secret")})).text()
+        trades(("Breguet", True, "1000", "4500"))
+        after = await (await client.get(PATH, params={"key": key("secret")})).text()
+
+    row = before[before.index('id="3800"'):].split("</tr>")[0]
+    assert "2 for 37.000 €</td><td class=n>2 for 46.750 €" in row
+    assert row.count("46.750 €") == 3  # sales, used worth, full-set worth
+    assert row.count("37.000 €") == 3  # purchases, used limit, full-set limit
+    assert after[after.index('id="3800"'):].split("</tr>")[0] == row

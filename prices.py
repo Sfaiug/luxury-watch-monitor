@@ -13,6 +13,12 @@ def reference_key(reference: str) -> str:
     return re.sub(r"[^A-Z0-9]", "", reference.upper())
 
 
+def brand_key(brand: Optional[str]) -> str:
+    """A brand alike across the export and offers, including the export's "Patek Philipp" spelling."""
+    key = re.sub(r"[\W_]", "", (brand or "").casefold())
+    return {"patekphilipp": "patekphilippe"}.get(key, key)
+
+
 class Prices:
     """The offers seen, in one SQLite file."""
 
@@ -53,9 +59,12 @@ class Prices:
                     bought TEXT,
                     paid REAL,
                     sold TEXT,
-                    sold_for REAL
+                    sold_for REAL,
+                    brand TEXT
                 )
             """)
+            if "brand" not in {column[1] for column in self._db.execute("PRAGMA table_info(trades)")}:
+                self._db.execute("ALTER TABLE trades ADD COLUMN brand TEXT")
             # Searches made before they asked for one kind of watch held new ones too: they count as none
             if self._db.execute("PRAGMA user_version").fetchone()[0] < 2:
                 self._db.execute("DROP TABLE IF EXISTS searches")
@@ -185,24 +194,26 @@ class Prices:
         with self._db:
             self._db.execute("DELETE FROM trades")
             self._db.executemany(
-                "INSERT INTO trades VALUES (?, ?, ?, ?, ?, ?)",
+                "INSERT INTO trades VALUES (?, ?, ?, ?, ?, ?, ?)",
                 [
                     (t.reference, t.full_set, t.bought and t.bought.isoformat(), t.paid and float(t.paid),
-                     t.sold and t.sold.isoformat(), t.sold_for and float(t.sold_for))
+                     t.sold and t.sold.isoformat(), t.sold_for and float(t.sold_for), brand_key(t.brand))
                     for t in trades
                 ],
             )
 
-    def traded_for(self, reference: str, full_sets_only: bool, since: date, sold: bool) -> List[float]:
+    def traded_for(self, reference: str, full_sets_only: bool, since: date, sold: bool,
+                   brand: Optional[str] = None) -> List[float]:
         """What the business sold the watch for since that day, or paid for it if not sold, the full sets only if asked,
-        cheapest first."""
+        cheapest first. Where the watch's brand is known, only its brand's trades count."""
         day, amount = ("sold", "sold_for") if sold else ("bought", "paid")
+        brand = brand_key(brand)
         return [
             price
             for (price,) in self._db.execute(
                 f"SELECT {amount} FROM trades WHERE reference = ? AND {day} >= ? AND {amount} IS NOT NULL "
-                f"AND (full_set OR NOT ?) ORDER BY {amount}",
-                (reference_key(reference), since.isoformat(), full_sets_only),
+                f"AND (full_set OR NOT ?) AND (? = '' OR brand = ?) ORDER BY {amount}",
+                (reference_key(reference), since.isoformat(), full_sets_only, brand, brand),
             )
         ]
 
