@@ -700,6 +700,7 @@ class WatchMonitor:
                     new_watches,
                     scraper.config,
                     button=self._negotiate_button if self._negotiates_by_hand(site_key) else None,
+                    seen_ids=scraper.seen_ids,
                 )
                 if notifications_sent < len(new_watches):
                     self.logger.warning(

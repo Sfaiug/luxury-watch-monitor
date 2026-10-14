@@ -30,12 +30,16 @@ def watch(path, price="5000"):
 
 
 async def scan(shop, *listed):
+    """Scan, then remember these alerts as successfully posted."""
     shop.listed = listed
     with patch("scrapers.base.fetch_page", return_value="<html></html>"), patch(
         "scrapers.base.APP_CONFIG"
     ) as app_config:
         app_config.enable_detail_scraping = False
-        return [w.url for w in await shop.scrape()]
+        new = await shop.scrape()
+    for watch in new:
+        shop.seen_ids.add(watch.composite_id)
+    return [w.url for w in new]
 
 
 async def test_a_listed_watch_is_announced_once_and_again_at_a_new_price(test_site_config):

@@ -3,11 +3,19 @@
 import pytest
 import asyncio
 import signal
+import json
+import logging
+from dataclasses import replace
 from unittest.mock import AsyncMock, Mock, patch
 from decimal import Decimal
 
+from config import APP_CONFIG
+from filters import Filter
 from monitor import WatchMonitor, SCRAPER_CLASSES
 from models import WatchData, ScrapingSession
+from notifications import NotificationManager
+from persistence import SeenIds
+from scrapers.base import BaseScraper
 
 
 def configure_monitor_config(
@@ -594,3 +602,131 @@ class TestWatchMonitor:
         # Verify all scrapers were called
         for scraper in scrapers.values():
             scraper.scrape.assert_called_once()
+
+
+@pytest.mark.parametrize("destination", ["webhook", "bot"])
+@pytest.mark.parametrize("failure", ["5xx", "timeout", "rate_limited_twice"])
+async def test_not_taken_alert_is_retried_next_cycle_only_until_posted(
+    destination, failure, test_site_config, mock_aiohttp_session, tmp_path, monkeypatch
+):
+    monkeypatch.setattr(APP_CONFIG, "enable_notifications", True)
+    monkeypatch.setattr(APP_CONFIG, "enable_detail_scraping", False)
+    monkeypatch.setattr(APP_CONFIG, "enable_muv_actions", False)
+    monkeypatch.setattr(
+        APP_CONFIG, "discord_bot_token", "bot-token" if destination == "bot" else ""
+    )
+    monkeypatch.setattr(APP_CONFIG, "discord_alert_channel_id", "")
+    monkeypatch.setattr(APP_CONFIG, "seen_watches_file", str(tmp_path / "seen.json"))
+    monkeypatch.setattr(APP_CONFIG, "session_history_file", str(tmp_path / "sessions.json"))
+    monkeypatch.setattr(APP_CONFIG, "controlling_file", str(tmp_path / "absent.csv"))
+    monkeypatch.setenv(test_site_config.webhook_env_var, "https://discord.test/webhook")
+
+    config = test_site_config
+    if destination == "bot":
+        config = replace(config, key="filter:42", channel_id="42", webhook_env_var="")
+    unposted, posted = [
+        WatchData(
+            title=title, url=f"https://example.com/{i}",
+            site_name=config.name, site_key=config.key,
+        )
+        for i, title in enumerate(["Unposted", "Posted"], 1)
+    ]
+
+    class Shop(BaseScraper):
+        async def _extract_watches(self, soup):
+            # Duplicate cards still mean one alert for this listing.
+            return [unposted, posted, unposted]
+
+    def response(status):
+        return AsyncMock(
+            status=status, headers={"X-RateLimit-Reset-After": "0.512"},
+            text=AsyncMock(return_value=json.dumps({"retry_after": 0.512})),
+        )
+
+    success_status = 201 if destination == "bot" else 204
+    failures = {
+        "5xx": [response(503)],
+        "timeout": [asyncio.TimeoutError()],
+        "rate_limited_twice": [response(429), response(429)],
+    }
+    mock_aiohttp_session.post.return_value.__aenter__.side_effect = (
+        failures[failure] + [response(success_status), response(success_status)]
+    )
+    monitor = WatchMonitor(log_level="ERROR")
+    monitor.filter_store = Mock()
+    monitor.filter_store.all.return_value = []
+    if destination == "bot":
+        asked = Filter("42", "1", "kleinanzeigen", "private", "Rolex")
+        monitor.filter_store.all.return_value = [asked]
+        monitor.filters = {asked.key: asked}
+        monitor.negotiator = Mock()
+    monitor.notification_manager = NotificationManager(mock_aiohttp_session, monitor.logger)
+    shop = Shop(config, logging.getLogger("test"))
+    monitor.seen_items[config.key] = shop.seen_ids
+    monitor.scrapers[config.key] = shop
+
+    with patch("scrapers.base.fetch_page", return_value="<html></html>"), patch("asyncio.sleep") as waited:
+        first = await monitor.run_monitoring_cycle()
+        assert first.notifications_sent == 1
+        assert unposted.composite_id not in shop.seen_ids
+        assert list(shop.seen_ids) == [posted.composite_id]
+
+        # The same delivery state survives restarting the scraper and loading its file.
+        monitor.seen_items = monitor.persistence.load_seen_items()
+        shop = Shop(config, logging.getLogger("test"))
+        shop.set_seen_ids(monitor.seen_items[config.key])
+        monitor.scrapers[config.key] = shop
+        assert list(shop.seen_ids) == [posted.composite_id]
+
+        second = await monitor.run_monitoring_cycle()
+        assert second.notifications_sent == 1
+        assert set(shop.seen_ids) == {unposted.composite_id, posted.composite_id}
+        third = await monitor.run_monitoring_cycle()
+        assert third.total_new_watches == third.notifications_sent == 0
+
+    payloads = [call.kwargs["json"] for call in mock_aiohttp_session.post.call_args_list]
+    assert [payload["embeds"][0]["title"] for payload in payloads] == (
+        ["Unposted"] * len(failures[failure]) + ["Posted", "Unposted"]
+    )
+    if destination == "bot":
+        for payload in payloads:
+            button = payload["components"][0]["components"][0]
+            assert button["label"] == "Negotiate"
+            ad_id = "1" if payload["embeds"][0]["title"] == "Unposted" else "2"
+            assert button["custom_id"] == f"negotiate:{ad_id}"
+    if failure == "rate_limited_twice":
+        assert sum(call.args == (0.512,) for call in waited.await_args_list) == 1
+
+
+@pytest.mark.parametrize("unavailable", ["disabled", "no_destination"])
+async def test_not_taken_without_notifications_stays_new_until_posted(
+    unavailable, test_site_config, sample_watch_data, mock_aiohttp_session, monkeypatch
+):
+    monkeypatch.setattr(APP_CONFIG, "enable_notifications", unavailable != "disabled")
+    monkeypatch.setattr(APP_CONFIG, "enable_detail_scraping", False)
+    monkeypatch.setattr(APP_CONFIG, "enable_muv_actions", False)
+    monkeypatch.setattr(APP_CONFIG, "discord_bot_token", "")
+    monkeypatch.delenv(test_site_config.webhook_env_var, raising=False)
+    mock_aiohttp_session.post.return_value.__aenter__.return_value.status = 204
+
+    class Shop(BaseScraper):
+        async def _extract_watches(self, soup):
+            return [sample_watch_data]
+
+    monitor = WatchMonitor(log_level="ERROR")
+    monitor.persistence = Mock()
+    monitor.notification_manager = NotificationManager(mock_aiohttp_session, monitor.logger)
+    shop = Shop(test_site_config, logging.getLogger("test"))
+    monitor.seen_items[shop.config.key] = shop.seen_ids
+
+    with patch("scrapers.base.fetch_page", return_value="<html></html>"):
+        await monitor._scrape_single_site(shop.config.key, shop, ScrapingSession())
+        assert not shop.seen_ids
+        mock_aiohttp_session.post.assert_not_called()
+
+        monkeypatch.setattr(APP_CONFIG, "enable_notifications", True)
+        monkeypatch.setenv(test_site_config.webhook_env_var, "https://discord.test/webhook")
+        await monitor._scrape_single_site(shop.config.key, shop, ScrapingSession())
+        assert list(shop.seen_ids) == [sample_watch_data.composite_id]
+        await monitor._scrape_single_site(shop.config.key, shop, ScrapingSession())
+        mock_aiohttp_session.post.assert_called_once()

@@ -35,7 +35,7 @@ class NotificationManager:
         self.action_store = action_store
 
     async def send_notifications(
-        self, watches: List[WatchData], site_config: SiteConfig, button=None
+        self, watches: List[WatchData], site_config: SiteConfig, button=None, seen_ids=None
     ) -> int:
         """
         Send Discord notifications for new watches.
@@ -44,6 +44,7 @@ class NotificationManager:
             watches: List of watches to notify about
             site_config: Site configuration with webhook URL
             button: a further button for each watch's alert, from the watch; a bot's alerts carry it
+            seen_ids: shared listing memory, updated only after a successful post
 
         Returns:
             Number of successful notifications sent
@@ -91,6 +92,8 @@ class NotificationManager:
                 )
 
                 if success:
+                    if seen_ids is not None:
+                        seen_ids.add(watch.composite_id)
                     success_count += 1
 
                 # Rate limit between notifications (except for last one)
@@ -167,7 +170,7 @@ class NotificationManager:
 
                     # Handle rate limiting
                     if response.status == 429:
-                        retry_after = int(
+                        retry_after = float(
                             response.headers.get("X-RateLimit-Reset-After", 5)
                         )
                         self.logger.warning(

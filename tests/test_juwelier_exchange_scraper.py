@@ -638,10 +638,7 @@ class TestJuwelierExchangeScraper:
         assert all(watch.site_name == "Juwelier Exchange" for watch in watches)
         assert all(watch.currency == "EUR" for watch in watches if watch.price)
         
-        # Verify composite IDs are generated
-        assert len(juwelier_exchange_scraper.seen_ids) == 4
-        for watch in watches:
-            assert watch.composite_id in juwelier_exchange_scraper.seen_ids
+        assert len(juwelier_exchange_scraper.seen_ids) == 0  # No alerts posted yet
     
     @pytest.mark.asyncio
     async def test_scrape_with_seen_watches(self, juwelier_exchange_scraper, juwelier_exchange_listing_html):

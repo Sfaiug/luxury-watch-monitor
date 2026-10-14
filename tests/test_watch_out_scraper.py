@@ -883,10 +883,7 @@ class TestWatchOutScraper:
         assert all(watch.site_name == "Watch Out" for watch in watches)
         assert all(watch.currency == "EUR" for watch in watches)
 
-        # Verify composite IDs are generated
-        assert len(watch_out_scraper.seen_ids) == 3
-        for watch in watches:
-            assert watch.composite_id in watch_out_scraper.seen_ids
+        assert len(watch_out_scraper.seen_ids) == 0  # No alerts posted yet
 
     @pytest.mark.asyncio
     async def test_scrape_with_seen_watches(

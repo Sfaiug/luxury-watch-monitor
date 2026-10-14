@@ -69,9 +69,13 @@ def monitor(tmp_path):
     monitor.session = AsyncMock()
     monitor.persistence = Mock()
     monitor.notification_manager = AsyncMock()
-    monitor.notification_manager.send_notifications.side_effect = (
-        lambda watches, source, button=None: len(watches)
-    )
+
+    def sent(watches, source, button=None, seen_ids=None):
+        for watch in watches:
+            seen_ids.add(watch.composite_id)
+        return len(watches)
+
+    monitor.notification_manager.send_notifications.side_effect = sent
     return monitor
 
 
