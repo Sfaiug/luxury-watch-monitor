@@ -905,8 +905,11 @@ async def test_a_draft_naming_a_sum_itself_is_written_anew_told_why(kept):
     ("Sie ist noch da? Passt dir eine Überweisung?", None),  # at a sentence's start, the watch
     ("Hallo, ist sie noch zu haben?", None),
     ("Mehr ist sie mir nicht wert, [BETRAG] ginge.", None),
+    ("Privat, ich sammle Uhren.", '"Privat" says the buyer buys privately: he trades watches'),
+    ("Ich kaufe als Privatperson.", '"Privat" says the buyer buys privately: he trades watches'),
+    ("Ich handle mit Uhren.", None),
 ])
-def test_the_buyer_says_du_and_points_to_no_other_offer(written, why):
+def test_the_buyer_says_du_points_to_no_other_offer_and_buys_as_a_trader(written, why):
     assert negotiation.unlike_the_buyer(written) == why
 
 
