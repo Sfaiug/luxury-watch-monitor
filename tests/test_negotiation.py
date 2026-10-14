@@ -16,7 +16,7 @@ from anthropic import AsyncAnthropic
 import negotiation
 from agent import Verdict
 from filters import Filter, FilterStore
-from kleinanzeigen_messages import Unsent
+from kleinanzeigen_messages import Messages, Unsent
 from models import WatchData
 from monitor import WatchMonitor
 from negotiation import Move, Negotiation, Negotiations, Negotiator, SellerSays, Terms, filled, move
@@ -441,15 +441,69 @@ async def test_a_first_message_written_wrong_each_time_goes_to_the_owner_who_hea
     assert channel == "filter:42" and text.startswith("The agent hands this negotiation to you")
 
 
-async def test_a_first_message_that_may_have_reached_the_seller_unseen_goes_to_the_owner_not_again(kept):
-    talking = negotiator(Claude(writes=["Ist die Uhr noch zu haben?"]), kept)
+@pytest.mark.parametrize("conversation_id", [None, "c1"])
+async def test_a_first_message_shown_later_counts_as_sent_without_sending_twice(kept, conversation_id):
+    page = SimpleNamespace(goto=AsyncMock(), fill=AsyncMock(), click=AsyncMock(), wait_for_selector=AsyncMock())
+    box = Messages(page)
+    box.bought = AsyncMock(return_value=conversation_id)
+    box.conversation = AsyncMock(return_value=SimpleNamespace(messages=[]))
+    box.reply = AsyncMock()
+    notify = AsyncMock()
+    claude = Claude(writes=["Ist die Uhr noch zu haben?"])
+    talking = negotiator(claude, kept, notify)
     talking.ask_to_start(asked_for())
 
-    await talking.start(Box(contact_fails=True))
+    await talking.start(box)
+    await talking.follow_up(box)
+    await talking.tell_owner()
+
+    waiting = kept.get("3535834511")
+    assert (waiting.status, waiting.sent, waiting.notice) == ("opening", ["Ist die Uhr noch zu haben?"], "")
+    assert [n.ad_id for n in talking.waiting()] == [waiting.ad_id]
+    notify.assert_not_awaited()
+
+    # A fresh negotiator reads the saved attempt. The seller may already have answered it.
+    talking = negotiator(Claude(), kept, notify)
+    box.bought.return_value = "c1"
+    box.conversation.return_value.messages = [Said(True, "Ist die Uhr\nnoch zu haben?"), Said(False, "Ja.")]
+    await talking.start(box)
+    await talking.start(box)
+    await talking.tell_owner()
+
+    opened = kept.get("3535834511")
+    assert (opened.status, opened.conversation, opened.sent) == ("talking", "c1", waiting.sent)
+    assert claude.asked == ["write"]
+    page.click.assert_awaited_once()
+    box.reply.assert_not_awaited()
+    notify.assert_not_awaited()
+
+
+@pytest.mark.parametrize("shown", [None, [], [Said(True, "A different message")], [Said(False, "Ist die Uhr noch zu haben?")]])
+async def test_a_first_message_not_shown_later_goes_to_the_owner_without_sending_again(kept, shown):
+    talking = negotiator(Claude(writes=["Ist die Uhr noch zu haben?"]), kept)
+    talking.ask_to_start(asked_for())
+    box = Box(contact_fails=True)
+    box.contact = AsyncMock(wraps=box.contact)
+    box.bought = AsyncMock(return_value="c1" if shown is not None else None)
+    box.said = shown or []
+
+    await talking.start(box)
+    await talking.follow_up(box)
+    await talking.tell_owner()
+    assert kept.get("3535834511").status == "opening"
+    box.bought.assert_not_awaited()
+    talking.notify.assert_not_awaited()
+
+    await talking.start(box)
+    await talking.start(box)
 
     gone = kept.get("3535834511")
     assert (gone.status, gone.sent) == ("owner", ["Ist die Uhr noch zu haben?"])
     assert "could not see its first message reach the seller" in gone.notice
+    box.contact.assert_awaited_once()
+    await talking.tell_owner()
+    await talking.tell_owner()
+    talking.notify.assert_awaited_once()
 
 
 async def test_a_first_message_that_never_left_is_sent_as_it_was_at_the_next_look_and_at_the_third_goes_to_the_owner(kept):
