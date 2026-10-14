@@ -9,6 +9,8 @@ contact form. A message counts as sent once its conversation shows it.
 from dataclasses import dataclass
 from typing import Callable, List, Optional
 
+from playwright.async_api import TimeoutError
+
 from scrapers.kleinanzeigen import offer_url
 
 GATEWAY = "https://gateway.kleinanzeigen.de"
@@ -110,21 +112,31 @@ class Messages:
 
     async def contact(self, ad_id: str, text: str, *, before_send: Callable[[int], None] = lambda before: None) -> str:
         """Write through the offer's form; before_send records the existing message count before submission."""
+        form = None
         try:
-            earlier = await self.bought(ad_id)
-            before = len((await self.conversation(earlier)).messages) if earlier else 0
-            await self._page.goto(offer_url(ad_id), wait_until="domcontentloaded")
-            await self._page.fill("#viewad-contact-message", text)
-        except Exception as e:
-            raise Unsent(f"the contact form of {ad_id} was not sent: {e}") from e
-        before_send(before)
-        await self._page.click("#viewad-contact-form button.viewad-contact-submit")
-        await self._page.wait_for_selector(".j-viewad-contact-success", state="visible", timeout=30_000)
-        conversation_id = await self.bought(ad_id)
-        if conversation_id is None:
-            raise NotSent(f"no conversation about {ad_id} after contacting its seller")
-        await self._shows(conversation_id, text, before)
-        return conversation_id
+            try:
+                earlier = await self.bought(ad_id)
+                before = len((await self.conversation(earlier)).messages) if earlier else 0
+                form = await self._page.context.new_page()
+                await form.goto(offer_url(ad_id), wait_until="domcontentloaded")
+                await form.fill("#viewad-contact-message", text)
+            except Exception as e:
+                raise Unsent(f"the contact form of {ad_id} was not sent: {e}") from e
+            before_send(before)
+            try:
+                # Do not let navigation after submission turn a sent click into a retryable timeout.
+                await form.click("#viewad-contact-form button.viewad-contact-submit", no_wait_after=True)
+            except TimeoutError as e:
+                raise Unsent(f"the contact form of {ad_id} could not be clicked: {e}") from e
+            await form.wait_for_selector(".j-viewad-contact-success", state="visible", timeout=30_000)
+            conversation_id = await self.bought(ad_id)
+            if conversation_id is None:
+                raise NotSent(f"no conversation about {ad_id} after contacting its seller")
+            await self._shows(conversation_id, text, before)
+            return conversation_id
+        finally:
+            if form is not None:
+                await form.close()
 
     async def reply(self, conversation_id: str, text: str):
         before = len((await self.conversation(conversation_id)).messages)
