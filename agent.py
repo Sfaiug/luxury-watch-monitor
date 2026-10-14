@@ -164,8 +164,6 @@ def decide(reading: Reading, asking: Optional[Decimal], prices: Prices) -> Verdi
         return Verdict(False, "defective")
     if not reading.reference:
         return Verdict(False, "no reference")
-    if not asking:
-        return Verdict(False, "no price")
     kinds = held_against(reading)
     kind = next((kind for kind in kinds if worth(prices, reading.reference, kind, reading.brand) is not None), USED)
     value, limit = worth(prices, reading.reference, kind, reading.brand), buy_limit(prices, reading.reference, kind, reading.brand)
@@ -174,6 +172,8 @@ def decide(reading: Reading, asking: Optional[Decimal], prices: Prices) -> Verdi
     searched = all(prices.ever_searched(reading.reference, kind) for kind in kinds)
     if limit is None or not (searched or prices.buy_price(reading.reference) is not None):
         return Verdict(False, f"too few Chrono24 offers for {reading.reference} yet")
+    if not asking:
+        return Verdict(False, "no price", value, limit)
     if value is not None and asking < value * TOO_CHEAP:
         return Verdict(False, "too cheap to be what it says", value, limit)
     if asking > limit * TOO_DEAR:
