@@ -2,6 +2,7 @@
 
 import hashlib
 import re
+import unicodedata
 from dataclasses import dataclass, field
 from datetime import datetime
 from decimal import Decimal
@@ -9,6 +10,18 @@ from typing import Optional, List, Dict, Any
 from urllib.parse import urlsplit
 
 from config import APP_CONFIG
+
+
+def normalize_brand(brand: Optional[str]) -> str:
+    """The same brand across sources, allowing accents, punctuation and known spelling variants."""
+    text = unicodedata.normalize("NFKD", (brand or "").casefold()).encode("ascii", "ignore").decode("ascii")
+    normalized = re.sub(r"[^a-z0-9]+", " ", text).strip()
+    aliases = {
+        "bulgari": "bvlgari",
+        "glashuette": "glashutte",
+        "patekphilipp": "patek philippe",
+    }
+    return aliases.get(normalized.replace(" ", ""), normalized)
 
 
 @dataclass

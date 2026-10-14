@@ -146,7 +146,7 @@ def test_a_watch_too_cheap_to_leave_the_least_profit_is_worth_buying_at_no_price
 
 @pytest.fixture
 def trades(prices, tmp_path):
-    """Synthetic exports for two brands that share reference 3800."""
+    """Synthetic exports for brands that share reference 3800."""
     def keep(*extra, full_set=True):
         path = tmp_path / "controlling.csv"
         with path.open("w", encoding="utf-8-sig", newline="") as export:
@@ -219,3 +219,36 @@ async def test_the_prices_page_ignores_another_brand_in_its_trades_worth_and_lim
     assert row.count("46.750 €") == 3  # sales, used worth, full-set worth
     assert row.count("37.000 €") == 3  # purchases, used limit, full-set limit
     assert after[after.index('id="3800"'):].split("</tr>")[0] == row
+
+
+@pytest.mark.parametrize("export_brand,watch_brand", [
+    ("A Lange Sohne", "A. Lange & Söhne"),
+    ("Bulgari", "Bvlgari"),
+    ("Universal Geneve", "Universal Genève"),
+    ("Glashuette", "Glashütte"),
+])
+@pytest.mark.parametrize("reverse", [False, True])
+async def test_same_brand_spellings_count_while_another_brand_does_not(prices, trades, export_brand, watch_brand, reverse):
+    if reverse:
+        export_brand, watch_brand = watch_brand, export_brand
+    trades((export_brand, True, "7000", "9000"))
+    offers = chrono24_offers(*(["15000"] * 5), reference="3800")
+    for offer in offers:
+        offer.brand = watch_brand
+    for kind in (USED, FULL_SET):
+        searched(prices, 5, offers, reference="3800", kind=kind)
+    reading = Reading(is_watch_for_sale=True, brand=watch_brand, model="Watch", reference="3800",
+                      year=None, condition="good", box=False, papers=False)
+
+    verdict = decide(reading, Decimal("9000"), prices)
+
+    assert (verdict.worth, verdict.limit, verdict.contact) == (Decimal("9000"), Decimal("7000"), False)
+    app = web.Application()
+    PricesPage(prices, "secret").add_to(app)
+    async with TestClient(TestServer(app)) as client:
+        page = await (await client.get(PATH, params={"key": key("secret")})).text()
+
+    row = page[page.index('id="3800"'):].split("</tr>")[0]
+    assert "1 for 7.000 €</td><td class=n>1 for 9.000 €" in row
+    assert row.count("9.000 €") == 3  # sales, used worth, full-set worth
+    assert row.count("7.000 €") == 3  # purchases, used limit, full-set limit

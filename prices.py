@@ -5,7 +5,7 @@ import sqlite3
 from datetime import date, datetime
 from typing import Iterable, List, Optional, Sequence, Tuple
 
-from models import WatchData
+from models import WatchData, normalize_brand
 
 
 def reference_key(reference: str) -> str:
@@ -14,9 +14,8 @@ def reference_key(reference: str) -> str:
 
 
 def brand_key(brand: Optional[str]) -> str:
-    """A brand alike across the export and offers, including the export's "Patek Philipp" spelling."""
-    key = re.sub(r"[\W_]", "", (brand or "").casefold())
-    return {"patekphilipp": "patekphilippe"}.get(key, key)
+    """A brand alike across the export and offers, without spacing differences."""
+    return normalize_brand(brand).replace(" ", "")
 
 
 class Prices:
