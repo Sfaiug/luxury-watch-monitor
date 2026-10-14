@@ -1,8 +1,12 @@
 """The owner's Kleinanzeigen messages, through a stand-in for a page of the site."""
 
+import asyncio
 import copy
+from types import SimpleNamespace
+from unittest.mock import Mock, patch
 
 import pytest
+from playwright.async_api import TimeoutError
 
 from kleinanzeigen_messages import Messages, NotSent, Unsent
 
@@ -33,13 +37,19 @@ def conversation(*messages, ad_id="3535834511"):
 
 
 class Site:
-    """A page of Kleinanzeigen: answers the message API as the gateway does, and has an offer page's contact form."""
+    """The message box's page, and the session its offer tabs share."""
 
     def __init__(self, conversations=(), listed_pages=None, shows_what_is_sent=True):
         self.conversations = {c["id"]: c for c in conversations}
         self.listed_pages = listed_pages or [[{"id": c["id"], "adId": c["adId"], "role": c["role"]} for c in conversations]]
         self.shows_what_is_sent = shows_what_is_sent
-        self.calls, self.visited, self.typed, self.clicked = [], [], {}, []
+        self.calls, self.tabs = [], []
+        self.context = SimpleNamespace(new_page=self.new_page)
+
+    async def new_page(self):
+        tab = OfferTab(self)
+        self.tabs.append(tab)
+        return tab
 
     def _sent(self, conversation_id, text):
         if self.shows_what_is_sent:
@@ -63,21 +73,45 @@ class Site:
             return {"status": 201, "data": None}
         return {"status": 200, "data": copy.deepcopy(self.conversations[conversation_id])}
 
+
+class OfferTab:
+    """An offer's contact form, sending to the same account's message box."""
+
+    def __init__(self, site):
+        self.site = site
+        self.visited, self.typed, self.clicked = [], {}, []
+        self.closed = False
+        self.pressed = None
+
+    async def add_init_script(self, script):
+        pass
+
     async def goto(self, url, **options):
         self.visited.append(url)
 
     async def fill(self, selector, text):
         self.typed[selector] = text
 
+    async def evaluate(self, script):
+        if script == "window.__watchMonitorContactPressed = false":
+            self.pressed = False
+        else:
+            assert script == "window.__watchMonitorContactPressed === false"
+            return self.pressed is False
+
     async def click(self, selector):
+        self.pressed = True
         self.clicked.append(selector)
         started = conversation(ad_id=self.visited[-1].rsplit("/", 1)[1])
-        self.conversations[started["id"]] = started
-        self.listed_pages[-1].append({"id": started["id"], "adId": started["adId"], "role": "Buyer"})
-        self._sent(started["id"], self.typed["#viewad-contact-message"])
+        self.site.conversations.setdefault(started["id"], started)
+        self.site.listed_pages[-1].append({"id": started["id"], "adId": started["adId"], "role": "Buyer"})
+        self.site._sent(started["id"], self.typed["#viewad-contact-message"])
 
     async def wait_for_selector(self, selector, **options):
         assert selector == ".j-viewad-contact-success" and self.clicked
+
+    async def close(self):
+        self.closed = True
 
 
 async def test_a_conversation_reads_as_it_was_written():
@@ -125,15 +159,18 @@ async def test_a_message_said_before_counts_only_once_it_shows_again():
         await Messages(asked_before).reply("abc:1:xyz", "Ist die Uhr noch da?")
 
 
-async def test_a_first_message_goes_through_the_offer_s_contact_form_and_its_conversation_is_found():
+async def test_a_first_message_uses_its_own_tab_and_its_conversation_is_found():
     # The account sells too: a conversation about another ad as its seller, on the first page of two
     selling = {"id": "own:1", "adId": "111", "role": "Seller"}
     site = Site(listed_pages=[[selling], []])
 
     started = await Messages(site).contact("3535834511", "Hallo, ist die Uhr noch da?")
 
-    assert site.visited == ["https://www.kleinanzeigen.de/s-anzeige/3535834511"]
-    assert site.typed == {"#viewad-contact-message": "Hallo, ist die Uhr noch da?"}
+    assert len(site.tabs) == 1
+    form = site.tabs[0]
+    assert form.visited == ["https://www.kleinanzeigen.de/s-anzeige/3535834511"]
+    assert form.typed == {"#viewad-contact-message": "Hallo, ist die Uhr noch da?"}
+    assert form.closed
     assert started == "abc:1:xyz"
 
 
@@ -149,14 +186,71 @@ async def test_an_answer_with_an_error_is_no_answer():
         await Messages(Site()).conversation("gone")
 
 
-async def test_a_contact_form_that_could_not_be_filled_sent_nothing():
-    site = Site(listed_pages=[[]])
+@pytest.mark.parametrize("failure", ["goto", "fill", "click"])
+async def test_a_contact_form_in_its_own_tab_that_never_sent_can_be_tried_again(failure):
+    site, before_send = Site(), Mock()
+    box = Messages(site)
+    text = "Hallo, ist die Uhr noch da?"
+    with patch.object(OfferTab, failure, side_effect=TimeoutError("page failed or button covered")):
+        with pytest.raises(Unsent):
+            await box.contact("3535834511", text, before_send=before_send)
 
-    async def gone(url, **options):
-        raise RuntimeError("the offer page did not load")
+    assert site.tabs[0].closed and site.tabs[0].clicked == []
+    assert await box.bought("3535834511") is None
+    assert before_send.call_count == (1 if failure == "click" else 0)
 
-    site.goto = gone
-    with pytest.raises(Unsent):
-        await Messages(site).contact("3535834511", "Hallo, ist die Uhr noch da?")
-    assert site.clicked == []
+    assert await box.contact("3535834511", text) == "abc:1:xyz"
+    assert len(site.tabs) == 2 and site.tabs[1].closed
+    assert [m.text for m in (await box.conversation("abc:1:xyz")).messages] == [text]
 
+
+@pytest.mark.parametrize("inspection", ["pressed", "navigated", "crashed", "unresponsive"])
+async def test_a_click_in_its_own_tab_that_times_out_after_submission_is_not_unsent(inspection):
+    site, before_send = Site(), Mock()
+    click, evaluate = OfferTab.click, OfferTab.evaluate
+
+    async def slow_click(form, selector):
+        await click(form, selector)
+        if inspection == "navigated":
+            form.pressed = None  # a navigation loses the marker, not the submission
+        raise TimeoutError("the click handler is still running after submission")
+
+    async def inspect(form, script):
+        if script == "window.__watchMonitorContactPressed === false":
+            if inspection == "crashed":
+                raise RuntimeError("the page crashed")
+            if inspection == "unresponsive":
+                await asyncio.Event().wait()
+        return await evaluate(form, script)
+
+    with patch.object(OfferTab, "click", slow_click), patch.object(OfferTab, "evaluate", inspect):
+        with pytest.raises(TimeoutError):
+            await Messages(site).contact("3535834511", "Hallo, ist die Uhr noch da?", before_send=before_send)
+
+    before_send.assert_called_once_with(0)
+    assert site.tabs[0].closed and len(site.tabs[0].clicked) == 1
+    assert len((await Messages(site).conversation("abc:1:xyz")).messages) == 1
+
+
+@pytest.mark.parametrize("failure", [TimeoutError("success notice did not appear"), asyncio.CancelledError()])
+async def test_a_failure_after_clicking_in_its_own_tab_is_not_unsent(mocker, failure):
+    site, before_send = Site(), Mock()
+    mocker.patch.object(OfferTab, "wait_for_selector", side_effect=failure)
+
+    with pytest.raises(type(failure)):
+        await Messages(site).contact("3535834511", "Hallo, ist die Uhr noch da?", before_send=before_send)
+
+    before_send.assert_called_once_with(0)
+    assert site.tabs[0].closed and len(site.tabs[0].clicked) == 1
+    assert len((await Messages(site).conversation("abc:1:xyz")).messages) == 1
+
+
+async def test_a_message_from_its_own_tab_counts_only_once_its_conversation_shows_it():
+    text, before_send = "Hallo, ist die Uhr noch da?", Mock()
+    site = Site([conversation(("OUTBOUND", text, 0))], shows_what_is_sent=False)
+
+    with pytest.raises(NotSent):
+        await Messages(site).contact("3535834511", text, before_send=before_send)
+
+    before_send.assert_called_once_with(1)
+    assert site.tabs[0].closed
