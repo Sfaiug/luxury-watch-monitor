@@ -193,7 +193,7 @@ TRIES = 3  # looks at which an offer's page takes no message before the agent ha
 DRAFTS = 3  # drafts of one message the AI writes at most before the agent hands the negotiation to the owner
 MOST_WRITTEN = 24  # messages the agent writes before it hands the conversation to the owner: half again the longest
 # way to an agreement (a seller holding out to its last offer, then each term in turn), for questions and refusals
-STARTS = ("pending",)  # the negotiations a look at the messages starts
+STARTS = ("pending", "opening")  # the negotiations a look at the messages starts or confirms
 ANSWERS = ("talking", "closing")  # and those it answers, or sends the last message of
 AGAIN = timedelta(days=7)  # how long a seller the agent let go is still answered, should they write again
 LOOK_EVERY = 300  # seconds from one look at the sellers' answers to the next
@@ -487,34 +487,43 @@ class Negotiator:
         return self.negotiations.with_status(*ANSWERS) + self.negotiations.with_status("ended", since=datetime.now() - AGAIN)
 
     async def start(self, messages):
-        """Write the first message of every negotiation asked for."""
+        """Write the first message asked for, or check at the next look that it reached the seller."""
         for negotiation in self.negotiations.with_status(*STARTS):
             try:
                 await self._open(messages, negotiation)
             except Exception as e:
                 self.logger.warning(f"Negotiation: could not start about {negotiation.address}: {e}")
-        # The contact form may have reached the seller all the same: no first message goes twice
-        for negotiation in self.negotiations.with_status("opening"):
-            self._hand_over(negotiation, "it could not see its first message reach the seller")
 
     async def _open(self, messages, negotiation: Negotiation):
-        # A first message written before and never sent is sent as it was
-        text = negotiation.sent[-1] if negotiation.sent else await self._write(negotiation, Move("first"), [], None)
-        if text is None:
-            return
-        negotiation.status = "opening"
-        negotiation.sent[:] = [text]
-        self.negotiations.save(negotiation)
-        try:
-            negotiation.conversation = await messages.contact(negotiation.ad_id, text)
-        except Unsent:
-            # Nothing reached the seller: asked for still, until the offer's page has refused it too often
-            negotiation.tries += 1
-            if negotiation.tries >= TRIES:
-                return self._hand_over(negotiation, f"its offer page took no message at {TRIES} looks")
-            negotiation.status = "pending"
-            self.negotiations.save(negotiation)
-            raise
+        if negotiation.status == "opening":
+            # The contact form may have reached the seller: look again, never send a first message twice
+            conversation_id = await messages.bought(negotiation.ad_id)
+            said = (await messages.conversation(conversation_id)).messages if conversation_id else []
+            if not any(message.outbound and plain(message.text) == plain(negotiation.sent[-1])
+                       for message in said[negotiation.seen:]):
+                return self._hand_over(negotiation, "it could not see its first message reach the seller")
+            negotiation.conversation = conversation_id
+        else:
+            # A first message written before and never sent is sent as it was
+            text = negotiation.sent[-1] if negotiation.sent else await self._write(negotiation, Move("first"), [], None)
+            if text is None:
+                return
+            negotiation.sent[:] = [text]
+
+            def before_send(before):
+                negotiation.status, negotiation.seen = "opening", before
+                self.negotiations.save(negotiation)
+
+            try:
+                negotiation.conversation = await messages.contact(negotiation.ad_id, text, before_send=before_send)
+            except Unsent:
+                # Nothing reached the seller: asked for still, until the offer's page has refused it too often
+                negotiation.tries += 1
+                if negotiation.tries >= TRIES:
+                    return self._hand_over(negotiation, f"its offer page took no message at {TRIES} looks")
+                negotiation.status = "pending"
+                self.negotiations.save(negotiation)
+                raise
         negotiation.status = "talking"
         self.negotiations.save(negotiation)
         self.logger.info(f"Negotiation: opened at {euros(negotiation.offered)} for {negotiation.title[:60]}")

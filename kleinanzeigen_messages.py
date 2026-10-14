@@ -7,7 +7,7 @@ contact form. A message counts as sent once its conversation shows it.
 """
 
 from dataclasses import dataclass
-from typing import List, Optional
+from typing import Callable, List, Optional
 
 from scrapers.kleinanzeigen import offer_url
 
@@ -108,8 +108,8 @@ class Messages:
                 return None
             page += 1
 
-    async def contact(self, ad_id: str, text: str) -> str:
-        """Write the first message to an offer's seller through its contact form; the conversation it starts."""
+    async def contact(self, ad_id: str, text: str, *, before_send: Callable[[int], None] = lambda before: None) -> str:
+        """Write through the offer's form; before_send records the existing message count before submission."""
         try:
             earlier = await self.bought(ad_id)
             before = len((await self.conversation(earlier)).messages) if earlier else 0
@@ -117,6 +117,7 @@ class Messages:
             await self._page.fill("#viewad-contact-message", text)
         except Exception as e:
             raise Unsent(f"the contact form of {ad_id} was not sent: {e}") from e
+        before_send(before)
         await self._page.click("#viewad-contact-form button.viewad-contact-submit")
         await self._page.wait_for_selector(".j-viewad-contact-success", state="visible", timeout=30_000)
         conversation_id = await self.bought(ad_id)

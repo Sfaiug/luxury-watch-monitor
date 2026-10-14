@@ -121,7 +121,8 @@ class Box:
     def __init__(self):
         self.said: List[Message] = []
 
-    async def contact(self, ad_id: str, text: str) -> str:
+    async def contact(self, ad_id: str, text: str, *, before_send=lambda before: None) -> str:
+        before_send(len(self.said))
         self.said.append(Message(True, text, 0, ""))
         return ad_id
 
