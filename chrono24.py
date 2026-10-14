@@ -52,7 +52,7 @@ KINDS = {
 
 
 class NotResults(Exception):
-    """Chrono24 answered with a page that holds no search result: its human check, or a page it has changed."""
+    """Chrono24 answered with a page whose search results cannot be read."""
 
 
 def search(query: str, **narrowed) -> str:
@@ -101,6 +101,10 @@ def read(html: str, brand: Optional[str], reference: str, seen: datetime) -> Tup
                 scraped_at=seen,
             )
         )
+    expected = min(found, PAGE)
+    # A few offers may have no price; losing most of a page means its markup changed.
+    if len(offers) < expected / 2:
+        raise NotResults(f"could not read search result: {len(offers)} of {expected} expected offers ({found} found)")
     return found, offers
 
 
