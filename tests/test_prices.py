@@ -150,6 +150,8 @@ async def test_a_scraper_lists_every_watch_its_scan_found_and_none_after_a_faile
     with patch("scrapers.base.fetch_page", AsyncMock(return_value=page)):
         new = await scraper.scrape()
         assert new and scraper.last_scan == new
+        for watch in new:
+            scraper.seen_ids.add(watch.composite_id)  # Alerts posted
 
         assert await scraper.scrape() == []  # nothing new, and every offer still listed
         assert [watch.url for watch in scraper.last_scan] == [watch.url for watch in new]

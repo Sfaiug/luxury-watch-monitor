@@ -710,10 +710,7 @@ class TestWorldOfTimeScraper:
         assert all(watch.site_key == "worldoftime" for watch in watches)
         assert all(watch.site_name == "World of Time" for watch in watches)
         
-        # Verify composite IDs are generated
-        assert len(worldoftime_scraper.seen_ids) == 6
-        for watch in watches:
-            assert watch.composite_id in worldoftime_scraper.seen_ids
+        assert len(worldoftime_scraper.seen_ids) == 0  # No alerts posted yet
     
     @pytest.mark.asyncio
     async def test_scrape_with_seen_watches(self, worldoftime_scraper, worldoftime_listing_html):

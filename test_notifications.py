@@ -104,7 +104,8 @@ async def test_single_scraper(monitor, site_key):
                 print(f"\n   📨 Sending Discord notifications...")
                 notifications_sent = await monitor.notification_manager.send_notifications(
                     new_watches,
-                    SITE_CONFIGS[site_key]
+                    SITE_CONFIGS[site_key],
+                    seen_ids=scraper.seen_ids,
                 )
                 
                 if notifications_sent == len(new_watches):

@@ -105,26 +105,26 @@ class BaseScraper(ABC):
                     self._cleanup_soup(soup)
 
     def _new_watches(self, watches: List[WatchData]) -> List[WatchData]:
-        """Remember every listed watch and return the ones to announce."""
-        new_watches = []
+        """Refresh known listings and return the ones still to announce."""
+        new_watches = {}
         for watch in watches:
-            known = watch.composite_id in self.seen_ids
-            # Seen now, so the last to be forgotten when the memory is full
-            self.seen_ids.add(watch.composite_id)
-            if known:
+            if watch.composite_id in self.seen_ids:
+                # Still listed, so the last to be forgotten when memory is full
+                self.seen_ids.add(watch.composite_id)
                 continue
             # A watch announced under its former id is known, not news. The
             # former id vouches for one listing and goes: a later listing of
             # an identical watch at the same price is news again
             if watch.former_id in self.seen_ids:
                 self.seen_ids.discard(watch.former_id)
+                self.seen_ids.add(watch.composite_id)
             else:
-                new_watches.append(watch)
+                new_watches.setdefault(watch.composite_id, watch)
 
         self.logger.info(
             f"Found {len(new_watches)} new watches (Total seen: {len(self.seen_ids)})"
         )
-        return new_watches
+        return list(new_watches.values())
 
     @abstractmethod
     async def _extract_watches(self, soup: BeautifulSoup) -> List[WatchData]:

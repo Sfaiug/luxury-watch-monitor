@@ -65,7 +65,7 @@ class TestBaseScraper:
         assert len(result) == 2
         assert result[0].title == "Test Watch 1"
         assert result[1].title == "Test Watch 2"
-        assert len(scraper.seen_ids) == 2
+        assert len(scraper.seen_ids) == 0  # No alerts posted yet
     
     @pytest.mark.asyncio
     async def test_scrape_with_seen_watches(self, test_site_config, mock_logger, sample_html_content):

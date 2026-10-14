@@ -848,10 +848,7 @@ class TestTropicalWatchScraper:
         assert all(watch.site_name == "Tropical Watch" for watch in watches)
         assert all(watch.currency == "USD" for watch in watches)
 
-        # Verify composite IDs are generated
-        assert len(tropicalwatch_scraper.seen_ids) == 5
-        for watch in watches:
-            assert watch.composite_id in tropicalwatch_scraper.seen_ids
+        assert len(tropicalwatch_scraper.seen_ids) == 0  # No alerts posted yet
 
     @pytest.mark.asyncio
     async def test_scrape_with_seen_watches(

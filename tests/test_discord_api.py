@@ -92,3 +92,21 @@ async def test_an_answer_that_is_no_json_is_given_as_its_text(discord):
     answers.append((502, "Bad Gateway"))
 
     assert await api.call("GET", "/channels/5") == (502, {"message": "Bad Gateway"})
+
+
+@pytest.mark.parametrize("failure", [503, 429])
+async def test_not_taken_call_can_be_sent_again(discord, failure):
+    api, got, answers = discord
+    answers += [(failure, {"retry_after": 0.512})] * (2 if failure == 429 else 1)
+    answers.append((201, {"id": "9"}))
+    body = {"content": "hello"}
+
+    with patch("discord_api.asyncio.sleep") as waited:
+        assert (await api.call("POST", "/channels/5/messages", body))[0] == failure
+        assert await api.call("POST", "/channels/5/messages", body) == (201, {"id": "9"})
+
+    assert all(json.loads(request["body"]) == body for request in got)
+    if failure == 429:
+        waited.assert_awaited_once_with(0.512)
+    else:
+        waited.assert_not_awaited()
