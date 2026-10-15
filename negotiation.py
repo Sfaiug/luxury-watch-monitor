@@ -580,8 +580,9 @@ class Negotiator:
         talk = await messages.conversation(negotiation.conversation)
         said = talk.messages
         if negotiation.first is None:
-            # With only its opener sent, `seen` still records the conversation before that message.
-            negotiation.first = negotiation.seen if len(negotiation.sent) == 1 and negotiation.status == "talking" else 0
+            # A reply taken back leaves its later `seen` and its saved `before`, even with only the opener left.
+            negotiation.first = (negotiation.seen if len(negotiation.sent) == 1 and negotiation.status == "talking"
+                                 and not negotiation.before else 0)
         first = next((i for i, message in enumerate(said[negotiation.first:], negotiation.first)
                       if message.outbound and plain(message.text) == plain(negotiation.sent[0])), len(said))
         shown = [plain(message.text) for message in said[first:] if message.outbound]

@@ -1642,6 +1642,50 @@ async def test_earlier_messages_in_a_negotiation_saved_without_its_first_boundar
         kept.close()
 
 
+@pytest.mark.parametrize("owner_writes", [False, True])
+async def test_earlier_messages_a_legacy_reply_rollback_keeps_the_opener_and_detects_takeover(kept, tmp_path, owner_writes):
+    box = Box()
+    opener = "Ist die Uhr noch zu haben?"
+    talking = negotiator(Claude(reads=[says()], writes=[opener, "Ich biete [BETRAG]."]), kept)
+    talking.ask_to_start(asked_for())
+    await talking.start(box)
+    box.seller("Ja.")
+    box.reply = AsyncMock(side_effect=RuntimeError("temporary send failure"))
+    await talking.follow_up(box)
+    box.seller("Noch Interesse?")
+    rollback = negotiator(Claude(), kept)
+    rollback.client.messages.create = AsyncMock(side_effect=RuntimeError("temporary read failure"))
+    await rollback.follow_up(box)
+    with kept._db:
+        saved = json.loads(kept._db.execute("SELECT kept FROM negotiations").fetchone()[0])
+        assert saved["sent"] == [opener] and saved["seen"] == 2 and saved["before"]
+        del saved["first"]
+        kept._db.execute("UPDATE negotiations SET kept = ?", (json.dumps(saved),))
+    kept.close()
+    kept = Negotiations(tmp_path / "deals.sqlite3")
+    try:
+        del box.reply
+        if owner_writes:
+            box.said.append(Said(True, "Ich mache das selbst, bitte nicht mehr schreiben."))
+        claude = Claude(reads=[says()], writes=["Ich biete [BETRAG]."])
+        talking = negotiator(claude, kept)
+        await talking.follow_up(box)
+        await talking.tell_owner()
+
+        current = kept.get("3535834511")
+        assert current.sent[0] == opener
+        assert current.status == ("owner" if owner_writes else "talking")
+        if owner_writes:
+            assert claude.asked == []
+            talking.notify.assert_awaited_once()
+            assert "the owner wrote in the conversation" in talking.notify.await_args.args[1]
+        else:
+            assert box.said[-1].text == "Ich biete 7.550 €."
+            talking.notify.assert_not_awaited()
+    finally:
+        kept.close()
+
+
 async def test_earlier_messages_the_agents_escaped_reply_is_its_own(kept):
     box = Box()
     await opened(kept, box)
