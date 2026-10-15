@@ -205,12 +205,15 @@ class Deals:
                     buy_limit REAL,
                     opening REAL,
                     judged TEXT NOT NULL,
-                    filter TEXT
+                    filter TEXT,
+                    requested INTEGER NOT NULL DEFAULT 0
                 )
             """)
             # A file from before the verdicts named their filter
             if "filter" not in [column[1] for column in self._db.execute("PRAGMA table_info(verdicts)")]:
                 self._db.execute("ALTER TABLE verdicts ADD COLUMN filter TEXT")
+            if "requested" not in [column[1] for column in self._db.execute("PRAGMA table_info(verdicts)")]:
+                self._db.execute("ALTER TABLE verdicts ADD COLUMN requested INTEGER NOT NULL DEFAULT 0")
             self._db.execute("""
                 CREATE TABLE IF NOT EXISTS judging (
                     address TEXT NOT NULL,
@@ -277,13 +280,14 @@ class Deals:
                 "UPDATE judging SET warned = 1 WHERE address = ? AND filter = ?", (watch.url, watch.site_key)
             )
 
-    def judged(self, watch: WatchData, asking: Optional[Decimal], reading: Optional[Reading], verdict: Verdict, at: datetime):
+    def judged(self, watch: WatchData, asking: Optional[Decimal], reading: Optional[Reading], verdict: Verdict, at: datetime,
+               *, requested: bool = False):
         def amount(value):
             return float(value) if value is not None else None
 
         with self._db:
             self._db.execute(
-                "INSERT OR REPLACE INTO verdicts VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "INSERT OR REPLACE INTO verdicts VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     watch.url,
                     watch.title,
@@ -296,6 +300,7 @@ class Deals:
                     amount(verdict.opening),
                     at.isoformat(timespec="seconds"),
                     watch.site_key,
+                    requested,
                 ),
             )
             self._db.execute("DELETE FROM judging WHERE address = ? AND filter = ?", (watch.url, watch.site_key))
@@ -358,7 +363,7 @@ class Agent:
                 try:
                     asking, reading, verdict = await self.judge(watch)
                     requested = self.deals.judging(watch)["requested"]
-                    self.deals.judged(watch, asking, reading, verdict, datetime.now())
+                    self.deals.judged(watch, asking, reading, verdict, datetime.now(), requested=requested)
                 except Exception as e:
                     self.deals.failed(watch, str(e))
                     self.logger.warning(f"Agent could not judge {watch.url}: {e}")
@@ -366,10 +371,7 @@ class Agent:
                     continue
                 self.logger.info(f"Agent: {watch.title[:60]}: {verdict.why}")
                 priced = replace(watch, price=asking, price_display=None)
-                if requested and self.on_requested_verdict:
-                    await self.on_requested_verdict(priced, verdict)
-                else:
-                    self._follow(priced, verdict)
+                await self._follow(priced, verdict, requested)
             finally:
                 self._judging.discard(key)
 
@@ -385,9 +387,10 @@ class Agent:
         else:
             self.deals.warned(watch)
 
-    def reconsider(self):
+    async def reconsider(self):
         """Decide again on the matches that came before their watch's Chrono24 offers, now that the search may have
         brought them: a match is not lost for arriving first."""
+        followups = []
         for row in self.deals.without_limit(datetime.now() - WAITS):
             try:
                 reading = Reading.model_validate_json(row["reading"])
@@ -397,16 +400,21 @@ class Agent:
                     continue
                 watch = WatchData(title=row["title"], url=row["address"], site_name="Kleinanzeigen",
                                   site_key=row["filter"] or "", price=asking)
-                self.deals.judged(watch, asking, reading, verdict, datetime.now())
+                self.deals.judged(watch, asking, reading, verdict, datetime.now(), requested=row["requested"])
                 self.logger.info(f"Agent, its prices come: {watch.title[:60]}: {verdict.why}")
             except Exception as e:
                 self.logger.warning(f"Agent could not decide again on {row['address']}: {e}")
                 continue
-            self._follow(watch, verdict)
+            followups.append((watch, verdict, row["requested"]))
+        # Finish the saved verdicts before a notification can yield to a fresh press and its reading.
+        for watch, verdict, requested in followups:
+            await self._follow(watch, verdict, requested)
 
-    def _follow(self, watch: WatchData, verdict: Verdict):
+    async def _follow(self, watch: WatchData, verdict: Verdict, requested: bool):
         try:
-            if self.on_verdict:
+            if requested and self.on_requested_verdict:
+                await self.on_requested_verdict(watch, verdict)
+            elif self.on_verdict:
                 self.on_verdict(watch, verdict)
         except Exception as e:
             self.logger.warning(f"Agent could not follow up on {watch.url}: {e}")
@@ -425,7 +433,7 @@ class Agent:
             if reading.is_watch_for_sale and reading.reference:
                 # A watch offered: its price is one more, and its
                 # reference joins the ones Chrono24 is searched for
-                self.prices.saw([_as_offer(watch, reading)])
+                self.prices.saw([_as_offer(replace(watch, price=asking), reading)])
             verdict = decide(reading, asking, self.prices)
         return asking, reading, verdict
 
