@@ -169,6 +169,35 @@ def test_below_the_limit_the_opening_offer_starts_from_the_asking_price(prices):
     assert decide(reading(), Decimal("7000"), prices).opening == Decimal("6150")
 
 
+def test_without_price_the_verdict_keeps_its_worth_and_limit(prices):
+    verdict = decide(reading(), None, prices)
+
+    assert (verdict.contact, verdict.why, verdict.worth, verdict.limit, verdict.opening) == (
+        False, "no price", Decimal("10800"), Decimal("8608"), None
+    )
+
+
+@pytest.mark.parametrize("price_text", ["VB", "Preis auf Anfrage"])
+async def test_without_price_a_negotiate_press_opens_from_the_limit(prices, deals, price_text):
+    monitor = WatchMonitor(log_level="ERROR")
+    monitor.agent = Agent(Claude(reading().model_dump_json()), AsyncMock(return_value=OFFER.replace("17.790 €", price_text)),
+                          prices, deals, logging.getLogger("test"))
+    monitor.negotiator = Mock(pressed=Mock(return_value=None))
+    monitor._tell_owner = AsyncMock()
+
+    monitor._negotiate_pressed({"data": {"custom_id": "negotiate:3519758108"}, "channel_id": "42"})
+    await asyncio.gather(*monitor._judging)
+
+    (asked,) = monitor.negotiator.ask_to_start.call_args.args
+    assert (asked.ad_id, asked.channel, asked.limit, asked.offered) == ("3519758108", "filter:42", 8608, 7550)
+    monitor._tell_owner.assert_awaited_once_with(
+        "filter:42", "The agent negotiates on https://www.kleinanzeigen.de/s-anzeige/3519758108: "
+        "it opens at 7.550 € and pays 8.608 € at most."
+    )
+    kept = deals.latest(1)[0]
+    assert (kept["asking"], kept["why"], kept["worth"], kept["buy_limit"]) == (None, "no price", 10800, 8608)
+
+
 @pytest.mark.parametrize(
     "read, asking, why",
     [
