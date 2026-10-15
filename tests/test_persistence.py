@@ -371,6 +371,30 @@ class TestPersistenceManager:
             f"Saved session test-session to history"
         )
     
+    @pytest.mark.parametrize("entries", [100, 101])
+    def test_history_at_cap_rolls_over_silently(self, test_persistence_manager, entries):
+        manager = test_persistence_manager
+        history = [
+            {"session_id": f"session{i}", "started_at": datetime.now().isoformat()}
+            for i in range(entries)
+        ]
+        manager.session_history_file.write_text(json.dumps(history))
+
+        with patch('persistence.APP_CONFIG') as config:
+            config.session_history_retention_days = 30
+            config.max_session_history_entries = 100
+
+            manager.save_session(ScrapingSession(session_id="new-session"))
+
+        saved = manager.load_session_history()
+        assert len(saved) == 100
+        assert [session["session_id"] for session in saved] == [
+            f"session{i}" for i in range(entries - 99, entries)
+        ] + ["new-session"]
+        manager.logger.warning.assert_not_called()
+        manager.logger.error.assert_not_called()
+        manager.logger.info.assert_called_once_with("Saved session new-session to history")
+
     def test_save_session_with_retention(self, test_persistence_manager, temp_dir):
         """Test session saving with retention policy."""
         # Create old session data
