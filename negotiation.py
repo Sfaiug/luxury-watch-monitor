@@ -437,6 +437,7 @@ class Negotiation:
     due: str = ""  # when the seller's latest messages are answered, a while after they came, as a person does
     asking: Optional[int] = None  # the ad's asking price; absent in older saved negotiations
     reading: Optional[dict] = None  # the offer's reading, to value the reference the seller confirms
+    wrote: str = ""  # when its latest message went out; absent in older saved negotiations
 
     @property
     def opened(self) -> bool:
@@ -598,7 +599,7 @@ class Negotiator:
 
             negotiation.conversation = await messages.contact(negotiation.ad_id, text, before_send=before_send)
         negotiation.first = negotiation.seen
-        negotiation.status = "talking"
+        negotiation.status, negotiation.wrote = "talking", datetime.now(GERMANY).isoformat()
         self.negotiations.save(negotiation)
         self.logger.info(f"Negotiation: opened at {euros(negotiation.offered)} for {negotiation.title[:60]}")
 
@@ -637,6 +638,14 @@ class Negotiator:
             return self._close(negotiation)
         if unshown:
             return
+        if negotiation.status == "talking" and said and said[-1].outbound:
+            if not negotiation.wrote:  # kept before the time was: the week counts from this look
+                negotiation.wrote = datetime.now(GERMANY).isoformat()
+                self.negotiations.save(negotiation)
+            elif datetime.now(GERMANY) - datetime.fromisoformat(negotiation.wrote) >= AGAIN:
+                # A seller silent for a week is let go, as one who said no: should they write again, they are answered
+                negotiation.seen = len(said)
+                return self._end(negotiation, "ended", "the seller stopped answering", "")
         if not said or said[-1].outbound or (negotiation.status == "ended" and len(said) <= negotiation.seen):
             return
         # A person answers after a while, not at once (owner rule, 12 Oct 2026)
@@ -706,6 +715,7 @@ class Negotiator:
         # Kept before it is sent: should sending fail partway, it is known as the agent's, and sent again
         negotiation.sent.append(text)
         negotiation.seen, negotiation.before = len(said), before
+        negotiation.wrote = datetime.now(GERMANY).isoformat()
         if answer.kind in ("offer", "final"):
             negotiation.offered = answer.price
         if answer.kind in ("done", "farewell"):

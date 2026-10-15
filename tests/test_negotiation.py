@@ -2446,3 +2446,47 @@ async def test_the_button_says_why_the_agent_leaves_a_match_without_a_limit(by_h
     by_hand._tell_owner.assert_awaited_once_with(
         "filter:43", "The agent leaves https://www.kleinanzeigen.de/s-anzeige/3519758108 alone: red flags: signs of a replica."
     )
+
+
+async def test_a_seller_who_stops_answering_is_let_go_after_a_week_and_answered_should_they_write_again(kept):
+    box, notify = Box(), AsyncMock()
+    await opened(kept, box)
+    quiet = Claude()
+
+    # Six days on, the seller is waited for still
+    current = kept.get("3535834511")
+    current.wrote = (datetime.now(negotiation.GERMANY) - timedelta(days=6)).isoformat()
+    kept.save(current)
+    await negotiator(quiet, kept, notify).follow_up(box)
+    assert kept.get("3535834511").status == "talking"
+
+    # A week on, they are let go without a word to them or the owner, and nothing is read
+    current.wrote = (datetime.now(negotiation.GERMANY) - negotiation.AGAIN).isoformat()
+    kept.save(current)
+    await negotiator(quiet, kept, notify).follow_up(box)
+    gone = kept.get("3535834511")
+    assert (gone.status, gone.why, gone.notice) == ("ended", "the seller stopped answering", "")
+    assert box.said[-1].outbound and quiet.asked == []
+    await negotiator(quiet, kept, notify).tell_owner()
+    notify.assert_not_awaited()
+
+    # Writing again, they are answered as before
+    box.seller("Sorry, war im Urlaub. 8.400 € und sie gehört dir.")
+    await negotiator(Claude(reads=[says(price=8400)], writes=["Passt, [BETRAG]. Zahlst du per Überweisung?"]),
+                     kept).follow_up(box)
+    assert kept.get("3535834511").status == "talking"
+    assert box.said[-1].text == "Passt, 8.400 €. Zahlst du per Überweisung?"
+
+
+async def test_a_negotiation_kept_before_its_time_was_waits_a_week_from_the_next_look_when_the_seller_stops_answering(kept):
+    box = Box()
+    await opened(kept, box)
+    current = kept.get("3535834511")
+    current.wrote = ""
+    kept.save(current)
+
+    await negotiator(Claude(), kept).follow_up(box)
+
+    current = kept.get("3535834511")
+    assert current.status == "talking"
+    assert datetime.now(negotiation.GERMANY) - datetime.fromisoformat(current.wrote) < timedelta(minutes=1)
