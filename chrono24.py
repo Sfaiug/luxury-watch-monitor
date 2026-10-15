@@ -80,12 +80,15 @@ def read(html: str, brand: Optional[str], reference: str, seen: datetime) -> Tup
         title = soup.title.get_text(strip=True) if soup.title else ""
         raise NotResults(f"no search result on the page ({title or 'no title'})")
 
-    offers = []
+    offers, cards = [], 0
     for card in soup.select(".js-listing-item-container"):
         link = card.select_one("a.js-listing-item-link")
         shown = card.select_one(".wt-listing-item-price")
-        price = parse_price(shown.get_text(strip=True)) if shown else None
-        if not (link and price):
+        if not (link and shown):
+            continue
+        cards += 1  # read, with a price or "Preis auf Anfrage"
+        price = parse_price(shown.get_text(strip=True))
+        if not price:
             continue
         lines = [p.get_text(" ", strip=True) for p in link.select("div > p.text-ellipsis")]
         offers.append(
@@ -102,9 +105,9 @@ def read(html: str, brand: Optional[str], reference: str, seen: datetime) -> Tup
             )
         )
     expected = min(found, PAGE)
-    # A few offers may have no price; losing most of a page means its markup changed.
-    if len(offers) < expected / 2:
-        raise NotResults(f"could not read search result: {len(offers)} of {expected} expected offers ({found} found)")
+    # Losing most of a page's cards means its markup changed
+    if cards < expected / 2:
+        raise NotResults(f"could not read search result: {cards} of {expected} expected offers ({found} found)")
     return found, offers
 
 
