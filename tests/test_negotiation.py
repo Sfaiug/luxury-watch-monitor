@@ -15,12 +15,13 @@ from anthropic import AsyncAnthropic
 from playwright.async_api import TimeoutError
 
 import negotiation
-from agent import Agent, Deals, Verdict
+from agent import Agent, Deals, Reading, Verdict
 from filters import Filter, FilterStore
 from kleinanzeigen_messages import Messages, Unsent
 from models import WatchData
 from monitor import WatchMonitor
 from negotiation import Move, Negotiation, Negotiations, Negotiator, SellerSays, Terms, filled, move
+from prices import Prices
 
 LIMIT, OPENING = 8600, 7550
 
@@ -464,9 +465,150 @@ def kept(tmp_path):
     return Negotiations(tmp_path / "deals.sqlite3")
 
 
-def negotiator(claude, kept, notify=None):
+def negotiator(claude, kept, notify=None, *, prices=None):
     """The negotiator, answering at once: how long an answer waits is the next test's."""
-    return Negotiator(claude, kept, notify or AsyncMock(), logging.getLogger("test"), a_while=lambda: timedelta(0))
+    return Negotiator(claude, kept, notify or AsyncMock(), logging.getLogger("test"), a_while=lambda: timedelta(0), prices=prices)
+
+
+def unconfirmed_watch():
+    watch = asked_for()
+    watch.title, watch.asking, watch.limit, watch.offered = "Patek Philippe Calatrava 35 mm", 9999, 13500, 8750
+    watch.reading = Reading(is_watch_for_sale=True, brand="Patek Philippe", model="Calatrava", reference=None,
+                            likely_reference="3445", year=None, condition="good", box=False, papers=False).model_dump()
+    return watch
+
+
+@pytest.mark.parametrize("reference, limit, offered, picture, early", [
+    ("3445", 13500, 8750, False, False),
+    ("3425", 8000, 7000, False, False),
+    ("5296", 16000, 8750, True, False),
+    ("3425", 8000, 7000, True, True),
+])
+async def test_confirmed_reference_the_seller_s_reference_sets_the_price_after_availability(
+        kept, tmp_path, reference, limit, offered, picture, early):
+    prices = Prices(tmp_path / "prices.sqlite3")
+    prices.set_buy_price(reference, limit, datetime.now())
+    box = Box()
+    claude = Claude(reads=[says(price=9999, bank_transfer=True, reference=reference if early else None)] +
+                         ([] if early else [says(reference=reference)]) + [says(price=min(limit, 9999))],
+                    writes=["Hallo, ist die Uhr noch da?"] +
+                           ([] if early else ["Ich biete [BETRAG].",  # no price before confirmation, even a bad draft
+                                              "Kannst du mir die Referenz im Gehäuseboden oder in den Papieren nennen?"]) +
+                           ["Ich würde [BETRAG] bieten.", "[BETRAG] passt. Geht versicherter Versand?"])
+    talking = negotiator(claude, kept, prices=prices)
+    talking.ask_to_start(unconfirmed_watch())
+    await talking.start(box)
+    box.seller("Ja, noch da." if not early else "Ja, hier die Unterlagen.", pictures=int(picture and early))
+
+    await talking.follow_up(box)
+
+    if not early:
+        current = kept.get("3535834511")
+        assert current.status == "talking" and not current.opened and current.terms.price is None
+        assert "Referenz" in box.said[-1].text and "€" not in box.said[-1].text
+        task = json.loads(claude.requests[-1])["messages"][0]["content"][0]["text"]
+        assert "inside the caseback or its papers" in task
+        box.seller("Hier das Foto." if picture else f"In den Papieren steht {reference}.", pictures=int(picture))
+        kept.close()
+        kept = Negotiations(tmp_path / "deals.sqlite3")
+        talking = negotiator(claude, kept, prices=prices)
+        await talking.follow_up(box)
+    current = kept.get("3535834511")
+    assert (current.limit, current.offered, current.terms.reference) == (limit, offered, reference)
+    assert box.said[-1].text == f"Ich würde {offered // 1000}.{offered % 1000:03d} € bieten."
+    reads = [json.loads(request) for request in claude.requests
+             if "reference" in json.loads(request)["output_config"]["format"]["schema"]["properties"]]
+    assert sum(block["type"] == "image" for block in reads[-1]["messages"][0]["content"]) == int(picture)
+    assert "never infer this from the watch's appearance" in reads[-1]["system"]
+
+    box.seller(f"Für {min(limit, 9999)} Euro ist sie deine.")
+    await talking.follow_up(box)
+    current = kept.get("3535834511")
+    assert current.terms.price == min(limit, 9999) and current.terms.reference == reference
+    assert "Versand" in box.said[-1].text  # the earlier agreement to bank transfer was kept
+
+
+@pytest.mark.parametrize("reference, unavailable", [(None, True), ("unknown", False)])
+async def test_confirmed_reference_an_unavailable_reference_or_its_missing_limit_goes_to_the_owner(
+        kept, tmp_path, reference, unavailable):
+    prices = Prices(tmp_path / "prices.sqlite3")
+    prices.set_buy_price("3445", 13500, datetime.now())
+    box, notify = Box(), AsyncMock()
+    claude = Claude(reads=[says(), says(reference=reference, reference_unavailable=unavailable)],
+                    writes=["Hallo, ist sie noch da?", "Kannst du mir die Referenz aus den Papieren nennen?"])
+    talking = negotiator(claude, kept, notify, prices=prices)
+    talking.ask_to_start(unconfirmed_watch())
+    await talking.start(box)
+    box.seller("Ja.")
+    await talking.follow_up(box)
+    box.seller("Weiß ich nicht." if unavailable else "Die Referenz ist unknown.")
+
+    await talking.follow_up(box)
+    await talking.tell_owner()
+
+    current = kept.get("3535834511")
+    assert current.status == "owner" and not current.opened
+    assert current.terms.price is None and claude.asked[-1] == "read"
+    assert notify.await_count == 1 and "reference" in notify.await_args.args[1]
+
+
+def test_confirmed_reference_a_seller_s_price_alone_does_not_confirm_the_watch():
+    terms = Terms(reference_required=True)
+
+    answer = move(LIMIT, OPENING, terms, says(price=7000, accepts_offer=True), False, opening=True)
+
+    assert answer.kind == "settle" and answer.price is None and "reference" in answer.why
+    assert terms.price is None
+
+
+@pytest.mark.parametrize("agreed, seller_price, status", [
+    (None, None, "owner"),
+    (8750, None, "owner"),
+    (None, 7500, "agreed"),
+    (7500, None, "agreed"),
+    (None, 8000, "agreed"),
+    (8000, None, "agreed"),
+    (8750, 7500, "agreed"),
+    (7500, 8750, "owner"),
+])
+async def test_confirmed_reference_a_correction_preserves_affordable_seller_prices(
+        kept, tmp_path, agreed, seller_price, status):
+    prices = Prices(tmp_path / "prices.sqlite3")
+    prices.set_buy_price("3425", 8000, datetime.now())
+    watch = unconfirmed_watch()
+    watch.status, watch.conversation = "talking", "c1"
+    watch.sent = ["Hallo, ist die Uhr noch da?", "Kannst du mir die Referenz nennen?", "Ich würde 8.750 € bieten."]
+    if agreed is not None:
+        watch.sent.append(f"{negotiation.euros(agreed)} passt. Schickst du mir ein Bild vom Ausweis?")
+    watch.terms = Terms(price=agreed, bank_transfer=True, delivery="shipping", contract=True,
+                        reference_required=True, reference="3445")
+    kept.save(watch)
+    box, notify = Box(), AsyncMock()
+    box.said = [Said(True, text) for text in watch.sent]
+    price_text = f"Ich mache dir {seller_price} Euro." if seller_price is not None else "Dein Angebot passt."
+    box.seller(f"{price_text} Ich habe noch mal nachgesehen: die Referenz ist 3425. Hier mein Ausweis.", pictures=1)
+    lowest = min(price for price in (8750, agreed, seller_price) if price is not None)
+    claude = Claude(reads=[says(reference="3425", price=seller_price, accepts_offer=seller_price is None,
+                               lowest=lowest, bank_transfer=True,
+                               delivery="shipping", contract=True, id_card=True)],
+                    writes=["Danke, dann sind [BETRAG] vereinbart. Ich schicke den Kaufvertrag und zahle anschließend."])
+    talking = negotiator(claude, kept, notify, prices=prices)
+
+    await talking.follow_up(box)
+    await talking.tell_owner()
+
+    current = kept.get(watch.ad_id)
+    assert current.status == status
+    assert (current.limit, current.offered, current.terms.reference) == (8000, 8750, "3425")
+    if status == "owner":
+        assert current.terms.price == agreed
+        assert claude.asked == ["read"] and not box.said[-1].outbound
+        assert "3425" in notify.await_args.args[1]
+    else:
+        assert current.terms.price == (seller_price if seller_price is not None else agreed)
+        assert claude.asked == ["read", "write"] and box.said[-1].outbound
+        assert "Agreed:" in notify.await_args.args[1]
+    assert notify.await_count == 1
 
 
 async def test_a_negotiation_asked_for_opens_once_asking_only_whether_the_watch_is_there_and_offers_on_the_answer(kept):

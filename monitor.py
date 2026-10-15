@@ -155,7 +155,7 @@ class WatchMonitor:
                                self._negotiate_by_hand, self._tell_owner)
             if os.path.exists(APP_CONFIG.kleinanzeigen_session_file):
                 self.negotiator = Negotiator(
-                    client, Negotiations(APP_CONFIG.deals_file), self._tell_owner, self.logger
+                    client, Negotiations(APP_CONFIG.deals_file), self._tell_owner, self.logger, prices=self.prices
                 )
 
         # Initialize notification manager
@@ -633,23 +633,24 @@ class WatchMonitor:
         """A match worth contacting is negotiated on where its filter says so (owner rule, 11 Oct 2026)."""
         asked = self.filters.get(watch.site_key)
         if self.negotiator and verdict.contact and asked and asked.negotiate:
-            self._ask_to_negotiate(watch, verdict.limit, verdict.opening)
+            self._ask_to_negotiate(watch, verdict)
 
     def _negotiates_by_hand(self, key: str) -> bool:
         """A filter whose matches the agent negotiates on only when the member presses their button."""
         asked = self.filters.get(key)
         return bool(self.negotiator and asked and not asked.negotiate)
 
-    def _ask_to_negotiate(self, watch: WatchData, limit: Decimal, offered: Decimal) -> Optional[Negotiation]:
+    def _ask_to_negotiate(self, watch: WatchData, verdict: Verdict, offered: Optional[Decimal] = None) -> Optional[Negotiation]:
         """Have the agent negotiate on a match, in its filter's channel: the negotiation, None where it does already."""
         asked = Negotiation(
             ad_id=watch.url.rsplit("/", 1)[1],
             channel=watch.site_key,
             title=watch.title,
             address=watch.url,
-            limit=int(limit),
-            offered=int(offered),
+            limit=int(verdict.limit),
+            offered=int(offered if offered is not None else verdict.opening),
             asking=int(watch.price) if watch.price is not None else None,
+            reading=verdict.reading.model_dump() if verdict.reading else None,
         )
         return asked if self.negotiator.ask_to_start(asked) else None
 
@@ -686,12 +687,14 @@ class WatchMonitor:
             return
         if verdict.limit is None:
             return await self._tell_owner(watch.site_key, f"The agent leaves {watch.url} alone: {verdict.why}.")
-        asked = self._ask_to_negotiate(watch, verdict.limit, opening(watch.price or verdict.limit, verdict.limit))
+        asked = self._ask_to_negotiate(watch, verdict, opening(watch.price or verdict.limit, verdict.limit))
         if not asked:
             return await self._tell_owner(watch.site_key, f"The agent negotiates on {watch.url} already.")
         await self._tell_owner(
             watch.site_key,
-            f"The agent negotiates on {watch.url}: it opens at {euros(asked.offered)} and pays {euros(asked.limit)} at most.",
+            f"The agent negotiates on {watch.url}: " +
+            ("it asks the seller for the reference before naming a price." if asked.terms.reference_required else
+             f"it opens at {euros(asked.offered)} and pays {euros(asked.limit)} at most."),
         )
 
     async def _tell_owner(self, channel: str, text: str, buttons=()):
