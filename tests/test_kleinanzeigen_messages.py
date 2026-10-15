@@ -125,9 +125,11 @@ class OfferTab:
 
 async def test_a_conversation_reads_as_it_was_written():
     site = Site([conversation(("OUTBOUND", "Hallo, wäre bei 9.000 € dabei.", 0), ("INBOUND", "Gern, hier mein Ausweis.", 1))])
+    on_success = Mock()
 
-    read = await Messages(site).conversation("abc:1:xyz")
+    read = await Messages(site, on_success=on_success).conversation("abc:1:xyz")
 
+    assert on_success.call_count == 2
     assert (read.id, read.ad_id, read.seller, read.buyer) == ("abc:1:xyz", "3535834511", "Tim", "Owner")
     assert [(m.outbound, m.text, m.attachments) for m in read.messages] == [
         (True, "Hallo, wäre bei 9.000 € dabei.", []),
@@ -137,19 +139,22 @@ async def test_a_conversation_reads_as_it_was_written():
 
 async def test_id_card_seen_picture_is_read_only_on_demand_through_the_session():
     site = Site([conversation(("INBOUND", "Hier.", 2))])
-    box = Messages(site)
+    on_success = Mock()
+    box = Messages(site, on_success=on_success)
     read = await box.conversation("abc:1:xyz")
+    on_success.reset_mock()
     picture = {"media_type": "image/jpeg", "data": "cGljdHVyZQ=="}
     site.evaluate = AsyncMock(return_value=picture)
 
     assert len(read.messages[0].attachments) == 2
     assert await box.picture(read.messages[0].attachments[0]) == picture
+    on_success.assert_called_once_with()
 
     script, url = site.evaluate.await_args.args
     assert url == "https://gateway.kleinanzeigen.de/pictures/0-0"
     assert "Authorization: token" in script and "/m-access-token.json" in script
     assert "cache: 'no-store'" in script
-    assert vars(box) == {"_page": site, "_user": USER}
+    assert vars(box) == {"_page": site, "_user": USER, "_on_success": on_success}
 
 
 @pytest.mark.parametrize("answer", [
@@ -282,10 +287,12 @@ async def test_an_answer_with_an_error_is_no_answer():
 async def test_cannot_write_keeps_a_refusal_separate_from_an_outage_and_a_401(method, status, text, error):
     path = f"/messagebox/api/users/{USER}/conversations/abc:1:xyz"
     page = SimpleNamespace(evaluate=AsyncMock(return_value={"status": status, "path": path, "text": text}))
+    on_success = Mock()
 
     with pytest.raises(error) as raised:
-        await Messages(page)._call(method, path, {"message": "Hallo"} if method == "POST" else None)
+        await Messages(page, on_success=on_success)._call(method, path, {"message": "Hallo"} if method == "POST" else None)
 
+    on_success.assert_not_called()
     assert type(raised.value) is error
     assert str(status) in str(raised.value) and path in str(raised.value) and text in str(raised.value)
 

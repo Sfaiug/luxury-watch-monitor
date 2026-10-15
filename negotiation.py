@@ -801,7 +801,12 @@ async def keep_talking(negotiator: Negotiator, session: str, logger, now=lambda:
     Each look is a window of Chrome holding the owner's Kleinanzeigen session
     (`session`, a file on the server), which keeps the session's renewed tokens.
     """
-    logged_out, last_look = False, None
+    login_notice_sent, last_look = False, None
+
+    def session_used():
+        nonlocal login_notice_sent
+        login_notice_sent = False
+
     while True:
         busy = negotiator.waiting()
         stale = last_look is None or (now() - last_look).total_seconds() >= LOOK_DAILY
@@ -815,14 +820,13 @@ async def keep_talking(negotiator: Negotiator, session: str, logger, now=lambda:
                         await page.goto(f"{BASE_URL}/m-nachrichten.html", wait_until="domcontentloaded")
                         if "einloggen" in page.url or "login." in page.url:
                             raise LoggedOut("the owner's Kleinanzeigen session has ended")
-                        messages = Messages(page)
+                        messages = Messages(page, on_success=session_used)
                         await negotiator.start(messages)
                         await negotiator.follow_up(messages)
-                        logged_out = False
                     except LoggedOut:
-                        if busy and not logged_out:  # said once, where a negotiation waits, until it works again
+                        if busy and not login_notice_sent:
                             await negotiator.notify(busy[0].channel, LOGGED_OUT)
-                        logged_out = bool(busy)
+                            login_notice_sent = True
                         raise
                     finally:
                         await window.storage_state(path=session)
