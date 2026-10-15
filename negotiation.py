@@ -507,7 +507,6 @@ class Negotiator:
         self.logger = logger
         self.a_while = a_while  # how long the next answer waits
         self.prices = prices
-        self.login_notice_sent = False  # cleared only when the session is successfully used
 
     def ask_to_start(self, negotiation: Negotiation) -> bool:
         """Have the negotiation start at the next look at the messages; once per offer."""
@@ -557,7 +556,6 @@ class Negotiator:
         if negotiation.status == "opening":
             # The contact form may have reached the seller: look again, never send a first message twice
             conversation_id = await messages.bought(negotiation.ad_id)
-            self.login_notice_sent = False
             said = (await messages.conversation(conversation_id)).messages if conversation_id else []
             if not any(message.outbound and plain(message.text) == plain(negotiation.sent[-1])
                        for message in said[negotiation.seen:]):
@@ -576,7 +574,6 @@ class Negotiator:
                 self.negotiations.save(negotiation)
 
             negotiation.conversation = await messages.contact(negotiation.ad_id, text, before_send=before_send)
-            self.login_notice_sent = False
         negotiation.first = negotiation.seen
         negotiation.status = "talking"
         self.negotiations.save(negotiation)
@@ -589,7 +586,6 @@ class Negotiator:
 
     async def _answer(self, messages, negotiation: Negotiation):
         talk = await messages.conversation(negotiation.conversation)
-        self.login_notice_sent = False
         said = talk.messages
         if negotiation.first is None:
             # A reply taken back leaves its later `seen` and its saved `before`, even with only the opener left.
@@ -805,7 +801,12 @@ async def keep_talking(negotiator: Negotiator, session: str, logger, now=lambda:
     Each look is a window of Chrome holding the owner's Kleinanzeigen session
     (`session`, a file on the server), which keeps the session's renewed tokens.
     """
-    last_look = None
+    login_notice_sent, last_look = False, None
+
+    def session_used():
+        nonlocal login_notice_sent
+        login_notice_sent = False
+
     while True:
         busy = negotiator.waiting()
         stale = last_look is None or (now() - last_look).total_seconds() >= LOOK_DAILY
@@ -819,13 +820,13 @@ async def keep_talking(negotiator: Negotiator, session: str, logger, now=lambda:
                         await page.goto(f"{BASE_URL}/m-nachrichten.html", wait_until="domcontentloaded")
                         if "einloggen" in page.url or "login." in page.url:
                             raise LoggedOut("the owner's Kleinanzeigen session has ended")
-                        messages = Messages(page)
+                        messages = Messages(page, on_success=session_used)
                         await negotiator.start(messages)
                         await negotiator.follow_up(messages)
                     except LoggedOut:
-                        if busy and not negotiator.login_notice_sent:
+                        if busy and not login_notice_sent:
                             await negotiator.notify(busy[0].channel, LOGGED_OUT)
-                            negotiator.login_notice_sent = True
+                            login_notice_sent = True
                         raise
                     finally:
                         await window.storage_state(path=session)

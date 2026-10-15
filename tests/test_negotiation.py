@@ -8,7 +8,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from decimal import Decimal
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, Mock
+from unittest.mock import DEFAULT, AsyncMock, Mock
 
 import httpx2
 import pytest
@@ -414,6 +414,11 @@ class Box:
 
     def __init__(self, contact_fails=False):
         self.said, self.contact_fails = [], contact_fails
+        self.on_success = lambda: None
+
+    def for_page(self, page, *, on_success):
+        self.on_success = on_success
+        return self
 
     async def contact(self, ad_id, text, *, before_send=lambda before: None):
         if isinstance(self.contact_fails, Unsent):
@@ -423,19 +428,23 @@ class Box:
             raise RuntimeError("the page did not answer")
         if self.contact_fails:
             raise self.contact_fails
+        self.on_success()
         self.said.append(Said(True, text))
         return "c1"
 
     async def conversation(self, conversation_id):
+        self.on_success()
         return SimpleNamespace(id=conversation_id, messages=list(self.said), buyer="Jonas M.")
 
     async def reply(self, conversation_id, text):
+        self.on_success()
         self.said.append(Said(True, text))
 
     def seller(self, text, pictures=0):
         self.said.append(Said(False, text, [f"https://chat/picture-{len(self.said)}-{p}" for p in range(pictures)]))
 
     async def picture(self, url):
+        self.on_success()
         return {"media_type": "image/jpeg", "data": "cGljdHVyZQ=="}
 
 
@@ -932,8 +941,9 @@ async def test_cannot_write_a_successful_look_resets_refusals_but_outages_count_
 class Browser:
     """Chrome as the talk loop opens it: one window holding the session, on the message box's page."""
 
-    def __init__(self, at="https://www.kleinanzeigen.de/m-nachrichten.html"):
+    def __init__(self, at="https://www.kleinanzeigen.de/m-nachrichten.html", **page_options):
         self.at, self.opened, self.kept = at, [], []
+        self.page_options = page_options
 
     async def __aenter__(self):
         return self
@@ -947,7 +957,7 @@ class Browser:
 
         class Window:
             async def new_page(self):
-                return SimpleNamespace(url=browser.at, goto=AsyncMock())
+                return SimpleNamespace(url=browser.at, goto=AsyncMock(), **browser.page_options)
 
             async def storage_state(self, path):
                 browser.kept.append(path)
@@ -958,7 +968,7 @@ class Browser:
 async def one_look(monkeypatch, kept, box, browser, hour, notify=None):
     """keep_talking's first look, at that hour in Germany; the loop ends at its first pause."""
     monkeypatch.setattr(negotiation.chrome, "Chrome", lambda: browser)
-    monkeypatch.setattr(negotiation, "Messages", lambda page: box)
+    monkeypatch.setattr(negotiation, "Messages", box.for_page)
     monkeypatch.setattr(negotiation.asyncio, "sleep", AsyncMock(side_effect=asyncio.CancelledError))
     talking = negotiator(Claude(writes=["Ist die Uhr noch zu haben?"]), kept, notify)
     talking.ask_to_start(asked_for())
@@ -1021,9 +1031,8 @@ async def test_cannot_write_a_401_mid_look_is_said_as_an_ended_login(monkeypatch
 async def test_cannot_write_login_expiry_is_said_once_until_the_api_works_again(monkeypatch, kept):
     box, notify, browser = Box(), AsyncMock(), Browser()
     await opened(kept, box)
-    healthy = await box.conversation("c1")
     expired = LoggedOut("Kleinanzeigen answered 401")
-    box.conversation = AsyncMock(side_effect=[expired, expired, healthy, expired])
+    box.conversation = AsyncMock(wraps=box.conversation, side_effect=[expired, expired, DEFAULT, expired])
     looks = 0
 
     async def pause(seconds):
@@ -1033,7 +1042,7 @@ async def test_cannot_write_login_expiry_is_said_once_until_the_api_works_again(
             raise asyncio.CancelledError
 
     monkeypatch.setattr(negotiation.chrome, "Chrome", lambda: browser)
-    monkeypatch.setattr(negotiation, "Messages", lambda page: box)
+    monkeypatch.setattr(negotiation, "Messages", box.for_page)
     monkeypatch.setattr(negotiation.asyncio, "sleep", pause)
     with pytest.raises(asyncio.CancelledError):
         await negotiation.keep_talking(negotiator(Claude(), kept, notify), "session.json", logging.getLogger("test"),
@@ -1042,6 +1051,42 @@ async def test_cannot_write_login_expiry_is_said_once_until_the_api_works_again(
     assert notify.await_count == 2
     assert all(call.args == ("filter:42", negotiation.LOGGED_OUT) for call in notify.await_args_list)
     assert kept.get("3535834511").tries == 0
+
+
+@pytest.mark.parametrize("user_status, list_status, notices", [(503, 503, 1), (200, 503, 2), (200, 200, 2)])
+async def test_authenticated_reads_recover_the_login_even_when_contact_fails(
+        monkeypatch, kept, user_status, list_status, notices):
+    watch = asked_for()
+    watch.sent = ["Ist die Uhr noch da?"]
+    kept.save(watch)
+    evaluate = AsyncMock(side_effect=[
+        {"status": user_status, "path": "/messagebox-api/view", "text": json.dumps({"user": {"id": 123}})},
+        {"status": list_status, "path": "/messagebox/api/users/123/conversations",
+         "text": json.dumps({"conversations": []})},
+    ])
+    login = "https://www.kleinanzeigen.de/m-einloggen.html"
+    browser = Browser(evaluate=evaluate,
+                      context=SimpleNamespace(new_page=AsyncMock(side_effect=RuntimeError("offer form unavailable"))))
+    messages = browser.at
+    browser.at = login
+    notify, looks = AsyncMock(), 0
+
+    async def pause(seconds):
+        nonlocal looks
+        looks += 1
+        if looks == 3:
+            raise asyncio.CancelledError
+        browser.at = messages if looks == 1 else login
+
+    monkeypatch.setattr(negotiation.chrome, "Chrome", lambda: browser)
+    monkeypatch.setattr(negotiation.asyncio, "sleep", pause)
+    with pytest.raises(asyncio.CancelledError):
+        await negotiation.keep_talking(negotiator(None, kept, notify), "session.json", logging.getLogger("test"),
+                                       now=lambda: datetime(2026, 10, 15, 10, tzinfo=negotiation.GERMANY))
+
+    assert evaluate.await_count == (1 if user_status == 503 else 2)
+    assert notify.await_count == notices
+    assert all(call.args == ("filter:42", negotiation.LOGGED_OUT) for call in notify.await_args_list)
 
 
 @pytest.mark.parametrize("stage", ["draft", "pending", "opening", "talking"])
@@ -1058,12 +1103,11 @@ async def test_an_outage_between_login_redirects_does_not_repeat_the_notice(monk
     if stage == "draft":
         monkeypatch.setattr(negotiation, "ask", AsyncMock(side_effect=[outage, negotiation.Written(message=text)]))
     elif stage == "pending":
-        box.contact = AsyncMock(side_effect=[outage, "c1"])
+        box.contact = AsyncMock(wraps=box.contact, side_effect=[outage, DEFAULT])
     elif stage == "opening":
         box.bought = AsyncMock(side_effect=[outage, "c1"])
     else:
-        healthy = await box.conversation("c1")
-        box.conversation = AsyncMock(side_effect=[outage, healthy])
+        box.conversation = AsyncMock(wraps=box.conversation, side_effect=[outage, DEFAULT])
     login = "https://www.kleinanzeigen.de/m-einloggen.html"
     messages = browser.at
     browser.at = login
@@ -1079,7 +1123,7 @@ async def test_an_outage_between_login_redirects_does_not_repeat_the_notice(monk
         browser.at = messages if looks in (1, 3) else login
 
     monkeypatch.setattr(negotiation.chrome, "Chrome", lambda: browser)
-    monkeypatch.setattr(negotiation, "Messages", lambda page: box)
+    monkeypatch.setattr(negotiation, "Messages", box.for_page)
     monkeypatch.setattr(negotiation.asyncio, "sleep", pause)
     with pytest.raises(asyncio.CancelledError):
         await negotiation.keep_talking(negotiator(None, kept, notify), "session.json", logging.getLogger("test"),
@@ -1142,7 +1186,7 @@ async def test_a_last_message_that_did_not_leave_is_sent_at_the_next_look_not_th
         clock[0] += timedelta(seconds=seconds)
 
     monkeypatch.setattr(negotiation.chrome, "Chrome", lambda: browser)
-    monkeypatch.setattr(negotiation, "Messages", lambda page: box)
+    monkeypatch.setattr(negotiation, "Messages", box.for_page)
     monkeypatch.setattr(negotiation.asyncio, "sleep", pause)
     talking = negotiator(Claude(reads=[says(id_card=True)], writes=["Danke! Der Kaufvertrag kommt gleich, dann überweise ich [BETRAG]."]),
                          kept, notify)

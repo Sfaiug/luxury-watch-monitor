@@ -118,16 +118,22 @@ class Conversation:
 class Messages:
     """The message box of the account whose session the page holds."""
 
-    def __init__(self, page):
+    def __init__(self, page, *, on_success: Callable[[], None] = lambda: None):
         self._page = page  # a page of the site
         self._user: Optional[int] = None
+        self._on_success = on_success  # each authenticated request, even if a later step fails
+
+    async def _read(self, script, *args):
+        data = _data(await self._page.evaluate(script, *args))
+        self._on_success()
+        return data
 
     async def _call(self, method: str, path: str, body=None):
-        return _data(await self._page.evaluate(_CALL, [method, path, body]))
+        return await self._read(_CALL, [method, path, body])
 
     async def _conversations(self) -> str:
         if self._user is None:
-            self._user = _data(await self._page.evaluate(_USER))["user"]["id"]
+            self._user = (await self._read(_USER))["user"]["id"]
         return f"/messagebox/api/users/{self._user}/conversations"
 
     async def conversation(self, conversation_id: str) -> Conversation:
@@ -157,6 +163,7 @@ class Messages:
             picture = await self._page.evaluate(_PICTURE, url)
             if "status" in picture:
                 _data(picture)
+            self._on_success()
             if picture["media_type"] not in ("image/jpeg", "image/png", "image/gif", "image/webp") or not picture["data"]:
                 raise ValueError("not a picture")
             return picture
