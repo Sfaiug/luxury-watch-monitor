@@ -29,7 +29,7 @@ from pydantic import BaseModel, Field
 
 import chrome
 from agent import STEP, Reading, RedFlag, ask, decide, flagged, opening
-from kleinanzeigen_messages import Messages, Unsent, plain
+from kleinanzeigen_messages import CannotWrite, LoggedOut, Messages, Unsent, plain
 from prices_page import euros
 from scrapers.kleinanzeigen import BASE_URL
 
@@ -215,7 +215,7 @@ AMOUNT = "[BETRAG]"  # where the AI leaves the amount decided, for the code to w
 # The owner's choices for a seller who hands the watch over in person only: the button's label, and a handover in person
 CHOICES = {"pickup": ("Pick it up", True), "ship": ("Shipping only", False)}
 BUTTON = "negotiate"  # what the id of a decision's button starts with: the interactions of the agent's own buttons
-TRIES = 3  # looks at which an offer's page takes no message before the agent hands it to the owner
+TRIES = 3  # refused looks before the agent hands a conversation to the owner
 DRAFTS = 3  # drafts of one message the AI writes at most before the agent hands the negotiation to the owner
 MOST_WRITTEN = 24  # messages the agent writes before it hands the conversation to the owner: half again the longest
 # way to an agreement (a seller holding out to its last offer, then each term in turn), for questions and refusals
@@ -424,7 +424,7 @@ class Negotiation:
     status: str = "pending"  # pending, opening (its first message on its way), talking, closing (its last on its way),
     # deciding (the owner's word awaited), agreed, ended, or owner
     ends: str = ""  # what a closing negotiation ends as once its last message reached the seller: agreed or ended
-    tries: int = 0  # looks at which its offer's page took no first message
+    tries: int = 0  # consecutive refused looks; service outages do not count
     seen: int = 0  # the messages in the conversation when the agent wrote its latest, or ended it
     first: Optional[int] = None  # the messages before the agent's first; absent in older saved negotiations
     before: dict = field(default_factory=dict)  # its offer and the terms as they stood before its latest message
@@ -528,10 +528,29 @@ class Negotiator:
     async def start(self, messages):
         """Write the first message asked for, or check at the next look that it reached the seller."""
         for negotiation in self.negotiations.with_status(*STARTS):
-            try:
-                await self._open(messages, negotiation)
-            except Exception as e:
-                self.logger.warning(f"Negotiation: could not start about {negotiation.address}: {e}")
+            await self._look(messages, negotiation, self._open)
+
+    async def _look(self, messages, negotiation: Negotiation, action):
+        try:
+            await action(messages, negotiation)
+        except LoggedOut:
+            raise
+        except (CannotWrite, Unsent) as e:
+            unsent = isinstance(e, Unsent)
+            if unsent:
+                negotiation.status = "pending"
+            negotiation.tries += 1
+            if negotiation.tries >= TRIES:
+                why = "its offer page took no message" if unsent else "Kleinanzeigen refused the conversation"
+                self._hand_over(negotiation, f"{why} at {TRIES} looks: {e}")
+            else:
+                self.negotiations.save(negotiation)
+        except Exception as e:
+            self.logger.warning(f"Negotiation: could not continue about {negotiation.address}: {e}")
+        else:
+            if negotiation.tries:
+                negotiation.tries = 0
+                self.negotiations.save(negotiation)
 
     async def _open(self, messages, negotiation: Negotiation):
         if negotiation.status == "opening":
@@ -548,21 +567,13 @@ class Negotiator:
             if text is None:
                 return
             negotiation.sent[:] = [text]
+            self.negotiations.save(negotiation)
 
             def before_send(before):
                 negotiation.status, negotiation.seen = "opening", before
                 self.negotiations.save(negotiation)
 
-            try:
-                negotiation.conversation = await messages.contact(negotiation.ad_id, text, before_send=before_send)
-            except Unsent:
-                # Nothing reached the seller: asked for still, until the offer's page has refused it too often
-                negotiation.tries += 1
-                if negotiation.tries >= TRIES:
-                    return self._hand_over(negotiation, f"its offer page took no message at {TRIES} looks")
-                negotiation.status = "pending"
-                self.negotiations.save(negotiation)
-                raise
+            negotiation.conversation = await messages.contact(negotiation.ad_id, text, before_send=before_send)
         negotiation.first = negotiation.seen
         negotiation.status = "talking"
         self.negotiations.save(negotiation)
@@ -571,10 +582,7 @@ class Negotiator:
     async def follow_up(self, messages):
         """Answer every seller who wrote since the agent last did, and close what said its last word."""
         for negotiation in self._answered():
-            try:
-                await self._answer(messages, negotiation)
-            except Exception as e:
-                self.logger.warning(f"Negotiation: could not answer about {negotiation.address}: {e}")
+            await self._look(messages, negotiation, self._answer)
 
     async def _answer(self, messages, negotiation: Negotiation):
         talk = await messages.conversation(negotiation.conversation)
@@ -801,14 +809,16 @@ async def keep_talking(negotiator: Negotiator, session: str, logger, now=lambda:
                         page = await window.new_page()
                         await page.goto(f"{BASE_URL}/m-nachrichten.html", wait_until="domcontentloaded")
                         if "einloggen" in page.url or "login." in page.url:
-                            if busy and not logged_out:  # said once, where a negotiation waits, until it works again
-                                await negotiator.notify(busy[0].channel, LOGGED_OUT)
-                            logged_out = bool(busy)
-                            raise RuntimeError("the owner's Kleinanzeigen session has ended")
-                        logged_out = False
+                            raise LoggedOut("the owner's Kleinanzeigen session has ended")
                         messages = Messages(page)
                         await negotiator.start(messages)
                         await negotiator.follow_up(messages)
+                        logged_out = False
+                    except LoggedOut:
+                        if busy and not logged_out:  # said once, where a negotiation waits, until it works again
+                            await negotiator.notify(busy[0].channel, LOGGED_OUT)
+                        logged_out = bool(busy)
+                        raise
                     finally:
                         await window.storage_state(path=session)
             except Exception as e:
