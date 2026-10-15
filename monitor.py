@@ -105,6 +105,9 @@ class WatchMonitor:
 
     async def initialize(self):
         """Initialize async components."""
+        # Load history before starting services so cleanup can safely save it.
+        self.seen_items = self.persistence.load_seen_items()
+
         # Create aiohttp session with connection pooling limits
         connector = aiohttp.TCPConnector(
             limit=20,  # Total connection pool size
@@ -187,9 +190,6 @@ class WatchMonitor:
                 self._negotiate_pressed if self.negotiator else None,
             )
             await self.discord_interaction_server.start()
-
-        # Load seen items
-        self.seen_items = self.persistence.load_seen_items()
 
         # Initialize scrapers
         for site_key, site_config in SITE_CONFIGS.items():
