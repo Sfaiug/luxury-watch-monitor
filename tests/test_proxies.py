@@ -8,7 +8,7 @@ from unittest.mock import Mock
 
 import pytest
 from curl_cffi.requests import AsyncSession
-from curl_cffi.requests.exceptions import HTTPError
+from curl_cffi.requests.exceptions import HTTPError, Timeout
 
 import proxies
 from utils import fetch_page
@@ -99,6 +99,32 @@ async def test_a_refused_request_is_made_again_through_a_proxy(monkeypatch, mock
         ("tropicalwatch.com", "http://10.0.0.1:1111"),
         ("tropicalwatch.com", "http://10.0.0.2:2222"),
     ]
+
+
+@pytest.mark.parametrize("unreachable", [True, False])
+async def test_an_unreachable_site_is_asked_through_a_proxy_from_its_next_page_on(monkeypatch, mock_logger, unreachable):
+    use(monkeypatch, ONE, TWO)
+    web = served(monkeypatch, Web(refuses=set()))
+    get = web.get
+
+    async def dropped(url, timeout=None, proxy=None, proxy_auth=None):
+        if proxy is None and "rueschenbeck" in url:
+            web.requests.append(("www.rueschenbeck.de", None))
+            if unreachable:
+                raise Timeout("Failed to perform, curl: (28) Connection timed out after 15003 milliseconds.")
+            raise HTTPError("HTTP Error 500")
+        return await get(url, timeout, proxy, proxy_auth)
+
+    web.get = dropped
+
+    assert await fetch_page("https://www.rueschenbeck.de/vintage-certified-pre-owned", mock_logger) is None
+    assert {proxy for _, proxy in web.requests} == {None}
+    web.requests.clear()
+    page = await fetch_page("https://www.rueschenbeck.de/vintage-certified-pre-owned", mock_logger)
+
+    # A site that answers, if with an error, is not refusing the server
+    assert page == ("page of www.rueschenbeck.de" if unreachable else None)
+    assert web.requests[0] == ("www.rueschenbeck.de", "http://10.0.0.2:2222" if unreachable else None)
 
 
 async def test_a_site_that_answers_is_asked_directly(monkeypatch):
