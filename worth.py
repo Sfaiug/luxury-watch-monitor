@@ -7,7 +7,7 @@ from datetime import date, timedelta
 from decimal import ROUND_FLOOR, Decimal
 from typing import Optional, Tuple
 
-from chrono24 import FULL_SET
+from chrono24 import FULL_SET, USED
 from config import APP_CONFIG
 from prices import Prices
 
@@ -29,15 +29,28 @@ def worth(prices: Prices, reference: str, kind: str, brand: Optional[str] = None
     """What this kind of the watch is worth: the lower of what the market asks and what the business sold it for.
 
     The market: the price a quarter of the Chrono24 offers of this kind inside
-    the EU ask less than, from five offers up. A search reads the cheapest 120:
+    the EU ask less than, from five offers up. Prices below half the middle of
+    those read count toward neither the quarter nor the five offers needed.
+    A search reads the cheapest 120:
     for a watch offered more than 480 times the dearest of those stands in for
     the quarter, which only lowers it. The business: the middle of its own
-    sales of the watch within the last year.
+    sales of the watch within the last year. A full set is worth at least the
+    same watch used.
     """
     found, asked = prices.market(reference, kind)
+    if asked:
+        cutoff = statistics.median(asked) / 2
+        kept = [price for price in asked if price >= cutoff]
+        found -= len(asked) - len(kept)
+        asked = kept
     market = Decimal(str(asked[min(math.ceil(found / 4), len(asked)) - 1])) if found >= FEWEST and asked else None
     known = [value for value in (market, ours(prices, reference, kind, brand=brand)[1]) if value is not None]
-    return min(known) if known else None
+    value = min(known) if known else None
+    if kind == FULL_SET and value is not None:
+        used = worth(prices, reference, USED, brand)
+        if used is not None:
+            value = max(value, used)
+    return value
 
 
 def least_profit(worth: Decimal) -> Decimal:
