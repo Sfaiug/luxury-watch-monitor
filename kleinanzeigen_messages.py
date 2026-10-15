@@ -190,7 +190,12 @@ class Messages:
                 await form.add_init_script(f"""window.addEventListener('pointerdown', event => {{
                     if (event.target.closest({submit!r})) window.__watchMonitorContactPressed = true;
                 }}, true);""")
-                await form.goto(offer_url(ad_id), wait_until="domcontentloaded")
+                answer = await form.goto(offer_url(ad_id), wait_until="domcontentloaded")
+            except Exception as e:
+                raise Unsent(f"the contact form of {ad_id} was not sent: {e}") from e
+            if answer is not None and answer.status >= 400:
+                _data({"status": answer.status, "path": offer_url(ad_id), "text": await answer.text()})
+            try:
                 await form.fill("#viewad-contact-message", text)
                 await form.evaluate("window.__watchMonitorContactPressed = false")
             except Exception as e:
