@@ -1,6 +1,7 @@
 """The AI sellers the agent is tried against, and the conversation with one as the agent's message box."""
 
 import asyncio
+import base64
 import json
 
 import httpx2
@@ -30,6 +31,17 @@ def read(**said):
 
 def test_every_seller_is_briefed_to_an_end_and_the_owner_s_word():
     assert all(seller.ends in ("agreed", "ended") and seller.choice in CHOICES for seller in simulating.SELLERS.values())
+
+
+async def test_a_simulated_seller_supplies_a_specimen_picture_for_the_visual_reading():
+    box = simulating.Box()
+    message = await simulating.seller_writes(Claude([{"message": "Hier mein Ausweis.", "picture": True}]),
+                                           simulating.SELLERS["sold"], [])
+
+    assert len(message.attachments) == 1
+    picture = await box.picture(message.attachments[0])
+    assert picture["media_type"] == "image/png"
+    assert base64.b64decode(picture["data"]) == simulating.ID_CARD.read_bytes()
 
 
 def test_the_agent_talks_with_the_ai_seller_until_it_ends_and_the_end_is_held_to_the_brief():

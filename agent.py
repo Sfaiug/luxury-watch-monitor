@@ -6,6 +6,7 @@ pay; and the agent decides, in code, whether the seller is worth contacting
 and with what opening offer. Each verdict is kept in deals.sqlite3.
 """
 
+import logging
 import math
 import sqlite3
 from dataclasses import dataclass, replace
@@ -105,6 +106,15 @@ def offer_page(html: str) -> Offer:
 
 
 Form = TypeVar("Form", bound=BaseModel)
+
+
+def _sdk_diagnostics(record: logging.LogRecord) -> bool:
+    """Keep SDK diagnostics without request bodies or tracebacks holding their pictures."""
+    record.exc_info = record.exc_text = None
+    return not record.msg.startswith("Request options:")
+
+
+logging.getLogger("anthropic._base_client").addFilter(_sdk_diagnostics)
 
 
 async def ask(client, instructions: str, content: list, form: Type[Form]) -> Optional[Form]:

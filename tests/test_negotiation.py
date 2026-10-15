@@ -3,7 +3,7 @@
 import asyncio
 import json
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from decimal import Decimal
 from types import SimpleNamespace
@@ -258,7 +258,7 @@ def test_a_term_refused_before_its_turn_waits_for_it():
 def test_a_term_the_seller_agreed_and_then_refuses_is_open_again():
     terms = Terms(price=OPENING, bank_transfer=True, delivery="shipping", contract=True, id_card=True)
 
-    assert move(LIMIT, OPENING, terms, says(bank_transfer=False), False) == Move(
+    assert move(LIMIT, OPENING, terms, says(bank_transfer=False, id_card=True), True) == Move(
         "settle", None, "next: payment by bank transfer", ["bank transfer"])
     assert list(terms.open()) == ["payment by bank transfer"]
 
@@ -288,18 +288,18 @@ def test_before_its_first_offer_the_agent_opens_with_it_whatever_the_seller_asks
 def test_a_seller_lowering_the_agreed_price_keeps_the_lower_price(accepts_offer, bank_transfer):
     terms = Terms(price=8300, bank_transfer=bank_transfer, delivery="shipping", contract=True, id_card=True)
 
-    answer = move(8366, 8100, terms, says(price=8250, accepts_offer=accepts_offer), False)
+    answer = move(8366, 8100, terms, says(price=8250, accepts_offer=accepts_offer, id_card=True), True)
 
     assert terms.price == 8250
     assert answer == (Move("done", 8250, "all agreed") if bank_transfer else
                       Move("settle", None, "next: payment by bank transfer"))
-    assert move(8366, 8100, terms, says(bank_transfer=True), False) == Move("done", 8250, "all agreed")
+    assert move(8366, 8100, terms, says(bank_transfer=True, id_card=True), True) == Move("done", 8250, "all agreed")
 
 
 def test_above_asking_a_seller_raising_the_agreed_price_cannot_raise_the_ceiling():
     terms = Terms(price=OPENING, bank_transfer=True, delivery="shipping", contract=True, id_card=True)
 
-    assert move(LIMIT, OPENING, terms, says(price=OPENING), False).kind == "done"  # the agreed price named again
+    assert move(LIMIT, OPENING, terms, says(price=OPENING, id_card=True), True).kind == "done"  # the agreed price named again
     assert move(LIMIT, 7000, terms, says(price=9000), False).kind == "farewell"
     assert terms.price is None
 
@@ -404,7 +404,7 @@ def test_no_digit_in_a_message_with_no_amount_decided(written, sent):
 class Said:
     outbound: bool
     text: str
-    attachments: int = 0
+    attachments: list = field(default_factory=list)
 
 
 class Box:
@@ -431,7 +431,10 @@ class Box:
         self.said.append(Said(True, text))
 
     def seller(self, text, pictures=0):
-        self.said.append(Said(False, text, pictures))
+        self.said.append(Said(False, text, [f"https://chat/picture-{len(self.said)}-{p}" for p in range(pictures)]))
+
+    async def picture(self, url):
+        return {"media_type": "image/jpeg", "data": "cGljdHVyZQ=="}
 
 
 class Claude(AsyncAnthropic):
@@ -953,6 +956,139 @@ async def test_the_owner_hears_once_all_is_agreed_and_the_id_card_shown(kept):
     assert kept.get("3535834511").status == "agreed"
     channel, text = notify.await_args.args[:2]
     assert channel == "filter:42" and "7.550 €" in text and "shipping" in text and "Kaufvertrag" in text
+
+
+@pytest.mark.parametrize("pictures, id_card, previously_seen, buyer_picture", [
+    (1, None, False, False),  # a watch picture captioned as an ID is still a watch picture
+    (0, True, False, False),  # a promise or an unsupported reading cannot substitute for a picture
+    (0, True, False, True),  # a picture from the buyer cannot count as the seller's ID
+    (0, None, True, False),  # an old, text-only confirmation needs visual evidence too
+    (1, None, True, False),
+])
+async def test_id_card_seen_requires_visual_evidence_from_the_seller(
+        kept, pictures, id_card, previously_seen, buyer_picture):
+    box, notify = Box(), AsyncMock()
+    await opened(kept, box)
+    ready = kept.get("3535834511")
+    ready.terms = Terms(price=7550, bank_transfer=True, delivery="shipping", contract=True, id_card=previously_seen)
+    kept.save(ready)
+    if buyer_picture:
+        box.said[0].attachments = ["https://chat/buyer-picture"]
+    box.seller("Hier mein Ausweis.", pictures=pictures)
+    box.picture = AsyncMock(wraps=box.picture)
+    claude = Claude(reads=[says(id_card=id_card)], writes=["Schickst du mir bitte ein Foto deines Ausweises?"])
+    talking = negotiator(claude, kept, notify)
+
+    await talking.follow_up(box)
+    await talking.tell_owner()
+
+    assert kept.get(ready.ad_id).status == "talking"
+    assert not kept.get(ready.ad_id).terms.id_card
+    assert notify.await_count == 0
+    assert box.picture.await_count == pictures
+    request = json.loads(claude.requests[0])
+    assert "visibly shows an ID card" in request["system"]
+    assert len([block for block in request["messages"][0]["content"] if block["type"] == "image"]) == pictures
+
+
+async def test_id_card_seen_before_it_was_asked_for_counts_and_only_the_chat_link_is_kept(kept):
+    box, notify = Box(), AsyncMock()
+    await opened(kept, box)
+    # The seller's first reply contained uncaptioned pictures, before even the buyer's first price offer.
+    urls = ["https://chat/watch-picture", "https://chat/id-picture"]
+    box.said[1].text, box.said[1].attachments = "", urls
+    sources = [{"media_type": "image/png", "data": "d2F0Y2g="},
+               {"media_type": "image/jpeg", "data": "SUQgY2FyZA=="}]
+    box.picture = AsyncMock(side_effect=lambda url: sources[urls.index(url)])
+    box.seller("7.550 € passt. Überweisung und versicherter Versand auch.")
+    claude = Claude(reads=[says(accepts_offer=True, bank_transfer=True, delivery="shipping", id_card=True),
+                          says(contract=True, id_card=True)],
+                    writes=["[BETRAG] passt. Machen wir einen Kaufvertrag?",
+                            "Danke! Der Kaufvertrag kommt gleich, dann überweise ich [BETRAG]."])
+    talking = negotiator(claude, kept, notify)
+
+    await talking.follow_up(box)
+    assert kept.get("3535834511").terms.id_card
+    box.seller("Ja, Kaufvertrag passt.")  # no new picture since the buyer wrote
+    await talking.follow_up(box)
+    await talking.tell_owner()
+
+    assert kept.get("3535834511").status == "agreed"
+    assert notify.await_count == 1
+    assert "https://www.kleinanzeigen.de/m-nachrichten.html?conversationId=c1" in notify.await_args.args[1]
+    requests = [json.loads(request) for request in claude.requests]
+    for request in (requests[0], requests[2]):
+        assert request["messages"][0]["content"][1:] == [
+            {"type": "image", "source": {"type": "base64", **source}} for source in sources
+        ]
+    for request in (requests[1], requests[3]):
+        assert all(block["type"] == "text" for block in request["messages"][0]["content"])
+    stored = kept._db.execute("SELECT kept FROM negotiations").fetchone()[0]
+    for private in urls + [source["data"] for source in sources]:
+        assert private not in stored
+        assert all(private not in json.dumps(request) for request in (requests[1], requests[3]))
+        assert private not in notify.await_args.args[1]
+
+
+async def test_id_card_seen_unreadable_pictures_cannot_complete_the_purchase(kept):
+    box, notify = Box(), AsyncMock()
+    await opened(kept, box)
+    ready = kept.get("3535834511")
+    ready.terms = Terms(price=7550, bank_transfer=True, delivery="shipping", contract=True)
+    kept.save(ready)
+    box.seller("Hier mein Ausweis.", pictures=1)
+    box.picture = AsyncMock(side_effect=RuntimeError("Could not read a chat picture"))
+    claude = Claude()
+    talking = negotiator(claude, kept, notify)
+
+    await talking.follow_up(box)
+    await talking.tell_owner()
+
+    assert claude.requests == [] and notify.await_count == 0
+    assert kept.get(ready.ad_id).status == "talking" and not kept.get(ready.ad_id).terms.id_card
+    assert box.said[-1].text == "Hier mein Ausweis."
+
+
+@pytest.mark.parametrize("retry", ["none", "overloaded", "timeout", "connection"])
+@pytest.mark.parametrize("sdk_logger", ["anthropic", "anthropic._base_client"])
+async def test_id_card_seen_picture_is_sent_without_entering_sdk_debug_logs(kept, caplog, monkeypatch, retry, sdk_logger):
+    box = Box()
+    await opened(kept, box)
+    box.seller("Schon verkauft.", pictures=1)
+    picture = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9Zl1sAAAAASUVORK5CYII="
+    box.picture = AsyncMock(return_value={"media_type": "image/png", "data": picture})
+    attempts = []
+
+    def respond(request):
+        content = json.loads(request.content)["messages"][0]["content"]
+        assert content[1]["source"]["data"] == picture
+        attempts.append(request)
+        if len(attempts) == 1:
+            if retry == "overloaded":
+                return httpx2.Response(503, json={"error": {"type": "overloaded_error", "message": "Retry"}})
+            if retry == "timeout":
+                raise httpx2.ReadTimeout("timed out", request=request)
+            if retry == "connection":
+                raise httpx2.ConnectError("connection failed", request=request)
+        return httpx2.Response(200, json={
+            "id": "m", "type": "message", "role": "assistant", "model": "m", "stop_reason": "end_turn",
+            "usage": {"input_tokens": 1, "output_tokens": 1},
+            "content": [{"type": "text", "text": says(ended=True).model_dump_json()}],
+        })
+
+    caplog.set_level(logging.DEBUG, logger=sdk_logger)
+    async with AsyncAnthropic(api_key="test", max_retries=1,
+                              http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(respond))) as client:
+        monkeypatch.setattr(client, "_calculate_retry_timeout", lambda *args: 0)
+        await negotiator(client, kept).follow_up(box)
+
+    assert len(attempts) == (1 if retry == "none" else 2)
+    assert kept.get("3535834511").status == "ended"
+    assert "Sending HTTP Request" in caplog.text and "HTTP Response" in caplog.text
+    assert picture not in caplog.text
+    assert all(picture not in json.dumps(record.args, default=str) for record in caplog.records)
+    # SDK exceptions and their traceback frames hold the request, including its pictures.
+    assert all(record.exc_info is None and record.exc_text is None for record in caplog.records)
 
 
 def instructed(claude):

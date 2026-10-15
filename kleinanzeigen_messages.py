@@ -15,10 +15,11 @@ from playwright.async_api import TimeoutError
 from scrapers.kleinanzeigen import offer_url
 
 GATEWAY = "https://gateway.kleinanzeigen.de"
+_TOKEN = "(await fetch('/m-access-token.json', {credentials: 'include'})).headers.get('authorization')"
 
 # The message box's own call (bffstatic/messagebox-web, 11 Oct 2026): a token from the session, then the gateway
 _CALL = """async ([method, path, body]) => {
-  const token = (await fetch('/m-access-token.json', {credentials: 'include'})).headers.get('authorization');
+  const token = %s;
   const headers = {Accept: 'application/json', Authorization: token, 'X-ECG-USER-AGENT': 'messagebox-1'};
   if (body !== null) headers['Content-Type'] = 'application/json';
   const answer = await fetch('%s' + path, {
@@ -26,8 +27,25 @@ _CALL = """async ([method, path, body]) => {
   });
   const text = await answer.text();
   return {status: answer.status, data: text ? JSON.parse(text) : null};
-}""" % GATEWAY
+}""" % (_TOKEN, GATEWAY)
 _USER = "async () => (await (await fetch('/messagebox-api/view', {credentials: 'include'})).json()).user.id"
+
+# The message box reads attachments[].gatewayUrl with the same authorization as its API calls.
+# Read into memory only: no browser cache, local storage or file containing the picture.
+_PICTURE = """async url => {
+  const token = %s;
+  const answer = await fetch(url, {
+    headers: {Accept: 'image/*', Authorization: token}, mode: 'cors', credentials: 'include', cache: 'no-store',
+  });
+  if (!answer.ok) throw new Error('Could not read a chat picture');
+  const blob = await answer.blob();
+  return await new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve({media_type: blob.type, data: reader.result.split(',')[1]});
+    reader.onerror = reject;
+    reader.readAsDataURL(blob);
+  });
+}""" % _TOKEN
 
 
 def plain(text: str) -> str:
@@ -47,7 +65,7 @@ class Unsent(Exception):
 class Message:
     outbound: bool  # written from the owner's account
     text: str
-    attachments: int  # pictures sent with it
+    attachments: List[str]  # gateway URLs, held only for this look at the conversation
     received: str
 
 
@@ -92,12 +110,23 @@ class Messages:
                     text=((message.get("unichatMessage") or {}).get("payload", {}).get("content") or {}).get("text")
                     or message.get("textShort")
                     or "",
-                    attachments=len(message.get("attachments") or []),
+                    attachments=[attachment["gatewayUrl"] for attachment in message.get("attachments") or []],
                     received=message.get("receivedDate") or "",
                 )
                 for message in data.get("messages", [])
             ],
         )
+
+    async def picture(self, url: str) -> dict:
+        """A chat picture, as media type and base64 data, read through the owner's session without keeping it."""
+        try:
+            picture = await self._page.evaluate(_PICTURE, url)
+            if picture["media_type"] not in ("image/jpeg", "image/png", "image/gif", "image/webp") or not picture["data"]:
+                raise ValueError("not a picture")
+            return picture
+        except Exception:
+            # Neither a private attachment URL nor its contents belongs in a log.
+            raise RuntimeError("Could not read a chat picture") from None
 
     async def bought(self, ad_id: str) -> Optional[str]:
         """The conversation the account has as buyer about an offer, if it has one."""

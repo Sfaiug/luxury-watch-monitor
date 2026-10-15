@@ -3,7 +3,7 @@
 import asyncio
 import copy
 from types import SimpleNamespace
-from unittest.mock import Mock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 from playwright.async_api import TimeoutError
@@ -27,7 +27,10 @@ def conversation(*messages, ad_id="3535834511"):
                 "boundness": boundness,
                 "type": "MESSAGE",
                 "receivedDate": f"2026-10-11T09:0{n}:00.000+0200",
-                "attachments": [{"title": "photo.jpg"}] * pictures,
+                "attachments": [
+                    {"title": "photo.jpg", "gatewayUrl": f"https://gateway.kleinanzeigen.de/pictures/{n}-{p}"}
+                    for p in range(pictures)
+                ],
                 "messageId": f"m{n}",
                 "unichatMessage": {"authorId": "1", "payload": {"type": "chat/text-message", "content": {"text": text}}},
             }
@@ -121,9 +124,38 @@ async def test_a_conversation_reads_as_it_was_written():
 
     assert (read.id, read.ad_id, read.seller, read.buyer) == ("abc:1:xyz", "3535834511", "Tim", "Owner")
     assert [(m.outbound, m.text, m.attachments) for m in read.messages] == [
-        (True, "Hallo, wäre bei 9.000 € dabei.", 0),
-        (False, "Gern, hier mein Ausweis.", 1),  # whole, though its short text is cut
+        (True, "Hallo, wäre bei 9.000 € dabei.", []),
+        (False, "Gern, hier mein Ausweis.", ["https://gateway.kleinanzeigen.de/pictures/1-0"]),  # whole text
     ]
+
+
+async def test_id_card_seen_picture_is_read_only_on_demand_through_the_session():
+    site = Site([conversation(("INBOUND", "Hier.", 2))])
+    box = Messages(site)
+    read = await box.conversation("abc:1:xyz")
+    picture = {"media_type": "image/jpeg", "data": "cGljdHVyZQ=="}
+    site.evaluate = AsyncMock(return_value=picture)
+
+    assert len(read.messages[0].attachments) == 2
+    assert await box.picture(read.messages[0].attachments[0]) == picture
+
+    script, url = site.evaluate.await_args.args
+    assert url == "https://gateway.kleinanzeigen.de/pictures/0-0"
+    assert "Authorization: token" in script and "/m-access-token.json" in script
+    assert "cache: 'no-store'" in script
+    assert vars(box) == {"_page": site, "_user": USER}
+
+
+@pytest.mark.parametrize("answer", [
+    RuntimeError("private attachment URL and contents"),
+    {"media_type": "text/html", "data": "not a picture"},
+    {"media_type": "image/png", "data": ""},
+])
+async def test_id_card_seen_unreadable_picture_does_not_leak_into_errors(answer):
+    page = SimpleNamespace(evaluate=AsyncMock(**({"side_effect": answer} if isinstance(answer, Exception)
+                                               else {"return_value": answer})))
+    with pytest.raises(RuntimeError, match="^Could not read a chat picture$"):
+        await Messages(page).picture("private attachment URL")
 
 
 async def test_a_reply_counts_as_sent_once_its_conversation_shows_it():
