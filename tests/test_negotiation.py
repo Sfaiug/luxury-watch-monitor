@@ -4,7 +4,8 @@ import asyncio
 import html
 import json
 import logging
-from dataclasses import dataclass, field
+import sqlite3
+from dataclasses import asdict, dataclass, field
 from datetime import datetime, timedelta
 from decimal import Decimal
 from types import SimpleNamespace
@@ -2632,3 +2633,57 @@ async def test_after_farewell_a_seller_saying_ok_is_not_answered_and_one_who_mov
     box.seller(moving)
     await negotiator(Claude(reads=[said], writes=[answer.replace("8.600 €", "[BETRAG]")]), kept).follow_up(box)
     assert kept.get("3535834511").status == "talking" and box.said[-1].text == answer
+
+
+async def test_the_talk_loop_keeps_running_when_a_pass_or_telling_the_owner_fails(monkeypatch, kept, caplog):
+    talking = negotiator(Claude(), kept)
+    talking.waiting = Mock(side_effect=[TypeError("Negotiation.__init__() got an unexpected keyword argument"), []])
+    talking.tell_owner = AsyncMock(side_effect=sqlite3.OperationalError("database is locked"))
+    pauses = AsyncMock(side_effect=[None, asyncio.CancelledError])
+    monkeypatch.setattr(negotiation.asyncio, "sleep", pauses)
+
+    with pytest.raises(asyncio.CancelledError):
+        await negotiation.keep_talking(talking, "session.json", logging.getLogger("test"),
+                                       now=lambda: datetime(2026, 10, 11, 23, 0, tzinfo=negotiation.GERMANY))
+
+    assert talking.waiting.call_count == talking.tell_owner.await_count == pauses.await_count == 2
+    assert "unexpected keyword argument" in caplog.text and "database is locked" in caplog.text
+
+
+async def test_a_negotiation_kept_by_another_version_keeps_running(kept):
+    current = asked_for()
+    kept.save(current)
+    stored = {**asdict(current), "gone": 1, "terms": {**asdict(current.terms), "gone_too": True}}
+    with kept._db:
+        kept._db.execute("UPDATE negotiations SET kept = ?", (json.dumps(stored),))
+
+    assert kept.get(current.ad_id) == current
+    assert negotiator(Claude(), kept).waiting() == [current]
+
+
+async def test_chrome_keeps_running_when_its_screen_never_starts(monkeypatch):
+    never = asyncio.Event()
+    screen = SimpleNamespace(stdout=SimpleNamespace(readline=never.wait), terminate=Mock(), wait=AsyncMock())
+    monkeypatch.setattr(negotiation.chrome.asyncio, "create_subprocess_exec", AsyncMock(return_value=screen))
+    monkeypatch.setattr(negotiation.chrome, "START_LIMIT", 0.01)
+
+    with pytest.raises(asyncio.TimeoutError):
+        async with negotiation.chrome.Chrome():
+            pass
+
+    screen.terminate.assert_called_once()
+
+
+async def test_a_call_to_the_site_that_hangs_keeps_running(monkeypatch):
+    never = asyncio.Event()
+
+    async def hangs(*args):
+        await never.wait()
+
+    monkeypatch.setattr("kleinanzeigen_messages.CALL_LIMIT", 0.01)
+    box = Messages(SimpleNamespace(evaluate=hangs))
+
+    with pytest.raises(asyncio.TimeoutError):
+        await box.conversation("c1")
+    with pytest.raises(RuntimeError, match="chat picture"):
+        await box.picture("https://chat/picture")

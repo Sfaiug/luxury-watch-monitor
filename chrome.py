@@ -5,6 +5,8 @@ import asyncio
 import contextlib
 import os
 
+START_LIMIT = 30  # seconds the virtual screen may take to start at most, many times what it takes
+
 
 class Chrome:
     """One Chrome on a screen of its own, both closed with it; each window a fresh one."""
@@ -20,7 +22,7 @@ class Chrome:
             )
             self._open.push_async_callback(screen.wait)
             self._open.callback(screen.terminate)
-            display = ":" + (await screen.stdout.readline()).decode().strip()
+            display = ":" + (await asyncio.wait_for(screen.stdout.readline(), START_LIMIT)).decode().strip()
             playwright = await self._open.enter_async_context(async_playwright())
             self._browser = await playwright.chromium.launch(
                 channel="chrome", headless=False, env={**os.environ, "DISPLAY": display}
