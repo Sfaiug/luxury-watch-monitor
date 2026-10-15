@@ -187,11 +187,9 @@ class PersistenceManager:
             # Load existing history
             history = self.load_session_history()
 
-            # Trim to enforce strict limits BEFORE appending (prevents memory spikes)
-            history = self.trim_session_history(history)
-
             # Add new session
             history.append(session.to_dict())
+            history = self.trim_session_history(history)
             
             # Create directory if needed
             self.session_history_file.parent.mkdir(parents=True, exist_ok=True)
@@ -288,8 +286,6 @@ class PersistenceManager:
         if not history:
             return []
         
-        original_count = len(history)
-        
         # First, apply time-based retention if configured
         if APP_CONFIG.session_history_retention_days > 0:
             cutoff_date = datetime.now() - timedelta(days=APP_CONFIG.session_history_retention_days)
@@ -303,15 +299,6 @@ class PersistenceManager:
         if len(history) > max_entries:
             # Keep only the most recent entries
             history = history[-max_entries:]
-            self.logger.warning(
-                f"Session history exceeded limit: trimmed to {max_entries} most recent entries"
-            )
-        
-        # Log if any trimming occurred
-        if len(history) < original_count:
-            self.logger.info(
-                f"Trimmed session history: {original_count} -> {len(history)} entries"
-            )
         
         return history
     
