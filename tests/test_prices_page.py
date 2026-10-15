@@ -1,5 +1,6 @@
 """The owner's page of watch prices: what each watch is worth, the most to pay, and the owner's own buy price."""
 
+import asyncio
 from datetime import date, datetime
 from decimal import Decimal
 from pathlib import Path
@@ -72,6 +73,53 @@ async def test_each_watch_shows_its_market_worth_and_most_to_pay(client):
     patek = page[page.index('id="57111A010"'):].split("</tr>")[0]
     assert "Patek Philippe" in patek
     assert "not searched yet" in patek
+
+
+async def test_opening_the_prices_page_holds_up_nothing():
+    prices = Prices(":memory:")
+    # Today's number of references and trades, with both kinds priced for every watch.
+    for n in range(1238):
+        offers = [
+            WatchData(title="Watch", url=f"https://www.chrono24.de/{n}-{i}", site_name="Chrono24",
+                      site_key="chrono24", brand="Rolex", reference=f"REF{n}",
+                      price=Decimal(10000 + i * 100), scraped_at=SEARCHED)
+            for i in range(5)
+        ]
+        for kind in (USED, FULL_SET):
+            prices.searched(f"REF{n}", kind, len(offers), offers, SEARCHED)
+    prices.traded([
+        Trade(f"REF{n % 1238}", bool(n % 2), date.today(), Decimal("8000"),
+              date.today(), Decimal("10000"), "Rolex")
+        for n in range(2329)
+    ])
+
+    app = web.Application()
+    PricesPage(prices, SECRET).add_to(app)
+    loop = asyncio.get_running_loop()
+    ticks = []
+    finished = asyncio.Event()
+
+    async def other_work():
+        while not finished.is_set():
+            ticks.append(loop.time())
+            await asyncio.sleep(0.01)
+
+    async with TestClient(TestServer(app)) as client:
+        working = asyncio.create_task(other_work())
+        started = loop.time()
+        try:
+            response = await client.get(PATH, params={"key": key(SECRET)})
+            page = await response.text()
+        finally:
+            finished.set()
+            await working
+            ticks.append(loop.time())
+            prices.close()
+
+    assert response.status == 200
+    assert page.count('<tr id="') == 1238
+    assert max(b - a for a, b in zip(ticks, ticks[1:])) < 0.1, "the page held up other work"
+    assert ticks[-1] - started < 1.5, "the page took more than about a second"
 
 
 async def test_the_owner_s_price_is_the_limit_in_place_of_the_worked_out_one(client, prices):

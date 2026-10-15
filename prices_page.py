@@ -2,6 +2,7 @@
 inside the EU, used and as a full set, the worth and the most to pay worked out from each, and the owner's
 own buy price, set here."""
 
+import asyncio
 import hashlib
 import hmac
 import json
@@ -79,6 +80,7 @@ class PricesPage:
 
         rows = []
         for reference, brand, model, searched in self.prices.references():
+            await asyncio.sleep(0)  # Let Discord interactions and scans run between watches.
             own = self.prices.buy_price(reference)
             market = "not searched yet"
             if searched:
