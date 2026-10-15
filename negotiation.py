@@ -679,6 +679,7 @@ class Negotiator:
         if now < datetime.fromisoformat(negotiation.due):
             return
         negotiation.due = ""
+        farewell = negotiation.why if negotiation.status == "ended" and negotiation.ends == "ended" else None
         if negotiation.status == "ended":
             # The seller wrote again after the agent let them go: they are read afresh
             negotiation.status, negotiation.ends, negotiation.why = "talking", "", ""
@@ -710,6 +711,12 @@ class Negotiator:
         answer = move(negotiation.limit, negotiation.offered, terms, says,
                       bool(pictures),
                       not negotiation.opened, asking=negotiation.asking)
+        if farewell is not None and not (terms.price is not None and negotiation.terms.price is None
+                                         or len(terms.open()) < len(negotiation.terms.open())):
+            # After its farewell the agent writes again only to a seller who comes towards it, a price within its
+            # limit, its offer accepted or a term they refused agreed to: it repeats nothing (owner rule, 12 Oct 2026)
+            negotiation.seen, negotiation.ends = len(said), "ended"
+            return self._end(negotiation, "ended", farewell, "")
         # A seller's price stays known if drafting fails; the reply's terms remain tentative.
         negotiation.terms.lowest = terms.lowest
         self.negotiations.save(negotiation)
