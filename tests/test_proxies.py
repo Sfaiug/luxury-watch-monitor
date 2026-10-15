@@ -8,7 +8,7 @@ from unittest.mock import Mock
 
 import pytest
 from curl_cffi.requests import AsyncSession
-from curl_cffi.requests.exceptions import HTTPError, Timeout
+from curl_cffi.requests.exceptions import ConnectionError as CannotConnect, HTTPError, Timeout
 
 import proxies
 from utils import fetch_page
@@ -101,30 +101,47 @@ async def test_a_refused_request_is_made_again_through_a_proxy(monkeypatch, mock
     ]
 
 
-@pytest.mark.parametrize("answered", [False, True])
-async def test_an_unreachable_site_is_asked_through_a_proxy_from_its_next_page_on(monkeypatch, mock_logger, answered):
+def dropped(monkeypatch, failure, answers_first=False):
+    """Rüschenbeck as the live server meets it since 15 Oct 2026: asked directly, every try fails with failure, the
+    first one after an HTTP 500 if answers_first; through a proxy it answers."""
     use(monkeypatch, ONE, TWO)
     web = served(monkeypatch, Web(refuses=set()))
     get = web.get
 
-    async def dropped(url, timeout=None, proxy=None, proxy_auth=None):
-        if proxy is None and "rueschenbeck" in url:
-            web.requests.append(("www.rueschenbeck.de", None))
-            if answered and len(web.requests) == 1:
-                return Mock(status_code=500, raise_for_status=Mock(side_effect=HTTPError("HTTP Error 500")))
-            raise Timeout("Failed to perform, curl: (28) Connection timed out after 15003 milliseconds.")
-        return await get(url, timeout, proxy, proxy_auth)
+    async def direct(url, timeout=None, proxy=None, proxy_auth=None):
+        if proxy is not None:
+            return await get(url, timeout, proxy, proxy_auth)
+        web.requests.append(("www.rueschenbeck.de", None))
+        if answers_first and len(web.requests) == 1:
+            return Mock(status_code=500, raise_for_status=Mock(side_effect=HTTPError("HTTP Error 500")))
+        raise failure("Failed to perform, curl: (28) Connection timed out after 15003 milliseconds.")
 
-    web.get = dropped
+    web.get = direct
+    return web
+
+
+@pytest.mark.parametrize("failure", [CannotConnect, Timeout])
+async def test_an_unreachable_site_is_asked_through_a_proxy_from_its_next_page_on(monkeypatch, mock_logger, failure):
+    web = dropped(monkeypatch, failure)
 
     assert await fetch_page("https://www.rueschenbeck.de/vintage-certified-pre-owned", mock_logger) is None
     assert {proxy for _, proxy in web.requests} == {None}
     web.requests.clear()
-    page = await fetch_page("https://www.rueschenbeck.de/vintage-certified-pre-owned", mock_logger)
+    assert await fetch_page("https://www.rueschenbeck.de/vintage-certified-pre-owned", mock_logger) == (
+        "page of www.rueschenbeck.de"
+    )
+    assert web.requests == [("www.rueschenbeck.de", "http://10.0.0.2:2222")]
+
+
+@pytest.mark.parametrize("failure", [CannotConnect, Timeout])
+async def test_a_site_that_answers_one_failed_retry_stays_direct(monkeypatch, mock_logger, failure):
+    web = dropped(monkeypatch, failure, answers_first=True)
+
+    await fetch_page("https://www.rueschenbeck.de/vintage-certified-pre-owned", mock_logger)
+    await fetch_page("https://www.rueschenbeck.de/vintage-certified-pre-owned", mock_logger)
 
     # A site that answered at one try, if with an error, is not refusing the server
-    assert page == (None if answered else "page of www.rueschenbeck.de")
-    assert web.requests[0] == ("www.rueschenbeck.de", None if answered else "http://10.0.0.2:2222")
+    assert {proxy for _, proxy in web.requests} == {None}
 
 
 async def test_a_site_that_answers_is_asked_directly(monkeypatch):
