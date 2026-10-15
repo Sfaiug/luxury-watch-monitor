@@ -139,6 +139,32 @@ async def test_a_reply_counts_as_sent_once_its_conversation_shows_it():
         )
 
 
+@pytest.mark.parametrize("sending", ["reply", "contact"])
+async def test_a_message_shown_after_a_while_counts_as_sent(mocker, sending):
+    text = "Danke! Der Kaufvertrag kommt gleich."
+    site = Site([conversation(("OUTBOUND", text, 0), ("INBOUND", "Ja, gern.", 0))], shows_what_is_sent=False)
+    elapsed = 0
+
+    async def show_after_a_while(seconds):
+        nonlocal elapsed
+        elapsed += seconds
+        if elapsed >= 3 and not site.shows_what_is_sent:
+            site.shows_what_is_sent = True
+            site._sent("abc:1:xyz", text)
+
+    mocker.patch("kleinanzeigen_messages.asyncio.sleep", side_effect=show_after_a_while)
+    box = Messages(site)
+
+    if sending == "reply":
+        await box.reply("abc:1:xyz", text)
+        assert sum(method == "POST" for method, _, _ in site.calls) == 1
+    else:
+        assert await box.contact("3535834511", text) == "abc:1:xyz"
+        assert len(site.tabs[0].clicked) == 1 and site.tabs[0].closed
+
+    assert 3 <= elapsed <= 5
+
+
 class JoiningLines(Site):
     """The site showing a message with its lines broken otherwise than written."""
 

@@ -158,7 +158,11 @@ class Messages:
         await self._shows(conversation_id, text, before)
 
     async def _shows(self, conversation_id: str, text: str, before: int):
-        """Sent: the conversation has grown since it held `before` messages, and ends with this one."""
-        said = (await self.conversation(conversation_id)).messages
-        if len(said) <= before or not said[-1].outbound or plain(said[-1].text) != plain(text):
-            raise NotSent(f"conversation {conversation_id} does not end with the message written")
+        """Allow a few seconds for the conversation to grow beyond `before` and end with this message."""
+        for attempt in range(6):
+            if attempt:
+                await asyncio.sleep(1)
+            said = (await self.conversation(conversation_id)).messages
+            if len(said) > before and said[-1].outbound and plain(said[-1].text) == plain(text):
+                return
+        raise NotSent(f"conversation {conversation_id} does not end with the message written")
