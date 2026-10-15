@@ -650,6 +650,76 @@ def test_a_first_message_from_before_it_only_asked_whether_the_watch_is_there_ha
     assert negotiation.opened
 
 
+@pytest.mark.parametrize("stage", ["queued", "draft", "form"])
+async def test_deleting_a_filter_cancels_its_queued_or_active_start(by_hand, kept, stage):
+    talking = by_hand.negotiator
+    for ad_id in (["a", "b"] if stage == "queued" else ["b", "a"]):
+        current = asked_for()
+        current.ad_id, current.channel = ad_id, "filter:42" if ad_id == "a" else "filter:43"
+        current.tries = 1  # A cancelled retry must not save the removed row again either.
+        talking.ask_to_start(current)
+    paused, resume = asyncio.Event(), asyncio.Event()
+    contacted, drafted = [], []
+
+    async def write(current, *args):
+        drafted.append(current.ad_id)
+        if (stage == "queued" and current.ad_id == "a") or (stage == "draft" and current.ad_id == "b"):
+            paused.set()
+            await resume.wait()
+        return "Ist die Uhr noch da?"
+
+    async def contact(ad_id, text, *, before_send):
+        if stage == "form" and ad_id == "b":
+            paused.set()
+            await resume.wait()
+        before_send(0)
+        contacted.append(ad_id)
+        return "conversation-" + ad_id
+
+    talking._write = write
+    starter = asyncio.create_task(talking.start(SimpleNamespace(contact=contact)))
+    try:
+        await asyncio.wait_for(paused.wait(), 2)
+        by_hand.filter_store.remove("43")
+        by_hand._sync_filters()
+        assert kept.get("b") is None
+        if stage == "queued":
+            resume.set()
+        await asyncio.wait_for(starter, 2)
+    finally:
+        resume.set()
+        if not starter.done():
+            starter.cancel()
+        await asyncio.gather(starter, return_exceptions=True)
+
+    assert contacted == ["a"]
+    assert [(n.ad_id, n.status) for n in kept.all()] == [("a", "talking")]
+    if stage == "queued":
+        assert drafted == ["a"]
+
+
+async def test_a_pruned_start_is_checked_again_before_the_form_is_sent(by_hand, kept):
+    talking = by_hand.negotiator
+    current = asked_for()
+    current.channel = "filter:43"
+    talking.ask_to_start(current)
+    talking._write = AsyncMock(return_value="Ist die Uhr noch da?")
+    contacted = []
+
+    async def contact(ad_id, text, *, before_send):
+        by_hand.filter_store.remove("43")
+        by_hand._sync_filters()
+        # No await here: task cancellation alone cannot stop this send.
+        before_send(0)
+        contacted.append(ad_id)
+        return "c1"
+
+    await talking.start(SimpleNamespace(contact=contact))
+
+    assert contacted == []
+    assert kept.all() == []
+
+
 async def test_a_first_message_written_wrong_each_time_goes_to_the_owner_who_hears_until_told(kept):
     box, notify = Box(), AsyncMock(side_effect=[RuntimeError("Discord is down"), None])
     wrong = ["Ich biete 8,5k.", "Ich biete [BETRAG] oder fünfhundert mehr.", "Hallo, 8.000 €?"]
