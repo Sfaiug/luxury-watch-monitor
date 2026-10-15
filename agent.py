@@ -237,8 +237,11 @@ class Deals:
         with self._db:
             for watch in watches:
                 inserted = self._db.execute(
-                    "INSERT OR IGNORE INTO judging (address, filter, title, asking, requested) VALUES (?, ?, ?, ?, ?)",
-                    (watch.url, watch.site_key, watch.title, str(watch.price) if watch.price is not None else None, requested),
+                    "INSERT OR IGNORE INTO judging (address, filter, title, asking, requested) "
+                    "VALUES (?, ?, ?, ?, ? OR EXISTS (SELECT 1 FROM verdicts WHERE address = ? AND filter = ? "
+                    "AND requested AND buy_limit IS NULL))",
+                    (watch.url, watch.site_key, watch.title, str(watch.price) if watch.price is not None else None,
+                     requested, watch.url, watch.site_key),
                 ).rowcount
                 if inserted:
                     added.append(watch)
@@ -309,13 +312,14 @@ class Deals:
         self._db.row_factory = sqlite3.Row
         return self._db.execute("SELECT * FROM verdicts ORDER BY judged DESC LIMIT ?", (count,)).fetchall()
 
-    def without_limit(self, since: datetime) -> List[sqlite3.Row]:
+    def without_limit(self, since: datetime, address: Optional[str] = None) -> List[sqlite3.Row]:
         """The verdicts since then on offers the AI read that came to no limit."""
         self._db.row_factory = sqlite3.Row
         return self._db.execute(
             "SELECT * FROM verdicts WHERE reading IS NOT NULL AND buy_limit IS NULL AND judged >= ? "
+            "AND (? IS NULL OR address = ?) "
             "AND NOT EXISTS (SELECT 1 FROM judging WHERE judging.address = verdicts.address AND judging.filter = verdicts.filter)",
-            (since.isoformat(timespec="seconds"),),
+            (since.isoformat(timespec="seconds"), address, address),
         ).fetchall()
 
 
@@ -390,9 +394,14 @@ class Agent:
     async def reconsider(self):
         """Decide again on the matches that came before their watch's Chrono24 offers, now that the search may have
         brought them: a match is not lost for arriving first."""
-        followups = []
-        for row in self.deals.without_limit(datetime.now() - WAITS):
+        since = datetime.now() - WAITS
+        for row in self.deals.without_limit(since):
             try:
+                # An earlier notification may have yielded to a new reading or a press still awaiting one.
+                current = self.deals.without_limit(since, row["address"])
+                if not current:
+                    continue
+                row = current[0]
                 reading = Reading.model_validate_json(row["reading"])
                 asking = Decimal(str(row["asking"])) if row["asking"] is not None else None
                 verdict = decide(reading, asking, self.prices)
@@ -405,10 +414,7 @@ class Agent:
             except Exception as e:
                 self.logger.warning(f"Agent could not decide again on {row['address']}: {e}")
                 continue
-            followups.append((watch, verdict, row["requested"]))
-        # Finish the saved verdicts before a notification can yield to a fresh press and its reading.
-        for watch, verdict, requested in followups:
-            await self._follow(watch, verdict, requested)
+            await self._follow(watch, verdict, row["requested"])
 
     async def _follow(self, watch: WatchData, verdict: Verdict, requested: bool):
         try:
