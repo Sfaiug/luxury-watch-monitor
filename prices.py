@@ -189,6 +189,13 @@ class Prices:
             "GROUP BY offers.reference ORDER BY MAX(offers.brand) IS NULL, MAX(offers.brand), offers.reference"
         ).fetchall()
 
+    def trade_counts(self) -> Tuple[int, int]:
+        """How many stored purchases and sales have both a day and an amount."""
+        return self._db.execute(
+            "SELECT COUNT(CASE WHEN bought IS NOT NULL AND paid IS NOT NULL THEN 1 END), "
+            "COUNT(CASE WHEN sold IS NOT NULL AND sold_for IS NOT NULL THEN 1 END) FROM trades"
+        ).fetchone()
+
     def traded(self, trades: Iterable):
         """Keep these trades, the controlling tool's latest export, in place of the ones kept before."""
         with self._db:

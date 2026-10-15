@@ -6,6 +6,9 @@ import signal
 import json
 import logging
 import sqlite3
+import csv
+import os
+from datetime import date, timedelta
 from dataclasses import replace
 from unittest.mock import AsyncMock, Mock, patch
 from decimal import Decimal
@@ -16,7 +19,10 @@ from monitor import WatchMonitor, SCRAPER_CLASSES
 from models import WatchData, ScrapingSession
 from notifications import NotificationManager
 from persistence import SeenIds
+from prices import Prices
 from scrapers.base import BaseScraper
+from worth import buy_limit
+import controlling
 
 
 def configure_monitor_config(
@@ -38,6 +44,136 @@ def configure_monitor_config(
     mock_config.muv_http_actions_enabled = False
     mock_config.muv_offer_link_urls = ""
     mock_config.muv_offer_link_poll_seconds = 900
+
+
+@pytest.fixture
+def controlling_monitor(tmp_path, monkeypatch):
+    export = tmp_path / "controlling.csv"
+    monkeypatch.setattr(APP_CONFIG, "controlling_file", str(export))
+    monkeypatch.setattr(APP_CONFIG, "discord_bot_token", "bot-token")
+    monkeypatch.setattr(APP_CONFIG, "discord_alert_channel_id", "42")
+    monitor = WatchMonitor(log_level="ERROR")
+    monitor.prices = Prices(tmp_path / "prices.sqlite3")
+    monitor.logger = Mock()
+    monitor.persistence = Mock()
+    monitor.filter_store = Mock(all=Mock(return_value=[]))
+    written = 0
+
+    def write(problem="", **changes):
+        nonlocal written
+        values = {
+            "Marke": "Rolex", "Referenznummer": "116610LN", "Box": "x", "Papiere": "x",
+            "Ankaufdatum": date.today().strftime("%d.%m.%Y"), "EK": "8.000,00",
+            "Verkaufsdatum": date.today().strftime("%d.%m.%Y"), "VK realisiert": "10.000,00",
+            "Verkäufer": "Private Seller",
+        }
+        values.update(changes)
+        with export.open("w", encoding="utf-8-sig", newline="") as output:
+            writer = csv.DictWriter(output, fieldnames=values.keys())
+            writer.writeheader()
+            writer.writerows([values] * 10)
+        content = export.read_text(encoding="utf-8-sig")
+        if problem == "renamed":
+            export.write_text(content.replace(",EK,", ",Einkauf,"), encoding="utf-8-sig")
+        elif problem == "semicolon":
+            export.write_text(content.replace(",", ";"), encoding="utf-8-sig")
+        elif problem == "encoding":
+            export.write_bytes(content.encode("cp1252"))
+        elif problem == "empty":
+            export.write_text("", encoding="utf-8-sig")
+        written += 1
+        os.utime(export, (1_000_000_000 + written, 1_000_000_000 + written))
+
+    write()
+    yield monitor, write
+    monitor.prices.close()
+
+
+@pytest.mark.parametrize("problem,changes", [
+    ("", {"Ankaufdatum": "2026-10-14", "Verkaufsdatum": "2026-10-14"}),
+    ("", {"Ankaufdatum": "14.10.26", "Verkaufsdatum": "14.10.26"}),
+    ("", {"EK": "1.000,-", "VK realisiert": "1.000,-"}),
+    ("", {"EK": "30,000.00", "VK realisiert": "30,000.00"}),
+    ("renamed", {}), ("semicolon", {}), ("encoding", {}), ("empty", {}),
+])
+async def test_unreadable_export_keeps_the_trades_and_buy_limit_and_warns_once(controlling_monitor, problem, changes):
+    monitor, write = controlling_monitor
+    await monitor._read_trades()
+    before = buy_limit(monitor.prices, "116610LN", "used")
+    assert before is not None
+    # The baseline comes from the database, including after a restart.
+    monitor.prices.close()
+    monitor.prices = Prices(os.path.join(os.path.dirname(APP_CONFIG.controlling_file), "prices.sqlite3"))
+    monitor._trades_read = None
+    write(problem, **changes)
+
+    with patch("monitor.controlling.read", wraps=controlling.read) as read, patch(
+        "monitor.DiscordApi.call", new=AsyncMock(return_value=(201, {}))
+    ) as posted:
+        for _ in range(3):
+            await monitor.run_monitoring_cycle()
+        assert monitor.prices.trade_counts() == (10, 10)
+        assert buy_limit(monitor.prices, "116610LN", "used") == before
+        read.assert_called_once()
+        posted.assert_awaited_once()
+        method, path, message = posted.await_args.args
+        assert (method, path) == ("POST", "/channels/42/messages")
+        assert "previous trades are still in use" in message["content"]
+        assert "Private Seller" not in message["content"]
+        monitor.logger.error.assert_called_once()
+
+        # Another unreadable file belongs to the same warning, until a good one arrives.
+        write("semicolon")
+        await monitor.run_monitoring_cycle()
+        posted.assert_awaited_once()
+        monitor.logger.error.assert_called_once()
+
+        write(Referenznummer="126610LN")
+        await monitor.run_monitoring_cycle()
+        since = date.today() - timedelta(days=365)
+        assert monitor.prices.traded_for("116610LN", False, since, True) == []
+        assert monitor.prices.traded_for("126610LN", False, since, True) == [10000] * 10
+
+        write("renamed")
+        await monitor.run_monitoring_cycle()
+        await monitor.run_monitoring_cycle()
+        assert posted.await_count == 2
+        assert monitor.logger.error.call_count == 2
+
+
+@pytest.mark.parametrize("unavailable", ["failed_post", "no_channel", "no_token"])
+async def test_unreadable_export_retries_the_warning_until_discord_accepts_it(controlling_monitor, monkeypatch, unavailable):
+    monitor, write = controlling_monitor
+    await monitor._read_trades()
+    write("renamed")
+    if unavailable == "no_channel":
+        monkeypatch.setattr(APP_CONFIG, "discord_alert_channel_id", "")
+        monkeypatch.setattr("monitor.SITE_CONFIGS", {})
+    elif unavailable == "no_token":
+        monkeypatch.setattr(APP_CONFIG, "discord_bot_token", "")
+
+    replies = [(503, {}), (201, {})] if unavailable == "failed_post" else [(201, {})]
+    with patch("monitor.DiscordApi.call", new=AsyncMock(side_effect=replies)) as posted:
+        await monitor.run_monitoring_cycle()
+        assert not monitor._trades_warned
+        monkeypatch.setattr(APP_CONFIG, "discord_alert_channel_id", "42")
+        monkeypatch.setattr(APP_CONFIG, "discord_bot_token", "bot-token")
+        await monitor.run_monitoring_cycle()
+        await monitor.run_monitoring_cycle()
+        assert monitor._trades_warned
+        assert posted.await_count == len(replies)
+        monitor.logger.error.assert_called_once()
+
+
+async def test_unreadable_export_can_warn_in_the_existing_shop_channel(controlling_monitor, monkeypatch):
+    monitor, write = controlling_monitor
+    monkeypatch.setattr(APP_CONFIG, "discord_alert_channel_id", "")
+    monkeypatch.setenv("WORLDOFTIME_CHANNEL_ID", "42")
+    write("renamed")
+
+    with patch("monitor.DiscordApi.call", new=AsyncMock(return_value=(201, {}))) as posted:
+        await monitor._read_trades()
+    assert posted.await_args.args[1] == "/channels/42/messages"
 
 
 class TestWatchMonitor:

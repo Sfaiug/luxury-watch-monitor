@@ -6,8 +6,8 @@ import csv
 import re
 from dataclasses import dataclass
 from datetime import date, datetime
-from decimal import Decimal, InvalidOperation
-from typing import List, Optional
+from decimal import Decimal
+from typing import List, Optional, Tuple
 
 from prices import reference_key
 
@@ -32,10 +32,10 @@ def _day(text: str) -> Optional[date]:
 
 def _euros(text: str) -> Optional[Decimal]:
     # "€4.125,000" and "1.450,00 €": dots between the thousands, a comma before the cents
-    try:
-        amount = Decimal(re.sub(r"[^\d,-]", "", text or "").replace(",", "."))
-    except InvalidOperation:
+    match = re.fullmatch(r"€?\s*(-?(?:\d+|\d{1,3}(?:\.\d{3})+)(?:,\d+)?)\s*€?", (text or "").strip())
+    if not match:
         return None
+    amount = Decimal(match[1].replace(".", "").replace(",", "."))
     return amount if amount > 0 else None
 
 
@@ -44,19 +44,42 @@ def _marked(text: str) -> bool:
     return text.strip().lower() == "x"
 
 
-def read(path: str) -> List[Trade]:
-    """The trades in the controlling tool's export of its "Uhren" sheet, as CSV."""
-    with open(path, encoding="utf-8-sig", newline="") as export:
-        return [
-            Trade(
-                reference=reference_key(row["Referenznummer"]),
-                full_set=_marked(row["Box"]) and _marked(row["Papiere"]),
-                bought=_day(row["Ankaufdatum"]),
-                paid=_euros(row["EK"]),
-                sold=_day(row["Verkaufsdatum"]),
-                sold_for=_euros(row["VK realisiert"]),
-                brand=row["Marke"],
-            )
-            for row in csv.DictReader(export)
-            if reference_key(row["Referenznummer"] or "")
-        ]
+def read(path: str, previous: Tuple[int, int] = (0, 0)) -> List[Trade]:
+    """Read the export, retaining at least 90% of the previous export's dated purchases and sales."""
+    columns = {"Referenznummer", "Box", "Papiere", "Ankaufdatum", "EK", "Verkaufsdatum", "VK realisiert", "Marke"}
+    trades = []
+    try:
+        with open(path, encoding="utf-8-sig", newline="") as export:
+            rows = csv.DictReader(export, strict=True)
+            missing = columns - set(rows.fieldnames or [])
+            if missing:
+                raise ValueError("Missing CSV columns: " + ", ".join(sorted(missing)) + ". Use a comma-separated export.")
+            for row in rows:
+                if None in row or any(row[column] is None for column in columns):
+                    raise ValueError(f"CSV row {rows.line_num} has the wrong number of columns.")
+                reference = reference_key(row["Referenznummer"])
+                if not reference:
+                    continue
+                trades.append(Trade(
+                    reference=reference,
+                    full_set=_marked(row["Box"]) and _marked(row["Papiere"]),
+                    bought=_day(row["Ankaufdatum"]),
+                    paid=_euros(row["EK"]),
+                    sold=_day(row["Verkaufsdatum"]),
+                    sold_for=_euros(row["VK realisiert"]),
+                    brand=row["Marke"],
+                ))
+    except UnicodeError:
+        raise ValueError("The CSV must be encoded as UTF-8.") from None
+    except csv.Error:
+        raise ValueError("The CSV has invalid quoting or separators.") from None
+
+    counts = (sum(t.bought is not None and t.paid is not None for t in trades),
+              sum(t.sold is not None and t.sold_for is not None for t in trades))
+    if not any(counts) or any(current < old * 0.9 for current, old in zip(counts, previous)):
+        raise ValueError(
+            f"Readable purchases: {counts[0]} (previous export: {previous[0]}); "
+            f"readable sales: {counts[1]} (previous export: {previous[1]}). "
+            "Dates must use DD.MM.YYYY and amounts German separators, e.g. 1.000,00."
+        )
+    return trades

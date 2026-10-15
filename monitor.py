@@ -86,7 +86,9 @@ class WatchMonitor:
         self._scanning: Set[str] = set()
         self.filter_store = FilterStore(APP_CONFIG.filters_file)
         self.filters: Dict[str, Filter] = {}  # as last read
-        self._trades_read: Optional[float] = None  # when the controlling export read last was written
+        self._trades_read: Optional[float] = None  # modification time of the last export attempted
+        self._trades_error: Optional[str] = None
+        self._trades_warned = False
         self.filter_flow: Optional[FilterFlow] = None
         self.running = False
         self.shutdown_event = asyncio.Event()
@@ -145,7 +147,7 @@ class WatchMonitor:
             await self.muv_service.register_configured_offer_links()
 
         self.prices = Prices(APP_CONFIG.prices_file)
-        self._read_trades()
+        await self._read_trades()
         if APP_CONFIG.agent_model and os.getenv("ANTHROPIC_API_KEY"):
             from anthropic import AsyncAnthropic
 
@@ -474,7 +476,7 @@ class WatchMonitor:
         if self.filter_flow:
             await self.filter_flow.tend()
         self._sync_filters()
-        self._read_trades()
+        await self._read_trades()
 
         # Log memory usage at start of cycle
         memory_start = self.memory_monitor.get_current_usage_mb()
@@ -578,17 +580,37 @@ class WatchMonitor:
             self.scrapers[key] = scraper
         self.filters = filters
 
-    def _read_trades(self):
+    async def _read_trades(self):
         """The controlling tool's export into the price database, and again whenever the owner sends a newer one."""
         try:
             changed = os.path.getmtime(APP_CONFIG.controlling_file)
             if changed != self._trades_read:
-                self.prices.traded(controlling.read(APP_CONFIG.controlling_file))
                 self._trades_read = changed
+                self.prices.traded(controlling.read(APP_CONFIG.controlling_file, self.prices.trade_counts()))
+                self._trades_error = None
+                self._trades_warned = False
         except FileNotFoundError:
             pass
         except Exception as e:
-            self.logger.error(f"The controlling tool's export could not be read: {e!r}")
+            if self._trades_error is None:
+                self.logger.error(f"The controlling tool's export could not be read: {e}")
+            self._trades_error = str(e)
+
+        if self._trades_error and not self._trades_warned:
+            channel = APP_CONFIG.discord_alert_channel_id or next(
+                (site.discord_channel_id for site in SITE_CONFIGS.values() if site.discord_channel_id), None
+            )
+            if isinstance(channel, str) and channel and APP_CONFIG.discord_bot_token:
+                try:
+                    await self._tell_owner(
+                        channel,
+                        "The controlling export could not be read. The previous trades are still in use. "
+                        + self._trades_error,
+                    )
+                except Exception as e:
+                    self.logger.warning(f"The controlling export warning could not be posted: {e}")
+                else:
+                    self._trades_warned = True
 
     def _negotiate_if_asked(self, watch: WatchData, verdict: Verdict):
         """A match worth contacting is negotiated on where its filter says so (owner rule, 11 Oct 2026)."""
@@ -655,7 +677,7 @@ class WatchMonitor:
         )
 
     async def _tell_owner(self, channel: str, text: str, buttons=()):
-        """Say something in a filter's channel, its key's channel id, with buttons to answer by, each a label and its
+        """Say something in a Discord channel, given its id or a filter's key, with buttons to answer by, each a label and its
         id; raises unless it was posted."""
         message = {"content": text}
         if buttons:
@@ -663,7 +685,7 @@ class WatchMonitor:
                 {"type": 2, "style": 1, "label": label, "custom_id": custom_id} for label, custom_id in buttons
             ]}]
         status, answer = await DiscordApi(self.session, APP_CONFIG).call(
-            "POST", f"/channels/{channel.split(':', 1)[1]}/messages", message
+            "POST", f"/channels/{channel.split(':', 1)[-1]}/messages", message
         )
         if status not in (200, 201):
             raise RuntimeError(f"Discord answered {status}: {answer}")
