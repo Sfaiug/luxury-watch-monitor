@@ -91,7 +91,7 @@ SELLERS = {
                               "picture of your ID card.", "agreed"),
     "goes back on it": Seller("You go down to 8.000 €. Once the price is agreed and the bank transfer too, you say "
                               "another buyer offers more, and ask 250 € more than agreed; then you agree to every term "
-                              "at the new price, and send the picture of your ID card.", "agreed"),
+                              "at the new price, and send the picture of your ID card.", "ended"),
     "where in berlin": Seller("You would rather hand it over in person: you keep asking where in Berlin the buyer lives "
                               "and when he could come. Told plainly that he buys watches shipped, you agree to insured "
                               f"shipping. You go down to 8.100 €. {AGREES}", "agreed"),
@@ -152,7 +152,7 @@ async def simulate(name: str, seller: Seller, client) -> Tuple[Negotiation, List
     kept = Negotiations(":memory:")
     talks = Negotiator(client, kept, notify, logging.getLogger(name), a_while=lambda: timedelta(0))
     talks.ask_to_start(Negotiation(ad_id=name, channel=name, title=title, address=name, limit=limit,
-                                   offered=int(opening(Decimal(asking), Decimal(limit)))))
+                                   offered=int(opening(Decimal(asking), Decimal(limit))), asking=asking))
     box = Box()
     await talks.start(box)
     for _ in range(TURNS):

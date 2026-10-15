@@ -254,7 +254,7 @@ async def test_each_verdict_goes_on_to_what_follows_it(prices, deals):
                 follows).consider([match()])
 
     ((watch, verdict),) = [call.args for call in follows.call_args_list]
-    assert (watch, verdict.contact, verdict.why) == (match(), False, "asks too much above the limit")
+    assert (watch, verdict.contact, verdict.why) == (match("17790"), False, "asks too much above the limit")
 
 
 async def test_a_match_that_came_before_its_watch_s_prices_is_decided_again_once_they_came(prices, deals):
