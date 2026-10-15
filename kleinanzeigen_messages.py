@@ -17,6 +17,7 @@ from playwright.async_api import TimeoutError
 from scrapers.kleinanzeigen import offer_url
 
 GATEWAY = "https://gateway.kleinanzeigen.de"
+CALL_LIMIT = 60  # seconds a call to the site may take at most, many times what one takes: a hang holds up every look
 _RESPONSE = """const response = async (answer, path) => ({status: answer.status, path, text: await answer.text()});"""
 _TOKEN = """const session = await fetch('/m-access-token.json', {credentials: 'include'});
   const token = session.headers.get('authorization');
@@ -124,7 +125,7 @@ class Messages:
         self._on_success = on_success  # each authenticated request, even if a later step fails
 
     async def _read(self, script, *args):
-        data = _data(await self._page.evaluate(script, *args))
+        data = _data(await asyncio.wait_for(self._page.evaluate(script, *args), CALL_LIMIT))
         self._on_success()
         return data
 
@@ -160,7 +161,7 @@ class Messages:
     async def picture(self, url: str) -> dict:
         """A chat picture, as media type and base64 data, read through the owner's session without keeping it."""
         try:
-            picture = await self._page.evaluate(_PICTURE, url)
+            picture = await asyncio.wait_for(self._page.evaluate(_PICTURE, url), CALL_LIMIT)
             if "status" in picture:
                 _data(picture)
             self._on_success()

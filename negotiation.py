@@ -18,7 +18,7 @@ import json
 import random
 import re
 import sqlite3
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, fields
 from datetime import datetime, timedelta
 from decimal import Decimal
 from typing import Dict, List, Literal, Optional, Tuple
@@ -469,8 +469,9 @@ class Negotiations:
             )
 
     def all(self) -> List[Negotiation]:
+        # What another version kept and this one does not know is left out
         return [
-            Negotiation(**{**kept, "terms": Terms(**kept["terms"])})
+            Negotiation(**{**_known(Negotiation, kept), "terms": Terms(**_known(Terms, kept["terms"]))})
             for kept in (json.loads(row) for (row,) in self._db.execute("SELECT kept FROM negotiations"))
         ]
 
@@ -489,6 +490,11 @@ class Negotiations:
         )
         ids = {ad_id for (ad_id,) in rows}
         return [negotiation for negotiation in self.all() if negotiation.ad_id in ids]
+
+
+def _known(kind, kept: dict) -> dict:
+    names = {known.name for known in fields(kind)}
+    return {name: value for name, value in kept.items() if name in names}
 
 
 def transcript(negotiation: Negotiation, said, buyer: str = "") -> str:
@@ -881,11 +887,12 @@ async def keep_talking(negotiator: Negotiator, session: str, logger, now=lambda:
         login_notice_sent = False
 
     while True:
-        busy = negotiator.waiting()
-        stale = last_look is None or (now() - last_look).total_seconds() >= LOOK_DAILY
-        if (busy or stale) and now().hour in AWAKE:
-            last_look = now()
-            try:
+        # A pass that fails is logged, and the next one comes as usual
+        try:
+            busy = negotiator.waiting()
+            stale = last_look is None or (now() - last_look).total_seconds() >= LOOK_DAILY
+            if (busy or stale) and now().hour in AWAKE:
+                last_look = now()
                 async with chrome.Chrome() as browser:
                     window = await browser.window(storage_state=session)
                     try:
@@ -903,7 +910,10 @@ async def keep_talking(negotiator: Negotiator, session: str, logger, now=lambda:
                         raise
                     finally:
                         await window.storage_state(path=session)
-            except Exception as e:
-                logger.error(f"Negotiation: {e}")
-        await negotiator.tell_owner()
+        except Exception as e:
+            logger.error(f"Negotiation: {e}")
+        try:
+            await negotiator.tell_owner()
+        except Exception as e:
+            logger.error(f"Negotiation: could not tell the owner: {e}")
         await asyncio.sleep(LOOK_EVERY)
