@@ -650,8 +650,10 @@ def test_a_first_message_from_before_it_only_asked_whether_the_watch_is_there_ha
     assert negotiation.opened
 
 
-@pytest.mark.parametrize("stage", ["queued", "draft", "form"])
-async def test_deleting_a_filter_cancels_its_queued_or_active_start(by_hand, kept, stage):
+@pytest.mark.parametrize("stage,requeue", [
+    ("queued", False), ("draft", False), ("form", False), ("draft", True), ("form", True),
+])
+async def test_deleting_a_filter_cancels_its_queued_or_active_start(by_hand, kept, stage, requeue):
     talking = by_hand.negotiator
     for ad_id in (["a", "b"] if stage == "queued" else ["b", "a"]):
         current = asked_for()
@@ -683,6 +685,10 @@ async def test_deleting_a_filter_cancels_its_queued_or_active_start(by_hand, kep
         by_hand.filter_store.remove("43")
         by_hand._sync_filters()
         assert kept.get("b") is None
+        if requeue:
+            replacement = asked_for()
+            replacement.ad_id = "b"
+            assert talking.ask_to_start(replacement)
         if stage == "queued":
             resume.set()
         await asyncio.wait_for(starter, 2)
@@ -693,12 +699,19 @@ async def test_deleting_a_filter_cancels_its_queued_or_active_start(by_hand, kep
         await asyncio.gather(starter, return_exceptions=True)
 
     assert contacted == ["a"]
-    assert [(n.ad_id, n.status) for n in kept.all()] == [("a", "talking")]
+    expected = [("a", "talking")] + ([("b", "pending")] if requeue else [])
+    assert sorted((n.ad_id, n.status) for n in kept.all()) == expected
     if stage == "queued":
         assert drafted == ["a"]
+    if requeue:
+        assert kept.get("b").channel == "filter:42"
+        await talking.start(SimpleNamespace(contact=contact))
+        assert contacted == ["a", "b"]
+        assert kept.get("b").status == "talking"
 
 
-async def test_a_pruned_start_is_checked_again_before_the_form_is_sent(by_hand, kept):
+@pytest.mark.parametrize("requeue", [False, True])
+async def test_a_pruned_start_is_checked_again_before_the_form_is_sent(by_hand, kept, requeue):
     talking = by_hand.negotiator
     current = asked_for()
     current.channel = "filter:43"
@@ -709,6 +722,8 @@ async def test_a_pruned_start_is_checked_again_before_the_form_is_sent(by_hand, 
     async def contact(ad_id, text, *, before_send):
         by_hand.filter_store.remove("43")
         by_hand._sync_filters()
+        if requeue:
+            assert talking.ask_to_start(asked_for())
         # No await here: task cancellation alone cannot stop this send.
         before_send(0)
         contacted.append(ad_id)
@@ -717,7 +732,7 @@ async def test_a_pruned_start_is_checked_again_before_the_form_is_sent(by_hand, 
     await talking.start(SimpleNamespace(contact=contact))
 
     assert contacted == []
-    assert kept.all() == []
+    assert kept.all() == ([asked_for()] if requeue else [])
 
 
 async def test_a_first_message_written_wrong_each_time_goes_to_the_owner_who_hears_until_told(kept):

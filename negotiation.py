@@ -566,11 +566,12 @@ class Negotiator:
                 # Pruning cancels this start alone; cancelling start() still cancels the whole pass.
                 result, = await asyncio.gather(task, return_exceptions=True)
                 if isinstance(result, BaseException):
-                    if isinstance(result, asyncio.CancelledError) and self.negotiations.get(negotiation.ad_id) is None:
+                    if isinstance(result, asyncio.CancelledError) and self._starters.get(negotiation.ad_id) is not task:
                         continue
                     raise result
             finally:
-                self._starters.pop(negotiation.ad_id, None)
+                if self._starters.get(negotiation.ad_id) is task:
+                    del self._starters[negotiation.ad_id]
 
     async def _look(self, messages, negotiation: Negotiation, action):
         try:
@@ -612,7 +613,7 @@ class Negotiator:
             self.negotiations.save(negotiation)
 
             def before_send(before):
-                if self.negotiations.get(negotiation.ad_id) is None:
+                if self._starters.get(negotiation.ad_id) is not asyncio.current_task():
                     raise asyncio.CancelledError
                 negotiation.status, negotiation.seen = "opening", before
                 self.negotiations.save(negotiation)
@@ -767,7 +768,8 @@ class Negotiator:
         for negotiation in self.negotiations.with_status("pending"):
             if gone(negotiation.channel):
                 self.negotiations.remove(negotiation.ad_id)
-                if task := self._starters.get(negotiation.ad_id):
+                # Revoke this task's permission to send even if another filter requeues the ad.
+                if task := self._starters.pop(negotiation.ad_id, None):
                     task.cancel()
                 self.logger.info(f"Negotiation: dropped, its filter gone: {negotiation.title[:60]}")
 
