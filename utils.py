@@ -9,7 +9,7 @@ from functools import wraps
 from urllib.parse import urlsplit
 from bs4 import BeautifulSoup
 from curl_cffi.requests import AsyncSession
-from curl_cffi.requests.exceptions import RequestException
+from curl_cffi.requests.exceptions import ConnectionError as CannotConnect, RequestException, Timeout
 
 import proxies
 from config import APP_CONFIG
@@ -75,7 +75,8 @@ async def fetch_page(url: str, logger=None) -> Optional[str]:
     Out from 13 Oct 2026, whatever its address).
 
     A site that refuses the request (403, 429) is asked again, and from then
-    on, through the proxies in proxies.txt, when there are any.
+    on, through the proxies in proxies.txt, when there are any; so is, from
+    its next page on, one that cannot be reached at any try.
 
     Args:
         url: URL to fetch
@@ -86,12 +87,15 @@ async def fetch_page(url: str, logger=None) -> Optional[str]:
     """
 
     host = urlsplit(url).netloc
+    answered = False
 
     async def _fetch():
+        nonlocal answered
         async with AsyncSession(impersonate="chrome") as browser:
             response = await browser.get(
                 url, timeout=APP_CONFIG.request_timeout, **proxies.ROUTES.way_to(host)
             )
+        answered = True
         if response.status_code in (403, 429) and proxies.ROUTES.refused(host) and logger:
             logger.warning(
                 f"{host} refused the request ({response.status_code}); "
@@ -118,6 +122,9 @@ async def fetch_page(url: str, logger=None) -> Optional[str]:
         else:
             return await retry_with_backoff(_fetch, exceptions=(RequestException,))
     except Exception as e:
+        # A site that drops the server's connections refuses it as a 403 does (Rüschenbeck, 15 Oct 2026)
+        if not answered and isinstance(e, (CannotConnect, Timeout)) and proxies.ROUTES.refused(host) and logger:
+            logger.warning(f"{host} could not be reached; its requests go through a proxy from now on")
         if logger:
             logger.error(f"Failed to fetch {url}: {e}")
         return None
