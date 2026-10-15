@@ -627,7 +627,9 @@ class Negotiator:
             if verdict is None or verdict.limit is None:
                 return self._hand_over(negotiation, f"no buy limit for the seller's confirmed reference {says.reference}")
             negotiation.limit = int(verdict.limit)
-            if negotiation.opened and negotiation.offered > negotiation.limit:
+            price = says.price if says.price is not None else terms.price
+            if (negotiation.opened and negotiation.offered > negotiation.limit
+                    and (price is None or price > negotiation.limit)):
                 negotiation.terms.reference = says.reference
                 return self._hand_over(negotiation, f"the confirmed reference {says.reference} has a buy limit of "
                                        f"{euros(negotiation.limit)}, below its sent offer of {euros(negotiation.offered)}")
