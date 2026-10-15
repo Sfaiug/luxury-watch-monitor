@@ -1379,3 +1379,46 @@ async def test_press_on_an_offer_negotiated_before_says_how_it_stands(status, wh
     await monitor._negotiate_by_hand(watch, Verdict(True, "worth contacting", None, Decimal("8608"), Decimal("7450")))
     monitor._tell_owner.assert_awaited_once_with("filter:42", stands)
     assert monitor.negotiator.negotiations.get("123") == kept
+
+
+@pytest.mark.parametrize("alert_channel, owners", [("7", "7"), ("", "9")])
+async def test_channel_deleted_what_the_owner_is_still_to_hear_goes_to_their_own_channel(
+    alert_channel, owners, monkeypatch
+):
+    monkeypatch.setattr(APP_CONFIG, "discord_alert_channel_id", alert_channel)
+    monkeypatch.setenv("WORLDOFTIME_CHANNEL_ID", "9")
+    monitor = WatchMonitor(log_level="ERROR")
+
+    async def discord(method, path, body):
+        return (404, {"message": "Unknown Channel", "code": 10003}) if path == "/channels/42/messages" else (200, {})
+
+    with patch("monitor.DiscordApi.call", new=AsyncMock(side_effect=discord)) as posted:
+        await monitor._tell_owner("filter:42", "Agreed: send the Kaufvertrag and pay", [("Pick it up", "negotiate:pickup:1")])
+        assert [call.args[1] for call in posted.await_args_list] == ["/channels/42/messages",
+                                                                     f"/channels/{owners}/messages"]
+        assert posted.await_args.args[2]["content"] == "Agreed: send the Kaufvertrag and pay"
+        assert posted.await_args.args[2]["components"]
+
+        # A shop's channel, or one of the owner's, that is gone is no filter's: that stays a failure
+        posted.reset_mock()
+        with pytest.raises(RuntimeError, match="404"):
+            await monitor._tell_owner("42", "The controlling export could not be read.")
+        posted.assert_awaited_once()
+
+
+async def test_channel_deleted_drops_the_filter_s_negotiations_not_begun_and_keeps_the_others(tmp_path):
+    monitor = WatchMonitor(log_level="ERROR")
+    monitor.filter_store = FilterStore(tmp_path / "filters.json")
+    kept, gone = Filter("1", "1", "kleinanzeigen", "private", "Rolex"), Filter("2", "1", "kleinanzeigen", "private", "Omega")
+    monitor.filter_store.add(kept)
+    monitor.filter_store.add(gone)
+    monitor.negotiator = Negotiator(None, Negotiations(tmp_path / "deals.sqlite3"), AsyncMock(), monitor.logger)
+    monitor._sync_filters()
+    for ad_id, key, status in (("a", gone.key, "pending"), ("b", gone.key, "talking"), ("c", kept.key, "pending")):
+        monitor.negotiator.negotiations.save(Negotiation(ad_id, key, "Watch", f"https://example.invalid/{ad_id}", 8600,
+                                                         7500, status=status))
+
+    monitor.filter_store.remove(gone.channel_id)
+    monitor._sync_filters()
+
+    assert sorted(n.ad_id for n in monitor.negotiator.negotiations.all()) == ["b", "c"]

@@ -477,6 +477,10 @@ class Negotiations:
     def get(self, ad_id: str) -> Optional[Negotiation]:
         return next((negotiation for negotiation in self.all() if negotiation.ad_id == ad_id), None)
 
+    def remove(self, ad_id: str):
+        with self._db:
+            self._db.execute("DELETE FROM negotiations WHERE ad_id = ?", (ad_id,))
+
     def with_status(self, *statuses: str, since: datetime = datetime.min) -> List[Negotiation]:
         """The negotiations in these statuses, last changed since `since`."""
         rows = self._db.execute(
@@ -739,6 +743,13 @@ class Negotiator:
             f"The seller agreed to the purchase contract and {paid}: {negotiation.address}\n"
             f"{BASE_URL}/m-nachrichten.html?conversationId={quote(negotiation.conversation, safe='')}",
         )
+
+    def forget_unbegun(self, gone):
+        """Drop the negotiations not begun yet whose filter is gone, `gone` saying which by a filter's key."""
+        for negotiation in self.negotiations.with_status("pending"):
+            if gone(negotiation.channel):
+                self.negotiations.remove(negotiation.ad_id)
+                self.logger.info(f"Negotiation: dropped, its filter gone: {negotiation.title[:60]}")
 
     def decide(self, ad_id: str, choice: str) -> str:
         """The owner's word on a seller who hands the watch over in person only, one of `CHOICES`: the agent goes on
