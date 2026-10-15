@@ -15,7 +15,7 @@ from decimal import Decimal
 
 from config import APP_CONFIG, SITE_CONFIGS
 from agent import Agent, Deals, Reading
-from filters import Filter
+from filters import Filter, FilterStore
 from monitor import WatchMonitor, SCRAPER_CLASSES
 from models import WatchData, ScrapingSession
 from notifications import NotificationManager
@@ -1103,12 +1103,15 @@ async def test_not_taken_notification_cli_remembers_only_successful_alerts(
 
 
 @pytest.mark.parametrize("requested", [False, True])
-async def test_owed_a_verdict_survives_seen_state_and_cleanup_and_starts_the_negotiation(
-    requested, tmp_path, monkeypatch
+@pytest.mark.parametrize("removed", ["never", "before_restart", "during_read"])
+async def test_owed_a_verdict_survives_cleanup_but_only_negotiates_while_the_filter_exists(
+    requested, removed, tmp_path, monkeypatch
 ):
     monkeypatch.setattr(APP_CONFIG, "enable_notifications", True)
     monkeypatch.setattr(APP_CONFIG, "controlling_file", str(tmp_path / "absent.csv"))
     asked = Filter("42", "1", "kleinanzeigen", "private", "Rolex", negotiate=not requested)
+    store = FilterStore(tmp_path / "filters.json")
+    store.add(asked)
     watch = WatchData(title="Rolex", url="https://www.kleinanzeigen.de/s-anzeige/123",
                       site_name="Kleinanzeigen", site_key=asked.key, price=Decimal("9000"))
     reading = Reading(is_watch_for_sale=True, brand="Rolex", model="Submariner", reference="116610LN",
@@ -1124,8 +1127,8 @@ async def test_owed_a_verdict_survives_seen_state_and_cleanup_and_starts_the_neg
     def monitor_with(fetch):
         monitor = WatchMonitor(log_level="ERROR")
         monitor.persistence = Mock()
-        monitor.filter_store = Mock(all=Mock(return_value=[asked]))
-        monitor.filters = {asked.key: asked}
+        monitor.filter_store = store
+        monitor.filters = {f.key: f for f in store.all()}
         monitor.prices = Prices(tmp_path / "prices.sqlite3")
         monitor.prices.set_buy_price("116610LN", 8600, datetime.now())
         monitor.deals = Deals(tmp_path / "deals.sqlite3")
@@ -1161,22 +1164,38 @@ async def test_owed_a_verdict_survives_seen_state_and_cleanup_and_starts_the_neg
     assert not monitor._judging
 
     # No new match arrives in the next process. Only the saved claim can start this deal.
+    if removed == "before_restart":
+        store.remove(asked.channel_id)
     price = "17790" if requested else "9000"
-    fetch = AsyncMock(return_value=f'<h1 id="viewad-title">Rolex</h1><h2 id="viewad-price">{price} €</h2>')
+
+    async def page(url):
+        if removed == "during_read":
+            store.remove(asked.channel_id)
+            restarted._sync_filters()
+        return f'<h1 id="viewad-title">Rolex</h1><h2 id="viewad-price">{price} €</h2>'
+
+    fetch = AsyncMock(side_effect=page)
     restarted = monitor_with(fetch)
     try:
         await restarted.run_monitoring_cycle()
         await asyncio.gather(*restarted._judging)
-        (negotiation,) = restarted.negotiator.negotiations.with_status("pending")
-        assert (negotiation.ad_id, negotiation.channel, negotiation.limit, negotiation.asking) == (
-            "123", "filter:42", 8600, int(price),
-        )
-        assert restarted.deals.owed() == []
+        pending = restarted.negotiator.negotiations.with_status("pending")
+        if removed == "never":
+            (negotiation,) = pending
+            assert (negotiation.ad_id, negotiation.channel, negotiation.limit, negotiation.asking) == (
+                "123", "filter:42", 8600, int(price),
+            )
+        else:
+            assert pending == []
+        if removed == "before_restart":
+            assert restarted.deals.judging(watch)["attempts"] == 1
+        else:
+            assert restarted.deals.owed() == []
         await restarted.run_monitoring_cycle()
         await asyncio.gather(*restarted._judging)
-        fetch.assert_awaited_once_with(watch.url)
-        assert read.await_count == 1
-        assert restarted._tell_owner.await_count == int(requested)
+        expected_reads = int(removed != "before_restart")
+        assert fetch.await_count == read.await_count == expected_reads
+        assert restarted._tell_owner.await_count == int(requested and removed == "never")
         restarted.notification_manager.send_notifications.assert_not_called()
     finally:
         await restarted.cleanup()

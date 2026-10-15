@@ -480,7 +480,7 @@ class WatchMonitor:
         self._sync_filters()
         await self._read_trades()
         if self.agent:
-            self._judge_in_background(self.agent.retry())
+            self._judge_in_background(self.agent.retry(self.filters))
 
         # Log memory usage at start of cycle
         memory_start = self.memory_monitor.get_current_usage_mb()
@@ -681,6 +681,8 @@ class WatchMonitor:
 
     async def _negotiate_by_hand(self, watch: WatchData, verdict: Verdict):
         """The member chose this match: the agent negotiates on it wherever it has a limit, whatever the asking price."""
+        if watch.site_key not in self.filters:
+            return
         if verdict.limit is None:
             return await self._tell_owner(watch.site_key, f"The agent leaves {watch.url} alone: {verdict.why}.")
         asked = self._ask_to_negotiate(watch, verdict.limit, opening(watch.price or verdict.limit, verdict.limit))

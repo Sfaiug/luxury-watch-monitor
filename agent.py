@@ -333,9 +333,12 @@ class Agent:
         """Keep the whole batch synchronously, so even a task cancelled before it starts owes these verdicts."""
         return self._consider(self.deals.owe(watches, requested))
 
-    def retry(self):
-        """This cycle's outstanding matches, including those kept by an earlier process."""
-        return self._consider(self.deals.owed())
+    def retry(self, filters=None):
+        """This cycle's outstanding matches, restricted to the current filters when supplied."""
+        watches = self.deals.owed()
+        if filters is not None:
+            watches = [watch for watch in watches if watch.site_key in filters]
+        return self._consider(watches)
 
     async def _consider(self, watches: List[WatchData]):
         for watch in watches:
