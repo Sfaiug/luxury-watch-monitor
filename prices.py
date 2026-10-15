@@ -64,6 +64,7 @@ class Prices:
             """)
             if "brand" not in {column[1] for column in self._db.execute("PRAGMA table_info(trades)")}:
                 self._db.execute("ALTER TABLE trades ADD COLUMN brand TEXT")
+            self._db.execute("CREATE INDEX IF NOT EXISTS trades_reference ON trades (reference)")
             # Searches made before they asked for one kind of watch held new ones too: they count as none
             if self._db.execute("PRAGMA user_version").fetchone()[0] < 2:
                 self._db.execute("DROP TABLE IF EXISTS searches")
