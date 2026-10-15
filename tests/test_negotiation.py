@@ -2594,3 +2594,41 @@ async def test_a_negotiation_kept_before_its_time_was_waits_a_week_from_the_next
     current = kept.get("3535834511")
     assert current.status == "talking"
     assert datetime.now(negotiation.GERMANY) - datetime.fromisoformat(current.wrote) < timedelta(minutes=1)
+
+
+@pytest.mark.parametrize("over, held, refusal, moving, said, answer", [
+    ("price", says(price=11000), "11.000 € ist mein letzter Preis.",
+     "Na gut, 8.600 € und sie gehört dir.", says(price=8600, accepts_offer=True),
+     "Abgemacht, 8.600 €. Zahlst du per Überweisung?"),
+    ("term", says(price=8000, bank_transfer=False), "Nur bar, keine Überweisung.",
+     "Na gut, Überweisung geht klar.", says(price=8000, bank_transfer=True),
+     "Super. Verschickst du sie versichert?"),
+])
+async def test_after_farewell_a_seller_saying_ok_is_not_answered_and_one_who_moves_is(kept, over, held, refusal,
+                                                                                      moving, said, answer):
+    box = Box()
+    await opened(kept, box)
+    current = kept.get("3535834511")
+    if over == "price":
+        current.offered, current.terms.asked, current.terms.held = 8600, 11000, True
+    else:
+        current.offered, current.terms.price, current.terms.asked_again = 8000, 8000, ["bank transfer"]
+    kept.save(current)
+    box.seller(refusal)
+    await negotiator(Claude(reads=[held], writes=["Schade, dann passt es leider nicht. Alles Gute dir!"]),
+                     kept).follow_up(box)
+    assert kept.get("3535834511").status == "ended"
+    farewell = len(box.said)
+
+    # "Ok schade" is not answered: the agent said its farewell, and repeats nothing
+    box.seller("Ok schade, danke dir.")
+    quiet = Claude(reads=[held])
+    await negotiator(quiet, kept).follow_up(box)
+    assert quiet.asked == ["read"] and len(box.said) == farewell + 1
+    assert kept.get("3535834511").status == "ended"
+    await negotiator(Claude(), kept).follow_up(box)  # nor read again at the next look
+
+    # A seller who comes towards it is answered
+    box.seller(moving)
+    await negotiator(Claude(reads=[said], writes=[answer.replace("8.600 €", "[BETRAG]")]), kept).follow_up(box)
+    assert kept.get("3535834511").status == "talking" and box.said[-1].text == answer
