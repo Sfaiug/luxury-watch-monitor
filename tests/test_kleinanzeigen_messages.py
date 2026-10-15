@@ -2,6 +2,7 @@
 
 import asyncio
 import copy
+import html
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock, patch
 
@@ -207,6 +208,20 @@ class JoiningLines(Site):
 async def test_a_message_counts_as_sent_however_the_site_breaks_its_lines():
     await Messages(JoiningLines([conversation(("INBOUND", "Was bieten Sie?", 0))])).reply("abc:1:xyz", "Wie wäre es\nmit 8.000 €?")
     assert await Messages(JoiningLines()).contact("3535834511", "Hallo,\nist die Uhr noch da?") == "abc:1:xyz"
+
+
+@pytest.mark.parametrize("sending", ["reply", "contact"])
+async def test_earlier_messages_a_message_counts_as_sent_with_the_sites_html_escapes(sending):
+    class Escaping(Site):
+        def _sent(self, conversation_id, text):
+            super()._sent(conversation_id, html.escape(text).replace(" ", "&nbsp;"))
+
+    box = Messages(Escaping([conversation(("INBOUND", "Ja, noch da.", 0))]))
+    text = 'Hallo, ist die Uhr & das "Band" noch da?'
+    if sending == "reply":
+        await box.reply("abc:1:xyz", text)
+    else:
+        assert await box.contact("3535834511", text) == "abc:1:xyz"
 
 
 async def test_a_message_said_before_counts_only_once_it_shows_again():

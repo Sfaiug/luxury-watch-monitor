@@ -420,12 +420,13 @@ class Negotiation:
     offered: int
     conversation: str = ""
     terms: Terms = field(default_factory=Terms)
-    sent: List[str] = field(default_factory=list)  # the agent's messages, sent or on their way: any other is the owner's
+    sent: List[str] = field(default_factory=list)  # the agent's messages, sent or on their way
     status: str = "pending"  # pending, opening (its first message on its way), talking, closing (its last on its way),
     # deciding (the owner's word awaited), agreed, ended, or owner
     ends: str = ""  # what a closing negotiation ends as once its last message reached the seller: agreed or ended
     tries: int = 0  # looks at which its offer's page took no first message
     seen: int = 0  # the messages in the conversation when the agent wrote its latest, or ended it
+    first: int = 0  # the messages before the agent's first; zero in older saved negotiations
     before: dict = field(default_factory=dict)  # its offer and the terms as they stood before its latest message
     why: str = ""
     notice: str = ""  # what the owner is still to hear of it
@@ -562,6 +563,7 @@ class Negotiator:
                 negotiation.status = "pending"
                 self.negotiations.save(negotiation)
                 raise
+        negotiation.first = negotiation.seen
         negotiation.status = "talking"
         self.negotiations.save(negotiation)
         self.logger.info(f"Negotiation: opened at {euros(negotiation.offered)} for {negotiation.title[:60]}")
@@ -577,7 +579,9 @@ class Negotiator:
     async def _answer(self, messages, negotiation: Negotiation):
         talk = await messages.conversation(negotiation.conversation)
         said = talk.messages
-        shown = [plain(message.text) for message in said if message.outbound]
+        first = next((i for i, message in enumerate(said[negotiation.first:], negotiation.first)
+                      if message.outbound and plain(message.text) == plain(negotiation.sent[0])), len(said))
+        shown = [plain(message.text) for message in said[first:] if message.outbound]
         if set(shown) - {plain(text) for text in negotiation.sent}:
             # Written from the account, not by the agent: the owner took over
             return self._end(negotiation, "owner", "the owner wrote in the conversation")
@@ -646,7 +650,7 @@ class Negotiator:
         negotiation.terms = terms
         if answer.kind == "end":
             negotiation.seen = len(said)  # what the seller wrote before is not read again; what they write next is
-            return self._end(negotiation, "ended", answer.why)
+            return self._end(negotiation, "ended", answer.why, "" if says.ended and not says.red_flags else None)
         if answer.kind == "owner":
             return self._hand_over(negotiation, answer.why)
         if answer.kind == "decide":
@@ -675,7 +679,7 @@ class Negotiator:
 
     def _close(self, negotiation: Negotiation):
         if negotiation.ends == "ended":
-            return self._end(negotiation, "ended", negotiation.why)
+            return self._end(negotiation, "ended", negotiation.why, "")
         terms = negotiation.terms
         paid = ("shows their ID card at the handover. Send the Kaufvertrag, and pay there" if terms.delivery == "pickup"
                 else "sent a picture of their ID card. Send the Kaufvertrag and pay")
@@ -761,7 +765,9 @@ class Negotiator:
         self._hand_over(negotiation, why)
         return None
 
-    def _end(self, negotiation: Negotiation, status: str, why: str, notice: str = ""):
+    def _end(self, negotiation: Negotiation, status: str, why: str, notice: Optional[str] = None):
+        if notice is None:
+            notice = f"The agent stopped negotiating ({why}): {negotiation.title}, {negotiation.address}"
         negotiation.status, negotiation.why, negotiation.notice = status, why, notice
         self.negotiations.save(negotiation)
         self.logger.info(f"Negotiation: {status} for {negotiation.title[:60]}: {why}")
