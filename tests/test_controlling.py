@@ -105,21 +105,102 @@ def test_the_most_to_pay_is_no_more_than_the_middle_of_what_we_paid_within_a_yea
     assert buy_limit(prices, "126610LN", FULL_SET) == Decimal("6200")  # of the two full sets
 
 
-def test_a_newer_export_takes_the_place_of_the_last_one(tmp_path, export, monkeypatch):
+async def test_a_newer_export_takes_the_place_of_the_last_one(tmp_path, export, monkeypatch):
     monkeypatch.setattr(APP_CONFIG, "controlling_file", str(export))
     monitor = WatchMonitor(log_level="ERROR")
     monitor.prices = Prices(tmp_path / "prices.sqlite3")
 
-    monitor._read_trades()
+    await monitor._read_trades()
     assert len(monitor.prices.traded_for("116610LN", False, date.today() - timedelta(days=365), True)) == 2
 
-    export.write_text("\n".join([HEADER, row("126610LN", "x", "x", day(9), "€9.000,00", day(3), "11.000,00 €")]),
-                      encoding="utf-8-sig")
+    export.write_text("\n".join([
+        HEADER,
+        row("126610LN", "x", "x", day(9), "€9.000,00", day(3), "11.000,00 €"),
+        row("126610LN", "x", "x", day(50), "€8.000,00", day(30), "10.000,00 €"),
+        row("126610LN", "x", "x", day(500), "€7.000,00", day(400), "9.000,00 €"),
+        row("126610LN", "x", "x", day(5), "€9.500,00"),
+    ]), encoding="utf-8-sig")
     os.utime(export, (export.stat().st_atime, export.stat().st_mtime + 60))
-    monitor._read_trades()
+    await monitor._read_trades()
 
     assert monitor.prices.traded_for("116610LN", False, date(2000, 1, 1), True) == []
-    assert monitor.prices.traded_for("126610LN", True, date(2000, 1, 1), True) == [11000.0]
+    assert monitor.prices.traded_for("126610LN", True, date(2000, 1, 1), True) == [9000, 10000, 11000]
+
+
+@pytest.mark.parametrize("field,value", [
+    ("bought", "2026-10-14"), ("bought", "14.10.26"),
+    ("sold", "2026-10-14"), ("sold", "14.10.26"),
+    ("paid", "1.000,-"), ("paid", "30,000.00"),
+    ("sold_for", "1.000,-"), ("sold_for", "30,000.00"),
+])
+def test_unreadable_export_does_not_pass_when_days_or_amounts_stop_reading(export, field, value):
+    values = dict(bought=day(9), paid="€8.000,00", sold=day(3), sold_for="10.000,00 €")
+    values[field] = value
+    export.write_text("\n".join([HEADER, *[row("116610LN", "x", "x", **values) for _ in range(4)]]),
+                      encoding="utf-8-sig")
+
+    with pytest.raises(ValueError, match="Readable purchases.*readable sales.*DD.MM.YYYY"):
+        controlling.read(export, (4, 3))
+
+
+@pytest.mark.parametrize("problem,reason", [
+    ("renamed", "Missing CSV columns:.*EK"),
+    ("semicolon", "comma-separated"),
+    ("encoding", "UTF-8"),
+    ("short_row", "wrong number of columns"),
+    ("extra_column", "wrong number of columns"),
+    ("quote", "invalid quoting"),
+    ("empty", "Missing CSV columns"),
+    ("header_only", "Readable purchases: 0"),
+])
+def test_unreadable_export_explains_the_format_without_seller_details(export, problem, reason):
+    content = export.read_text(encoding="utf-8-sig")
+    if problem == "renamed":
+        content = content.replace(",EK,", ",Einkauf,")
+    elif problem == "semicolon":
+        content = content.replace(",", ";")
+    elif problem == "encoding":
+        export.write_bytes(content.encode("cp1252"))
+    elif problem == "short_row":
+        content += "\n1,Rolex"
+    elif problem == "extra_column":
+        content += "\n" + row("116610LN", "x", "x", day(9), "8000") + ",extra"
+    elif problem == "quote":
+        content += '\n"unfinished'
+    elif problem == "empty":
+        content = ""
+    elif problem == "header_only":
+        content = HEADER
+    if problem != "encoding":
+        export.write_text(content, encoding="utf-8-sig")
+
+    with pytest.raises(ValueError, match=reason) as error:
+        controlling.read(export, (4, 3))
+    assert "A Seller" not in str(error.value)
+
+
+@pytest.mark.parametrize("unreadable,accepted", [(1, True), (2, False)])
+def test_unreadable_export_allows_only_a_small_drop_in_readable_rows(export, unreadable, accepted):
+    export.write_text("\n".join([
+        HEADER,
+        *[row("116610LN", "x", "x", "unknown" if i < unreadable else day(9), "8.000,00",
+              day(3), "10.000,00") for i in range(10)],
+    ]), encoding="utf-8-sig")
+
+    if accepted:
+        assert len(controlling.read(export, (10, 10))) == 10
+    else:
+        with pytest.raises(ValueError, match="Readable purchases: 8"):
+            controlling.read(export, (10, 10))
+
+
+def test_unreadable_export_with_no_readable_trades_is_rejected_without_a_baseline(export):
+    export.write_text("\n".join([
+        HEADER, row("116610LN", "x", "x", "2026-10-14", "8.000,00", "14.10.26", "10.000,00"),
+    ]), encoding="utf-8-sig")
+
+    with pytest.raises(ValueError, match="Readable purchases: 0.*readable sales: 0"):
+        controlling.read(export)
 
 
 def test_existing_trades_gain_their_brand_when_the_export_is_read_again(tmp_path, export):
