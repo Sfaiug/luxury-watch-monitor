@@ -1144,6 +1144,99 @@ async def test_the_seller_s_counter_is_answered_and_nothing_new_asks_nothing(kep
     assert kept.get("3535834511").offered == 8050
 
 
+@pytest.mark.parametrize("stage", ["read", "write", "third_draft"])
+@pytest.mark.parametrize("ended", [False, True])
+async def test_crossing_a_seller_message_drops_the_draft_and_reads_the_whole_chat(kept, monkeypatch, stage, ended):
+    box, notify = Box(), AsyncMock()
+    await opened(kept, box)
+    original = kept.get("3535834511")
+    earlier = "Einverstanden, hier mein Ausweis." if ended else "Unter 9.500 € geht nichts."
+    latest = "Sorry, die Uhr ist weg." if ended else "Für 8.400 € kannst du sie haben."
+    box.seller(earlier, pictures=int(ended))
+    drafts = 3 if stage == "third_draft" else 1
+    claude = Claude(
+        reads=[says(accepts_offer=True, bank_transfer=True, delivery="shipping", contract=True, id_card=True)
+               if ended else says(price=9500), says(ended=True) if ended else says(price=8400)],
+        writes=(["Maximal 9.000 €.", "Bis neuntausend."] if drafts == 3 else []) +
+               (["Danke! Der Kaufvertrag kommt gleich, dann überweise ich [BETRAG]."] if ended else
+                ["Wie wäre es mit [BETRAG]?", "[BETRAG] passt. Geht Überweisung?"]))
+    ask = negotiation.ask
+
+    async def crossing(*args):
+        result = await ask(*args)
+        if claude.asked == (["read"] if stage == "read" else ["read"] + ["write"] * drafts):
+            box.seller(latest)
+        return result
+
+    monkeypatch.setattr(negotiation, "ask", crossing)
+    talking = negotiator(claude, kept, notify)
+    await talking.follow_up(box)
+    await talking.tell_owner()
+
+    current = kept.get(original.ad_id)
+    assert claude.asked == ["read"] + ["write"] * drafts + ["read"] + ([] if ended else ["write"])
+    reads = [json.loads(request)["messages"][0]["content"][0]["text"] for request in claude.requests
+             if "reference" in json.loads(request)["output_config"]["format"]["schema"]["properties"]]
+    assert all(text in reads[-1] for text in [*original.sent, earlier, latest])
+    assert current.offered == original.offered and notify.await_count == 0
+    if ended:
+        assert current.status == "ended" and current.sent == original.sent
+        assert current.terms.price is None and not current.terms.bank_transfer
+        assert box.said[-1].text == latest
+    else:
+        assert current.status == "talking" and current.terms.price == 8400
+        assert current.sent == original.sent + ["8.400 € passt. Geht Überweisung?"]
+        assert box.said[-1].text == current.sent[-1]
+
+
+async def test_crossing_discarded_drafts_do_not_count_as_asking_a_refused_term_again(kept, monkeypatch):
+    box = Box()
+    await opened(kept, box)
+    box.seller("7.550 € passt, aber nur bar.")
+    claude = Claude(reads=[says(accepts_offer=True, bank_transfer=False)] * 3,
+                    writes=["[BETRAG] passt. Geht Überweisung?", "[BETRAG] wäre gut. Ist Überweisung möglich?",
+                            "[BETRAG] passt. Mit Überweisung sind wir beide abgesichert, geht das?"])
+    ask = negotiation.ask
+
+    async def crossing(*args):
+        result = await ask(*args)
+        if claude.asked[-1] == "write" and claude.asked.count("write") < 3:
+            box.seller("Wie gesagt, nur bar.")
+        return result
+
+    monkeypatch.setattr(negotiation, "ask", crossing)
+    await negotiator(claude, kept).follow_up(box)
+
+    current = kept.get("3535834511")
+    assert claude.asked == ["read", "write"] * 3
+    assert current.status == "talking" and current.terms.asked_again == ["bank transfer"]
+    assert len(current.sent) == 3
+    assert box.said[-1].text == "7.550 € passt. Mit Überweisung sind wir beide abgesichert, geht das?"
+
+
+async def test_crossing_the_owner_writing_during_a_draft_stops_the_agent(kept, monkeypatch):
+    box = Box()
+    await opened(kept, box)
+    original = kept.get("3535834511")
+    box.seller("Unter 9.500 € geht nichts.")
+    claude = Claude(reads=[says(price=9500)], writes=["Wie wäre es mit [BETRAG]?"])
+    ask = negotiation.ask
+
+    async def crossing(*args):
+        result = await ask(*args)
+        if claude.asked[-1] == "write":
+            box.said.append(Said(True, "Ich übernehme das selbst."))
+        return result
+
+    monkeypatch.setattr(negotiation, "ask", crossing)
+    await negotiator(claude, kept).follow_up(box)
+
+    current = kept.get(original.ad_id)
+    assert claude.asked == ["read", "write"] and current.status == "owner"
+    assert current.sent == original.sent and current.offered == original.offered
+    assert box.said[-1].text == "Ich übernehme das selbst."
+
+
 async def test_above_asking_festpreis_uses_the_ad_price_in_the_reading_and_the_agreement(kept):
     box = Box()
     await opened(kept, box)

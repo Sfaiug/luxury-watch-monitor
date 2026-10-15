@@ -675,6 +675,11 @@ class Negotiator:
         text = await self._write(negotiation, answer, said, says.question, talk.buyer)
         if text is None:
             return
+        # The draft's decisions are tentative until a fresh look confirms nobody wrote while it was being made.
+        negotiation.terms = Terms(**before["terms"])
+        if len((await messages.conversation(negotiation.conversation)).messages) > len(said):
+            return await self._answer(messages, negotiation)
+        negotiation.terms = terms
         # Kept before it is sent: should sending fail partway, it is known as the agent's, and sent again
         negotiation.sent.append(text)
         negotiation.seen, negotiation.before = len(said), before
