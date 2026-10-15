@@ -357,11 +357,18 @@ TITLE = "Rolex Submariner Date 126610LN"
 
 @pytest.mark.parametrize("written, sent", [
     ("Ist die Uhr noch da? Ich biete [BETRAG].", "Ist die Uhr noch da? Ich biete 8.000 €."),
-    ("Ist die Submariner 126610LN noch da? Abholung ginge um 14 Uhr, [BETRAG]?", "Ist die Submariner 126610LN noch da? "
-     "Abholung ginge um 14 Uhr, 8.000 €?"),  # the watch's own number, and one under 100
+    ("Ist die Submariner 126610LN noch da? Abholung ginge um 14 Uhr, [BETRAG]?", None),
+    ("Für die 126610LN: [BETRAG].", None),  # even the title's reference
     ("Ich würde [BETRAG] € zahlen, oder € [BETRAG]?", None),  # twice
     ("Ich würde [BETRAG] € zahlen.", "Ich würde 8.000 € zahlen."),  # its sign is the amount's
-    ("Abholung ginge um 14.30 Uhr, [BETRAG]? Sie hat 40,5 mm.", "Abholung ginge um 14.30 Uhr, 8.000 €? Sie hat 40,5 mm."),
+    ("Abholung ginge um 14.30 Uhr, [BETRAG]? Sie hat 40,5 mm.", None),
+    ("Über 40 komme ich nicht. [BETRAG]?", None),
+    ("Ich lege noch 50 drauf: [BETRAG].", None),
+    ("Ich melde mich in 2 Tagen. [BETRAG]?", None),
+    ("Noch 0 Fragen, [BETRAG] passt.", None),
+    ("Ich melde mich in ٢ Tagen. [BETRAG]?", None),
+    ("Ich melde mich in ² Tagen. [BETRAG]?", None),
+    ("Ich melde mich in zwei Tagen. [BETRAG]?", "Ich melde mich in zwei Tagen. 8.000 €?"),
     ("Ich biete [BETRAG], notfalls 8.000,50.", None),
     ("Ich biete [BETRAG] oder 8,5k", None),
     ("Ich lege fünfhundert drauf: [BETRAG]", None),
@@ -376,13 +383,21 @@ TITLE = "Rolex Submariner Date 126610LN"
     ("Einverstanden!", None),  # the amount nowhere
     ("[BETRAG] oder [BETRAG]", None),
 ])
-def test_the_code_writes_the_amount_in_and_the_ai_s_own_words_name_no_sum(written, sent):
-    assert filled(written, 8000, TITLE) == sent
+def test_no_digit_in_the_ai_s_own_words_when_the_code_writes_the_amount_in(written, sent):
+    assert filled(written, 8000) == sent
 
 
-def test_a_message_with_no_amount_decided_has_none():
-    assert filled("Schade, dann passt es leider nicht.", None, TITLE) == "Schade, dann passt es leider nicht."
-    assert filled("Schade, [BETRAG] ist zu wenig.", None, TITLE) is None
+@pytest.mark.parametrize("written, sent", [
+    ("Schade, dann passt es leider nicht.", "Schade, dann passt es leider nicht."),
+    ("Schade, [BETRAG] ist zu wenig.", None),
+    ("Über 40 komme ich nicht.", None),
+    ("Ich lege noch 50 drauf.", None),
+    ("8300 wäre okay.", None),
+    ("Ich melde mich in 2 Tagen.", None),
+    ("Ich melde mich in zwei Tagen.", "Ich melde mich in zwei Tagen."),
+])
+def test_no_digit_in_a_message_with_no_amount_decided(written, sent):
+    assert filled(written, None) == sent
 
 
 @dataclass
@@ -1149,16 +1164,28 @@ async def test_a_draft_saying_something_again_goes_out_should_its_rewrite_be_ref
     assert kept.get("3535834511").status == "talking"
 
 
-async def test_a_draft_naming_a_sum_itself_is_written_anew_told_why(kept):
+@pytest.mark.parametrize("title, written", [
+    (TITLE, "8.500 € ist mir zu viel. [BETRAG]?"),
+    (TITLE, "Über 40 komme ich nicht. [BETRAG]?"),
+    (TITLE, "Ich lege noch 50 drauf: [BETRAG]."),
+    ("Festpreis 8300", "8300 wäre okay. [BETRAG]?"),
+    (TITLE, "Für die 126610LN: [BETRAG]."),
+])
+async def test_no_digit_drafts_are_written_anew_told_why_regardless_of_the_title(kept, title, written):
     box = Box()
     await opened(kept, box)
+    negotiation = kept.get("3535834511")
+    negotiation.title = title
+    kept.save(negotiation)
     box.seller("Unter 9.500 € geht nichts.")
-    claude = Claude(reads=[says(price=9500)], writes=["8.500 € ist mir zu viel. [BETRAG]?", "Das ist mir zu viel. [BETRAG]?"])
+    claude = Claude(reads=[says(price=9500)], writes=[written, "Das ist mir zu viel. [BETRAG]?"])
 
     await negotiator(claude, kept).follow_up(box)
 
     assert box.said[-1].text == "Das ist mir zu viel. 8.050 €?"
+    assert "no digit" in asked_to_write(claude)
     assert "not even one the seller wrote" in asked_to_write(claude)
+    assert "Write no digit" in instructed(claude) and '"zwei Tage"' in instructed(claude)
 
 
 @pytest.mark.parametrize("written, why", [
