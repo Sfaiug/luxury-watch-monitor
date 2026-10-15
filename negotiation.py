@@ -516,6 +516,7 @@ class Negotiator:
         self.logger = logger
         self.a_while = a_while  # how long the next answer waits
         self.prices = prices
+        self._starters = {}
 
     def ask_to_start(self, negotiation: Negotiation) -> bool:
         """Have the negotiation start at the next look at the messages; once per offer."""
@@ -555,8 +556,22 @@ class Negotiator:
 
     async def start(self, messages):
         """Write the first message asked for, or check at the next look that it reached the seller."""
-        for negotiation in self.negotiations.with_status(*STARTS):
-            await self._look(messages, negotiation, self._open)
+        for queued in self.negotiations.with_status(*STARTS):
+            negotiation = self.negotiations.get(queued.ad_id)
+            if negotiation is None or negotiation.status not in STARTS:
+                continue
+            task = asyncio.create_task(self._look(messages, negotiation, self._open))
+            self._starters[negotiation.ad_id] = task
+            try:
+                # Pruning cancels this start alone; cancelling start() still cancels the whole pass.
+                result, = await asyncio.gather(task, return_exceptions=True)
+                if isinstance(result, BaseException):
+                    if isinstance(result, asyncio.CancelledError) and self._starters.get(negotiation.ad_id) is not task:
+                        continue
+                    raise result
+            finally:
+                if self._starters.get(negotiation.ad_id) is task:
+                    del self._starters[negotiation.ad_id]
 
     async def _look(self, messages, negotiation: Negotiation, action):
         try:
@@ -598,6 +613,8 @@ class Negotiator:
             self.negotiations.save(negotiation)
 
             def before_send(before):
+                if self._starters.get(negotiation.ad_id) is not asyncio.current_task():
+                    raise asyncio.CancelledError
                 negotiation.status, negotiation.seen = "opening", before
                 self.negotiations.save(negotiation)
 
@@ -751,6 +768,9 @@ class Negotiator:
         for negotiation in self.negotiations.with_status("pending"):
             if gone(negotiation.channel):
                 self.negotiations.remove(negotiation.ad_id)
+                # Revoke this task's permission to send even if another filter requeues the ad.
+                if task := self._starters.pop(negotiation.ad_id, None):
+                    task.cancel()
                 self.logger.info(f"Negotiation: dropped, its filter gone: {negotiation.title[:60]}")
 
     def decide(self, ad_id: str, choice: str) -> str:
