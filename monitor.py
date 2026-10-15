@@ -572,6 +572,9 @@ class WatchMonitor:
         for key in self.filters.keys() - filters.keys():
             self.scrapers.pop(key, None)
             self.seen_items.pop(key, None)
+        if self.negotiator:
+            # Deleting a filter's channel ends the filter: no seller is written to for it any more
+            self.negotiator.forget_unbegun(lambda channel: channel not in filters)
         for key in filters.keys() - self.filters.keys():
             try:
                 scraper = filters[key].scraper(self.logger)
@@ -609,9 +612,7 @@ class WatchMonitor:
             try:
                 if self.prices.trades_warned:
                     return
-                channel = APP_CONFIG.discord_alert_channel_id or next(
-                    (site.discord_channel_id for site in SITE_CONFIGS.values() if site.discord_channel_id), None
-                )
+                channel = self._owner_channel()
                 use_bot = isinstance(channel, str) and channel and APP_CONFIG.discord_bot_token
                 webhook = next((site.webhook_url for site in SITE_CONFIGS.values() if site.webhook_url), None)
                 message = "The controlling export could not be read. The previous trades are still in use. " + self._trades_error
@@ -700,6 +701,13 @@ class WatchMonitor:
              f"it opens at {euros(asked.offered)} and pays {euros(asked.limit)} at most."),
         )
 
+    @staticmethod
+    def _owner_channel() -> Optional[str]:
+        """The owner's own channel: the alert channel, else the first shop's."""
+        return APP_CONFIG.discord_alert_channel_id or next(
+            (site.discord_channel_id for site in SITE_CONFIGS.values() if site.discord_channel_id), None
+        )
+
     async def _tell_owner(self, channel: str, text: str, buttons=()):
         """Say something in a Discord channel, given its id or a filter's key, with buttons to answer by, each a label and its
         id; raises unless it was posted."""
@@ -711,6 +719,9 @@ class WatchMonitor:
         status, answer = await DiscordApi(self.session, APP_CONFIG).call(
             "POST", f"/channels/{channel.split(':', 1)[-1]}/messages", message
         )
+        if status == 404 and channel.startswith("filter:") and self._owner_channel():
+            # The filter's channel is gone, and the filter with it: what the owner is still to hear goes to theirs
+            return await self._tell_owner(self._owner_channel(), text, buttons)
         if status not in (200, 201):
             raise RuntimeError(f"Discord answered {status}: {answer}")
 
