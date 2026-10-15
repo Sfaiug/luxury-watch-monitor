@@ -30,6 +30,7 @@ if platform.system() == "Windows":
 
 from monitor import WatchMonitor
 from config import SITE_CONFIGS
+from notifications import NotificationManager
 
 
 def validate_environment() -> tuple[bool, list[str]]:
@@ -43,7 +44,9 @@ def validate_environment() -> tuple[bool, list[str]]:
     warnings = []
 
     for site_config in SITE_CONFIGS.values():
-        if not site_config.webhook_url and not site_config.discord_channel_id:
+        if not site_config.webhook_url and not NotificationManager.bot_channel_id(
+            site_config
+        ):
             warnings.append(
                 f"⚠️  No Discord destination configured for {site_config.name}. "
                 f"Set {site_config.webhook_env_var} or a Discord channel id."
