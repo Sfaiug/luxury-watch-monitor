@@ -14,13 +14,13 @@ from unittest.mock import AsyncMock, DEFAULT, Mock, patch
 from decimal import Decimal
 
 from config import APP_CONFIG, SITE_CONFIGS
-from agent import Agent, Deals, Reading
+from agent import Agent, Deals, Reading, Verdict
 from chrono24 import FULL_SET, USED
 from filters import Filter, FilterStore
 from monitor import WatchMonitor, SCRAPER_CLASSES
 from models import WatchData, ScrapingSession
 from notifications import NotificationManager
-from negotiation import Negotiations, Negotiator
+from negotiation import Negotiation, Negotiations, Negotiator
 from persistence import SeenIds
 from prices import Prices
 from scrapers.base import BaseScraper
@@ -1347,3 +1347,35 @@ async def test_owed_a_verdict_manual_request_before_the_initial_filter_sync_is_c
         if cycle is not None:
             await asyncio.gather(cycle, return_exceptions=True)
         await monitor.cleanup()
+
+
+@pytest.mark.parametrize("status, why, stands", [
+    ("ended", "the seller asks 11.000 €, above the limit of 8.608 €",
+     "The agent let the seller of https://www.kleinanzeigen.de/s-anzeige/123 go: the seller asks 11.000 €, "
+     "above the limit of 8.608 €."),
+    ("owner", "the owner wrote in the conversation",
+     "The agent handed https://www.kleinanzeigen.de/s-anzeige/123 to you: the owner wrote in the conversation."),
+    ("talking", "", "The agent negotiates on https://www.kleinanzeigen.de/s-anzeige/123 already: "
+                    "it offered 7.550 € and pays 8.608 € at most."),
+])
+async def test_press_on_an_offer_negotiated_before_says_how_it_stands(status, why, stands, tmp_path):
+    monitor = WatchMonitor(log_level="ERROR")
+    monitor._tell_owner = AsyncMock()
+    monitor.negotiator = Negotiator(None, Negotiations(tmp_path / "deals.sqlite3"), monitor._tell_owner, monitor.logger)
+    monitor.filters = {"filter:42": Filter("42", "1", "kleinanzeigen", "private", "Rolex", negotiate=False)}
+    monitor._sync_filters = Mock()
+    monitor.agent = Mock()
+    url = "https://www.kleinanzeigen.de/s-anzeige/123"
+    kept = Negotiation("123", "filter:42", "Rolex", url, 8608, 7550, conversation="c1", status=status, why=why,
+                       sent=["Ist die Uhr noch da?", "Ich biete 7.550 €."])
+    monitor.negotiator.negotiations.save(kept)
+
+    # A press answers at once, without reading the offer afresh
+    assert monitor._negotiate_pressed({"data": {"custom_id": "negotiate:123"}, "channel_id": "42"}) == stands
+    monitor.agent.consider.assert_not_called()
+
+    # A verdict that comes for it all the same says the same in the filter's channel
+    watch = WatchData(title="Rolex", url=url, site_name="Kleinanzeigen", site_key="filter:42", price=Decimal("8500"))
+    await monitor._negotiate_by_hand(watch, Verdict(True, "worth contacting", None, Decimal("8608"), Decimal("7450")))
+    monitor._tell_owner.assert_awaited_once_with("filter:42", stands)
+    assert monitor.negotiator.negotiations.get("123") == kept

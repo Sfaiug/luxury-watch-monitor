@@ -665,6 +665,9 @@ class WatchMonitor:
         if decided:
             return decided
         ad_id = payload["data"]["custom_id"].split(":", 1)[1]
+        stands = self.negotiator.stands(ad_id)
+        if stands:
+            return stands
         alert = ((payload.get("message") or {}).get("embeds") or [{}])[0]
         watch = WatchData(
             title=alert.get("title") or offer_url(ad_id),
@@ -689,7 +692,7 @@ class WatchMonitor:
             return await self._tell_owner(watch.site_key, f"The agent leaves {watch.url} alone: {verdict.why}.")
         asked = self._ask_to_negotiate(watch, verdict, opening(watch.price or verdict.limit, verdict.limit))
         if not asked:
-            return await self._tell_owner(watch.site_key, f"The agent negotiates on {watch.url} already.")
+            return await self._tell_owner(watch.site_key, self.negotiator.stands(watch.url.rsplit("/", 1)[1]))
         await self._tell_owner(
             watch.site_key,
             f"The agent negotiates on {watch.url}: " +
