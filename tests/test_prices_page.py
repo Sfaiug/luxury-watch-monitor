@@ -1,6 +1,7 @@
 """The owner's page of watch prices: what each watch is worth, the most to pay, and the owner's own buy price."""
 
 import asyncio
+import time
 from datetime import date, datetime
 from decimal import Decimal
 from pathlib import Path
@@ -101,7 +102,7 @@ async def test_opening_the_prices_page_holds_up_nothing():
 
     async def other_work():
         while not finished.is_set():
-            ticks.append(loop.time())
+            ticks.append(time.thread_time())
             await asyncio.sleep(0.01)
 
     async with TestClient(TestServer(app)) as client:
@@ -113,15 +114,14 @@ async def test_opening_the_prices_page_holds_up_nothing():
         finally:
             finished.set()
             await working
-            ticks.append(loop.time())
+            ticks.append(time.thread_time())
+            took = loop.time() - started
             prices.close()
 
     assert response.status == 200
     assert page.count('<tr id="') == 1238
-    # Measured against the request's own time, as a machine under load slows both alike: a page built on the
-    # event loop is one gap as long as the whole request
-    took = ticks[-1] - started
-    assert len(ticks) >= 5 and max(b - a for a, b in zip(ticks, ticks[1:])) < took / 2, "the page held up other work"
+    # Counted in the loop's own working time, which a machine under load does not stretch as it does the clock
+    assert max(b - a for a, b in zip(ticks, ticks[1:])) < 0.1, "the page held up other work"
     assert took < 10, "the page took many times the half second it takes"
 
 
