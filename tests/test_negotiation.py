@@ -1044,6 +1044,50 @@ async def test_cannot_write_login_expiry_is_said_once_until_the_api_works_again(
     assert kept.get("3535834511").tries == 0
 
 
+@pytest.mark.parametrize("stage", ["draft", "pending", "opening", "talking"])
+async def test_an_outage_between_login_redirects_does_not_repeat_the_notice(monkeypatch, kept, stage):
+    box, notify, browser = Box(), AsyncMock(), Browser()
+    text = "Ist die Uhr noch zu haben?"
+    current = asked_for()
+    current.status = "pending" if stage == "draft" else stage
+    current.sent = [] if stage == "draft" else [text]
+    current.conversation = "c1"
+    kept.save(current)
+    box.said.append(Said(True, text))
+    outage = RuntimeError("service answered 503")
+    if stage == "draft":
+        monkeypatch.setattr(negotiation, "ask", AsyncMock(side_effect=[outage, negotiation.Written(message=text)]))
+    elif stage == "pending":
+        box.contact = AsyncMock(side_effect=[outage, "c1"])
+    elif stage == "opening":
+        box.bought = AsyncMock(side_effect=[outage, "c1"])
+    else:
+        healthy = await box.conversation("c1")
+        box.conversation = AsyncMock(side_effect=[outage, healthy])
+    login = "https://www.kleinanzeigen.de/m-einloggen.html"
+    messages = browser.at
+    browser.at = login
+    looks = 0
+
+    async def pause(seconds):
+        nonlocal looks
+        looks += 1
+        # Redirect, outage, redirect, successful session use, then a new expiry.
+        assert notify.await_count == (2 if looks == 5 else 1)
+        if looks == 5:
+            raise asyncio.CancelledError
+        browser.at = messages if looks in (1, 3) else login
+
+    monkeypatch.setattr(negotiation.chrome, "Chrome", lambda: browser)
+    monkeypatch.setattr(negotiation, "Messages", lambda page: box)
+    monkeypatch.setattr(negotiation.asyncio, "sleep", pause)
+    with pytest.raises(asyncio.CancelledError):
+        await negotiation.keep_talking(negotiator(None, kept, notify), "session.json", logging.getLogger("test"),
+                                       now=lambda: datetime(2026, 10, 15, 10, tzinfo=negotiation.GERMANY))
+
+    assert all(call.args == ("filter:42", negotiation.LOGGED_OUT) for call in notify.await_args_list)
+
+
 def test_a_match_worth_contacting_is_negotiated_where_its_filter_says_so(tmp_path, kept):
     monitor = WatchMonitor(log_level="ERROR")
     monitor.filter_store = FilterStore(tmp_path / "filters.json")
