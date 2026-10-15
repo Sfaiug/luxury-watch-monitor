@@ -15,7 +15,7 @@ from anthropic import AsyncAnthropic
 from playwright.async_api import TimeoutError
 
 import negotiation
-from agent import Agent, Verdict
+from agent import Agent, Deals, Verdict
 from filters import Filter, FilterStore
 from kleinanzeigen_messages import Messages, Unsent
 from models import WatchData
@@ -1517,11 +1517,14 @@ def by_hand(tmp_path, kept):
     monitor._sync_filters()
     monitor.negotiator = negotiator(Claude(), kept)
     monitor._tell_owner = AsyncMock()
+    monitor.deals = Deals(tmp_path / "deals.sqlite3")
     return monitor
 
 
 async def press(monitor, judged):
-    monitor.agent = Mock(judge=AsyncMock(return_value=judged))
+    monitor.agent = Agent(None, None, None, monitor.deals, logging.getLogger("test"),
+                          on_requested_verdict=monitor._negotiate_by_hand)
+    monitor.agent.judge = AsyncMock(return_value=(judged[0], None, judged[1]))
     button = monitor._negotiate_button(WatchData(title="Omega", url="https://www.kleinanzeigen.de/s-anzeige/3519758108",
                                                  site_name="Kleinanzeigen", site_key="filter:43"))
     monitor._negotiate_pressed({"data": {"custom_id": button["custom_id"]}, "channel_id": "43",
@@ -1549,8 +1552,8 @@ async def test_the_button_starts_a_chosen_match_up_to_its_limit_whatever_it_asks
 
 async def test_above_asking_automatic_negotiations_keep_the_price_read_from_the_ad(by_hand, kept):
     verdict = Verdict(True, "worth contacting", Decimal("10800"), Decimal("8600"), Decimal("7000"))
-    agent = Agent(None, None, None, None, logging.getLogger("test"), by_hand._negotiate_if_asked)
-    agent.judge = AsyncMock(return_value=(Decimal("8000"), verdict))
+    agent = Agent(None, None, None, by_hand.deals, logging.getLogger("test"), by_hand._negotiate_if_asked)
+    agent.judge = AsyncMock(return_value=(Decimal("8000"), None, verdict))
     watch = WatchData(title=TITLE, url="https://www.kleinanzeigen.de/s-anzeige/3535834511",
                       site_name="Kleinanzeigen", site_key="filter:42", price=Decimal("9900"))
 

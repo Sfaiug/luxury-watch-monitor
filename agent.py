@@ -31,6 +31,7 @@ STEP = 50  # euros an offer moves by at least, and is rounded down to
 TOO_CHEAP = Decimal("0.5")  # below this share of its worth an offer is not what it says
 TOO_DEAR = Decimal("1.2")  # above this share of the limit a seller will not come down far enough
 WAITS = timedelta(days=7)  # a match waits this long at most for its watch's prices: by then it is mostly sold or gone
+ATTEMPTS = 3  # attempts to read a match, including one interrupted by a restart
 
 INSTRUCTIONS = """You read a watch offer on Kleinanzeigen for a watch dealer who may buy it.
 Report only what the offer states or its photos show; leave out what neither does.
@@ -210,9 +211,71 @@ class Deals:
             # A file from before the verdicts named their filter
             if "filter" not in [column[1] for column in self._db.execute("PRAGMA table_info(verdicts)")]:
                 self._db.execute("ALTER TABLE verdicts ADD COLUMN filter TEXT")
+            self._db.execute("""
+                CREATE TABLE IF NOT EXISTS judging (
+                    address TEXT NOT NULL,
+                    filter TEXT NOT NULL,
+                    title TEXT NOT NULL,
+                    asking TEXT,
+                    requested INTEGER NOT NULL DEFAULT 0,
+                    attempts INTEGER NOT NULL DEFAULT 0,
+                    error TEXT,
+                    warned INTEGER NOT NULL DEFAULT 0,
+                    PRIMARY KEY (address, filter)
+                )
+            """)
 
     def close(self):
         self._db.close()
+
+    def owe(self, watches: List[WatchData], requested: bool) -> List[WatchData]:
+        """Keep each match before any judging task starts; repeated submissions keep its attempt count."""
+        added = []
+        with self._db:
+            for watch in watches:
+                inserted = self._db.execute(
+                    "INSERT OR IGNORE INTO judging (address, filter, title, asking, requested) VALUES (?, ?, ?, ?, ?)",
+                    (watch.url, watch.site_key, watch.title, str(watch.price) if watch.price is not None else None, requested),
+                ).rowcount
+                if inserted:
+                    added.append(watch)
+                elif requested:
+                    self._db.execute(
+                        "UPDATE judging SET requested = 1 WHERE address = ? AND filter = ?",
+                        (watch.url, watch.site_key),
+                    )
+        return added
+
+    def owed(self) -> List[WatchData]:
+        return [
+            WatchData(title=title, url=address, site_name="Kleinanzeigen", site_key=key,
+                      price=Decimal(asking) if asking is not None else None)
+            for address, key, title, asking in self._db.execute("SELECT address, filter, title, asking FROM judging")
+        ]
+
+    def judging(self, watch: WatchData) -> Optional[sqlite3.Row]:
+        self._db.row_factory = sqlite3.Row
+        return self._db.execute(
+            "SELECT * FROM judging WHERE address = ? AND filter = ?", (watch.url, watch.site_key)
+        ).fetchone()
+
+    def attempted(self, watch: WatchData):
+        with self._db:
+            self._db.execute(
+                "UPDATE judging SET attempts = attempts + 1 WHERE address = ? AND filter = ?", (watch.url, watch.site_key)
+            )
+
+    def failed(self, watch: WatchData, error: str):
+        with self._db:
+            self._db.execute(
+                "UPDATE judging SET error = ? WHERE address = ? AND filter = ?", (error, watch.url, watch.site_key)
+            )
+
+    def warned(self, watch: WatchData):
+        with self._db:
+            self._db.execute(
+                "UPDATE judging SET warned = 1 WHERE address = ? AND filter = ?", (watch.url, watch.site_key)
+            )
 
     def judged(self, watch: WatchData, asking: Optional[Decimal], reading: Optional[Reading], verdict: Verdict, at: datetime):
         def amount(value):
@@ -235,6 +298,7 @@ class Deals:
                     watch.site_key,
                 ),
             )
+            self._db.execute("DELETE FROM judging WHERE address = ? AND filter = ?", (watch.url, watch.site_key))
 
     def latest(self, count: int) -> List[sqlite3.Row]:
         self._db.row_factory = sqlite3.Row
@@ -244,7 +308,8 @@ class Deals:
         """The verdicts since then on offers the AI read that came to no limit."""
         self._db.row_factory = sqlite3.Row
         return self._db.execute(
-            "SELECT * FROM verdicts WHERE reading IS NOT NULL AND buy_limit IS NULL AND judged >= ?",
+            "SELECT * FROM verdicts WHERE reading IS NOT NULL AND buy_limit IS NULL AND judged >= ? "
+            "AND NOT EXISTS (SELECT 1 FROM judging WHERE judging.address = verdicts.address AND judging.filter = verdicts.filter)",
             (since.isoformat(timespec="seconds"),),
         ).fetchall()
 
@@ -252,19 +317,70 @@ class Deals:
 class Agent:
     """Judges each new Kleinanzeigen match: reads its page, asks the AI, decides, keeps the verdict."""
 
-    def __init__(self, client, fetch, prices: Prices, deals: Deals, logger, on_verdict=None):
+    def __init__(self, client, fetch, prices: Prices, deals: Deals, logger, on_verdict=None,
+                 on_requested_verdict=None, notify=None):
         self.client = client  # an AsyncAnthropic
         self.fetch = fetch  # the page at an address, as text
         self.prices = prices
         self.deals = deals
         self.logger = logger
         self.on_verdict = on_verdict  # (watch, verdict): what follows a verdict, as a negotiation
+        self.on_requested_verdict = on_requested_verdict  # async (watch, verdict): a match chosen by the owner
+        self.notify = notify  # async (filter, text): judging has used up its attempts
+        self._judging = set()
 
-    async def consider(self, watches: List[WatchData]):
+    def consider(self, watches: List[WatchData], *, requested: bool = False):
+        """Keep the whole batch synchronously, so even a task cancelled before it starts owes these verdicts."""
+        return self._consider(self.deals.owe(watches, requested))
+
+    def retry(self):
+        """This cycle's outstanding matches, including those kept by an earlier process."""
+        return self._consider(self.deals.owed())
+
+    async def _consider(self, watches: List[WatchData]):
         for watch in watches:
-            judged = await self.judge(watch)
-            if judged:
-                self._follow(replace(watch, price=judged[0], price_display=None), judged[1])
+            key = (watch.url, watch.site_key)
+            if key in self._judging:
+                continue
+            self._judging.add(key)
+            try:
+                row = self.deals.judging(watch)
+                if row is None:
+                    continue
+                if row["attempts"] >= ATTEMPTS:
+                    await self._warn(watch)
+                    continue
+                # Charge before the first await: cancelling an attempt cannot give it an unlimited budget.
+                self.deals.attempted(watch)
+                try:
+                    asking, reading, verdict = await self.judge(watch)
+                    requested = self.deals.judging(watch)["requested"]
+                    self.deals.judged(watch, asking, reading, verdict, datetime.now())
+                except Exception as e:
+                    self.deals.failed(watch, str(e))
+                    self.logger.warning(f"Agent could not judge {watch.url}: {e}")
+                    await self._warn(watch)
+                    continue
+                self.logger.info(f"Agent: {watch.title[:60]}: {verdict.why}")
+                priced = replace(watch, price=asking, price_display=None)
+                if requested and self.on_requested_verdict:
+                    await self.on_requested_verdict(priced, verdict)
+                else:
+                    self._follow(priced, verdict)
+            finally:
+                self._judging.discard(key)
+
+    async def _warn(self, watch: WatchData):
+        row = self.deals.judging(watch)
+        if row["attempts"] < ATTEMPTS or row["warned"] or not self.notify:
+            return
+        error = row["error"] or "judging was interrupted"
+        try:
+            await self.notify(watch.site_key, f"The agent could not judge {watch.url} after {ATTEMPTS} attempts: {error[:500]}.")
+        except Exception as e:
+            self.logger.warning(f"Agent could not report its failure on {watch.url}: {e}")
+        else:
+            self.deals.warned(watch)
 
     def reconsider(self):
         """Decide again on the matches that came before their watch's Chrono24 offers, now that the search may have
@@ -292,28 +408,23 @@ class Agent:
         except Exception as e:
             self.logger.warning(f"Agent could not follow up on {watch.url}: {e}")
 
-    async def judge(self, watch: WatchData) -> Optional[Tuple[Optional[Decimal], Verdict]]:
-        """Read the offer's own page, have the AI read it and decide, keep the verdict; the asking price and the
-        verdict, None when the page could not be read."""
-        try:
-            offer = offer_page(await self.fetch(watch.url))
-            # The price on the offer's own page is the one asked now
-            asking = asking_price(offer.price_text) or watch.price
-            reading = await read(self.client, offer)
-            if reading is None:
-                verdict = Verdict(False, "the AI declined to read it")
-            else:
-                if reading.is_watch_for_sale and reading.reference:
-                    # A watch offered: its price is one more, and its
-                    # reference joins the ones Chrono24 is searched for
-                    self.prices.saw([_as_offer(watch, reading)])
-                verdict = decide(reading, asking, self.prices)
-            self.deals.judged(watch, asking, reading, verdict, datetime.now())
-            self.logger.info(f"Agent: {watch.title[:60]}: {verdict.why}")
-            return asking, verdict
-        except Exception as e:
-            self.logger.warning(f"Agent could not judge {watch.url}: {e}")
-            return None
+    async def judge(self, watch: WatchData) -> Tuple[Optional[Decimal], Optional[Reading], Verdict]:
+        """Read the offer and decide; a failed reading leaves its durable claim to another attempt."""
+        offer = offer_page(await self.fetch(watch.url))
+        if not offer.title:
+            raise ValueError("the offer page could not be read")
+        # The price on the offer's own page is the one asked now
+        asking = asking_price(offer.price_text) or watch.price
+        reading = await read(self.client, offer)
+        if reading is None:
+            verdict = Verdict(False, "the AI declined to read it")
+        else:
+            if reading.is_watch_for_sale and reading.reference:
+                # A watch offered: its price is one more, and its
+                # reference joins the ones Chrono24 is searched for
+                self.prices.saw([_as_offer(watch, reading)])
+            verdict = decide(reading, asking, self.prices)
+        return asking, reading, verdict
 
 
 def _as_offer(watch: WatchData, reading: Reading) -> WatchData:

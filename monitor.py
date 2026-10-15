@@ -3,7 +3,6 @@
 import asyncio
 import signal
 import os
-from dataclasses import replace
 from decimal import Decimal
 from typing import Dict, Set, Optional, Type
 import aiohttp
@@ -152,7 +151,8 @@ class WatchMonitor:
 
             client = AsyncAnthropic()
             self.deals = Deals(APP_CONFIG.deals_file)
-            self.agent = Agent(client, self._page, self.prices, self.deals, self.logger, self._negotiate_if_asked)
+            self.agent = Agent(client, self._page, self.prices, self.deals, self.logger, self._negotiate_if_asked,
+                               self._negotiate_by_hand, self._tell_owner)
             if os.path.exists(APP_CONFIG.kleinanzeigen_session_file):
                 self.negotiator = Negotiator(
                     client, Negotiations(APP_CONFIG.deals_file), self._tell_owner, self.logger
@@ -224,6 +224,11 @@ class WatchMonitor:
                         f"Error stopping Discord interaction server: {e}", exc_info=True
                     )
 
+            for judging in self._judging:
+                judging.cancel()
+            await asyncio.gather(*self._judging, return_exceptions=True)
+            self._judging.clear()
+
             # Close aiohttp session with proper error handling
             if self.session:
                 try:
@@ -277,8 +282,6 @@ class WatchMonitor:
                     self.action_store.close()
                     self.action_store = None
 
-                for judging in self._judging:
-                    judging.cancel()
                 self.agent = None
                 if self.negotiator:
                     self.negotiator.negotiations.close()
@@ -476,6 +479,8 @@ class WatchMonitor:
             await self.filter_flow.tend()
         self._sync_filters()
         await self._read_trades()
+        if self.agent:
+            self._judge_in_background(self.agent.retry())
 
         # Log memory usage at start of cycle
         memory_start = self.memory_monitor.get_current_usage_mb()
@@ -666,21 +671,19 @@ class WatchMonitor:
             site_name="Kleinanzeigen",
             site_key=f"filter:{payload.get('channel_id') or payload['channel']['id']}",
         )
-        pressed = asyncio.create_task(self._negotiate_by_hand(watch))
-        self._judging.add(pressed)
-        pressed.add_done_callback(self._judging.discard)
+        self._judge_in_background(self.agent.consider([watch], requested=True))
         return "The agent reads the offer again and says here how it goes."
 
-    async def _negotiate_by_hand(self, watch: WatchData):
+    def _judge_in_background(self, judging):
+        task = asyncio.create_task(judging)
+        self._judging.add(task)
+        task.add_done_callback(self._judging.discard)
+
+    async def _negotiate_by_hand(self, watch: WatchData, verdict: Verdict):
         """The member chose this match: the agent negotiates on it wherever it has a limit, whatever the asking price."""
-        judged = await self.agent.judge(watch)
-        if not judged:
-            return await self._tell_owner(watch.site_key, f"The agent could not read {watch.url}.")
-        asking, verdict = judged
         if verdict.limit is None:
             return await self._tell_owner(watch.site_key, f"The agent leaves {watch.url} alone: {verdict.why}.")
-        asked = self._ask_to_negotiate(replace(watch, price=asking, price_display=None), verdict.limit,
-                                       opening(asking or verdict.limit, verdict.limit))
+        asked = self._ask_to_negotiate(watch, verdict.limit, opening(watch.price or verdict.limit, verdict.limit))
         if not asked:
             return await self._tell_owner(watch.site_key, f"The agent negotiates on {watch.url} already.")
         await self._tell_owner(
@@ -720,6 +723,10 @@ class WatchMonitor:
 
             # Scrape the site
             new_watches = await scraper.scrape()
+
+            # Keep the agent's claim before an alert can mark a match seen.
+            if self.agent and new_watches and site_key in self.filters:
+                self._judge_in_background(self.agent.consider(new_watches))
 
             # Enhanced logging for debugging
             if new_watches:
@@ -777,12 +784,6 @@ class WatchMonitor:
             # After the alerts, so that a price that cannot be kept delays none
             if self.prices and scraper.config.eu:
                 self.prices.saw(scraper.last_scan)
-
-            # A member's Kleinanzeigen matches go to the buying agent, beside the scans
-            if self.agent and new_watches and site_key in self.filters:
-                judging = asyncio.create_task(self.agent.consider(new_watches))
-                self._judging.add(judging)
-                judging.add_done_callback(self._judging.discard)
 
         except Exception as e:
             self.logger.exception(f"Error scraping {site_key}: {e}")
