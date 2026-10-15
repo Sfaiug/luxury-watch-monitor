@@ -2163,18 +2163,37 @@ async def test_its_own_answer_shown_after_a_failed_send_is_not_taken_for_the_own
     assert kept.get("3535834511").offered == 8050
 
 
-async def test_an_answer_that_did_not_reach_the_seller_is_sent_again_not_decided_again(kept):
+async def test_an_answer_that_did_not_reach_the_seller_is_sent_again_not_decided_again(kept, monkeypatch):
+    class Clock(datetime):
+        current = datetime(2026, 10, 5, 10, tzinfo=negotiation.GERMANY)
+
+        @classmethod
+        def now(cls, tz=None):
+            return cls.current.astimezone(tz) if tz else cls.current.replace(tzinfo=None)
+
+    monkeypatch.setattr(negotiation, "datetime", Clock)
     box = Box()
     await opened(kept, box)
     box.seller("Unter 9.500 € geht nichts.")
     box.reply = AsyncMock(side_effect=RuntimeError("the site did not answer"))
     await negotiator(Claude(reads=[says(price=9500)], writes=["Wie wäre es mit [BETRAG]?"]), kept).follow_up(box)
+    Clock.current += timedelta(days=2)
     del box.reply
     again = Claude()
 
     await negotiator(again, kept).follow_up(box)
 
     assert again.asked == [] and box.said[-1].text == "Wie wäre es mit 8.050 €?"
+
+    Clock.current += timedelta(days=5, minutes=1)
+    await negotiator(again, kept).follow_up(box)
+    assert kept.get("3535834511").status == "talking"
+
+    Clock.current += timedelta(days=2)
+    await negotiator(again, kept).follow_up(box)
+    gone = kept.get("3535834511")
+    assert (gone.status, gone.why) == ("ended", "the seller stopped answering")
+    assert again.asked == []
 
 
 async def test_a_seller_who_wrote_after_an_answer_failed_is_read_and_the_answer_taken_back(kept):

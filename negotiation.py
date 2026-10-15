@@ -638,6 +638,8 @@ class Negotiator:
         if unshown:
             # Its last answer did not reach the seller: that one, not another
             await messages.reply(negotiation.conversation, unshown[-1])
+            negotiation.wrote = datetime.now(GERMANY).isoformat()
+            self.negotiations.save(negotiation)
         if negotiation.status == "closing":
             return self._close(negotiation)
         if unshown:
