@@ -3,6 +3,7 @@
 import asyncio
 import signal
 import os
+from dataclasses import replace
 from decimal import Decimal
 from typing import Dict, Set, Optional, Type
 import aiohttp
@@ -609,6 +610,7 @@ class WatchMonitor:
             address=watch.url,
             limit=int(limit),
             offered=int(offered),
+            asking=int(watch.price) if watch.price is not None else None,
         )
         return asked if self.negotiator.ask_to_start(asked) else None
 
@@ -643,7 +645,8 @@ class WatchMonitor:
         asking, verdict = judged
         if verdict.limit is None:
             return await self._tell_owner(watch.site_key, f"The agent leaves {watch.url} alone: {verdict.why}.")
-        asked = self._ask_to_negotiate(watch, verdict.limit, opening(asking or verdict.limit, verdict.limit))
+        asked = self._ask_to_negotiate(replace(watch, price=asking, price_display=None), verdict.limit,
+                                       opening(asking or verdict.limit, verdict.limit))
         if not asked:
             return await self._tell_owner(watch.site_key, f"The agent negotiates on {watch.url} already.")
         await self._tell_owner(

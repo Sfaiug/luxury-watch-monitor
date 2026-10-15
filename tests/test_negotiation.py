@@ -15,7 +15,7 @@ from anthropic import AsyncAnthropic
 from playwright.async_api import TimeoutError
 
 import negotiation
-from agent import Verdict
+from agent import Agent, Verdict
 from filters import Filter, FilterStore
 from kleinanzeigen_messages import Messages, Unsent
 from models import WatchData
@@ -51,6 +51,58 @@ def test_once_it_has_offered_a_price_the_seller_names_within_the_limit_is_agreed
     assert move(8366, 8100, Terms(), says(price=8300), False) == Move("agreed", 8300, "next: payment by bank transfer")
     assert move(LIMIT, OPENING, Terms(), says(price=7000), False).price == 7000  # below the offer: theirs
     assert move(LIMIT, OPENING, Terms(), says(price=LIMIT + 1), False).kind == "offer"
+
+
+@pytest.mark.parametrize("asking, limit", [(8000, 8600), (8000, 7500), (7999, 8600)])
+def test_above_asking_requests_for_the_best_offer_never_raise_it_above_the_ad_or_limit(asking, limit):
+    terms, offered, answers = Terms(), 7000, []
+    move(limit, offered, terms, says(), False, opening=True, asking=asking)
+    for _ in range(12):
+        answer = move(limit, offered, terms, says(turns_down=True), False, asking=asking)
+        answers.append(answer)
+        if answer.price is not None:
+            assert answer.price <= min(asking, limit)
+            offered = answer.price
+        if answer.kind == "farewell":
+            break
+
+    assert answers[0].kind == "ask"
+    assert answers[-2] == Move("final", min(asking, limit) // 50 * 50, "the seller names no price")
+    assert answers[-1].kind == "farewell" and terms.price is None
+
+
+@pytest.mark.parametrize("accepts_offer", [False, True])
+def test_above_asking_a_seller_raising_the_ad_price_is_not_agreed_even_within_the_limit(accepts_offer):
+    terms = Terms()
+    answer = move(39000, 28000, terms, says(price=37500, accepts_offer=accepts_offer, turns_down=True),
+                  False, asking=32000)
+
+    assert answer.kind == "offer" and answer.price <= 32000 and terms.price is None
+    assert move(39000, answer.price, terms, says(price=31000), False, asking=32000).price == 31000
+    raised = move(39000, answer.price, terms, says(price=31500), False, asking=32000)
+    assert raised.kind == "final" and raised.price == 31000 and terms.price is None
+
+
+@pytest.mark.parametrize("accepts_offer", [False, True])
+def test_above_asking_accepting_an_earlier_lower_offer_agrees_at_that_sum(accepts_offer):
+    terms = Terms()
+
+    answer = move(LIMIT, 8300, terms, says(price=8050, accepts_offer=accepts_offer), False, asking=9000)
+
+    assert answer == Move("agreed", 8050, "next: payment by bank transfer")
+    assert terms.price == 8050
+
+
+@pytest.mark.parametrize("opening", [False, True])
+@pytest.mark.parametrize("accepts_offer, price", [(True, None), (True, 9000), (False, 8500), (False, None)])
+def test_above_asking_the_limit_also_bounds_openings_acceptances_and_existing_agreements(opening, accepts_offer, price):
+    terms = Terms(price=9000, bank_transfer=True, delivery="shipping", contract=True, id_card=True)
+
+    answer = move(8000, 9000, terms, says(price=price, accepts_offer=accepts_offer, turns_down=True),
+                  False, opening=opening, asking=8500)
+
+    assert answer.price is None or answer.price <= 8000
+    assert terms.price is None or terms.price <= 8000
 
 
 def test_the_agent_gives_half_the_room_left_to_its_limit():
@@ -244,11 +296,11 @@ def test_a_seller_lowering_the_agreed_price_keeps_the_lower_price(accepts_offer,
     assert move(8366, 8100, terms, says(bank_transfer=True), False) == Move("done", 8250, "all agreed")
 
 
-def test_a_seller_asking_more_than_the_agreed_price_opens_the_price_again_from_it():
+def test_above_asking_a_seller_raising_the_agreed_price_cannot_raise_the_ceiling():
     terms = Terms(price=OPENING, bank_transfer=True, delivery="shipping", contract=True, id_card=True)
 
     assert move(LIMIT, OPENING, terms, says(price=OPENING), False).kind == "done"  # the agreed price named again
-    assert move(LIMIT, 7000, terms, says(price=9000), False) == Move("offer", 8050, "the seller asks 9.000 €")
+    assert move(LIMIT, 7000, terms, says(price=9000), False).kind == "farewell"
     assert terms.price is None
 
 
@@ -287,7 +339,7 @@ def test_a_watch_the_owner_picks_up_needs_the_id_card_shown_there_not_as_a_pictu
 
 
 def test_a_pickup_the_owner_agreed_to_is_told_in_the_next_answer_even_a_new_offer():
-    terms = Terms(price=OPENING, bank_transfer=True, in_person=True)
+    terms = Terms(bank_transfer=True, in_person=True)
 
     assert move(LIMIT, OPENING, terms, says(delivery="pickup", price=9000), False) == Move(
         "offer", 8050, "the seller asks 9.000 €", pickup=True)
@@ -776,6 +828,41 @@ async def test_the_seller_s_counter_is_answered_and_nothing_new_asks_nothing(kep
 
     assert box.said[-1].text == "Wie wäre es mit 8.050 €?"
     assert kept.get("3535834511").offered == 8050
+
+
+async def test_above_asking_festpreis_uses_the_ad_price_in_the_reading_and_the_agreement(kept):
+    box = Box()
+    await opened(kept, box)
+    current = kept.get("3535834511")
+    current.asking = 8000
+    kept.save(current)
+    box.seller("Festpreis, wie in der Anzeige.")
+    claude = Claude(reads=[says(price=8000)], writes=["[BETRAG] passt. Geht Überweisung?"])
+
+    await negotiator(claude, kept).follow_up(box)
+
+    request = json.loads(claude.requests[0])
+    assert "The ad's asking price: 8.000 €" in request["messages"][0]["content"][0]["text"]
+    assert "Festpreis" in request["system"]
+    assert box.said[-1].text == "8.000 € passt. Geht Überweisung?"
+    assert kept.get(current.ad_id).terms.price == 8000
+
+
+async def test_above_asking_the_lowest_chat_price_survives_a_failed_reply_and_restart(kept):
+    box = Box()
+    await opened(kept, box)
+    box.seller("8.050 wären ok.")
+    box.reply = AsyncMock(side_effect=RuntimeError("the site did not answer"))
+    await negotiator(Claude(reads=[says(price=8050)], writes=["[BETRAG] passt. Geht Überweisung?"]), kept).follow_up(box)
+    assert kept.get("3535834511").terms.lowest == 8050
+    box.seller("Jetzt möchte ich doch 8.300.")
+    del box.reply
+
+    await negotiator(Claude(reads=[says(price=8300)], writes=["Für [BETRAG] würde ich sie nehmen."]), kept).follow_up(box)
+
+    current = kept.get("3535834511")
+    assert current.terms.lowest == 8050 and current.terms.price is None
+    assert current.offered == 7800 and box.said[-1].text == "Für 7.800 € würde ich sie nehmen."
 
 
 async def test_the_owner_hears_once_all_is_agreed_and_the_id_card_shown(kept):
@@ -1405,6 +1492,27 @@ async def test_the_button_starts_a_chosen_match_up_to_its_limit_whatever_it_asks
         "filter:43", "The agent negotiates on https://www.kleinanzeigen.de/s-anzeige/3519758108: "
         "it opens at 7.550 € and pays 8.608 € at most."
     )
+
+
+async def test_above_asking_automatic_negotiations_keep_the_price_read_from_the_ad(by_hand, kept):
+    verdict = Verdict(True, "worth contacting", Decimal("10800"), Decimal("8600"), Decimal("7000"))
+    agent = Agent(None, None, None, None, logging.getLogger("test"), by_hand._negotiate_if_asked)
+    agent.judge = AsyncMock(return_value=(Decimal("8000"), verdict))
+    watch = WatchData(title=TITLE, url="https://www.kleinanzeigen.de/s-anzeige/3535834511",
+                      site_name="Kleinanzeigen", site_key="filter:42", price=Decimal("9900"))
+
+    await agent.consider([watch])
+
+    (asked,) = kept.with_status("pending")
+    assert (asked.asking, asked.limit, asked.offered) == (8000, 8600, 7000)
+    assert watch.price == Decimal("9900")  # reading the ad does not change the match's alert
+
+
+async def test_above_asking_the_button_keeps_the_price_read_from_the_ad(by_hand, kept):
+    await press(by_hand, (Decimal("8000"), Verdict(True, "worth contacting", Decimal("10800"), Decimal("8600"))))
+
+    (asked,) = kept.with_status("pending")
+    assert (asked.asking, asked.limit, asked.offered) == (8000, 8600, 7000)
 
 
 async def test_the_button_says_why_the_agent_leaves_a_match_without_a_limit(by_hand, kept):

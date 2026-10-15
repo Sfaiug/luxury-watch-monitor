@@ -8,7 +8,7 @@ and with what opening offer. Each verdict is kept in deals.sqlite3.
 
 import math
 import sqlite3
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
 from decimal import Decimal
 from typing import List, Literal, Optional, Tuple, Type, TypeVar
@@ -264,7 +264,7 @@ class Agent:
         for watch in watches:
             judged = await self.judge(watch)
             if judged:
-                self._follow(watch, judged[1])
+                self._follow(replace(watch, price=judged[0], price_display=None), judged[1])
 
     def reconsider(self):
         """Decide again on the matches that came before their watch's Chrono24 offers, now that the search may have
