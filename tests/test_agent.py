@@ -187,7 +187,7 @@ async def test_without_price_a_negotiate_press_opens_from_the_limit(prices, deal
     monitor.filter_store.add(Filter("42", "1", "kleinanzeigen", "private", "Rolex"))
     monitor.agent = Agent(Claude(reading().model_dump_json()), AsyncMock(return_value=OFFER.replace("17.790 €", price_text)),
                           prices, deals, logging.getLogger("test"), on_requested_verdict=monitor._negotiate_by_hand)
-    monitor.negotiator = Mock(pressed=Mock(return_value=None))
+    monitor.negotiator = Mock(pressed=Mock(return_value=None), stands=Mock(return_value=None))
     monitor._tell_owner = AsyncMock()
 
     monitor._negotiate_pressed({"data": {"custom_id": "negotiate:3519758108"}, "channel_id": "42"})

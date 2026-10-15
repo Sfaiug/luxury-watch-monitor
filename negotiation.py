@@ -521,6 +521,25 @@ class Negotiator:
         self.negotiations.save(negotiation)
         return True
 
+    def stands(self, ad_id: str) -> Optional[str]:
+        """How the negotiation on an offer stands, in a sentence for the owner; None where there has been none."""
+        negotiation = self.negotiations.get(ad_id)
+        if negotiation is None:
+            return None
+        address, why = negotiation.address, f": {negotiation.why}" if negotiation.why else ""
+        if negotiation.status in STARTS:
+            return f"The agent writes to the seller of {address} at its next look."
+        if negotiation.status in ANSWERS:
+            return (f"The agent negotiates on {address} already: it offered {euros(negotiation.offered)} and pays "
+                    f"{euros(negotiation.limit)} at most." if negotiation.opened else
+                    f"The agent negotiates on {address} already and has named no price yet.")
+        return {
+            "deciding": f"The agent waits for your word on {address}{why}.",
+            "agreed": f"The agent agreed with the seller of {address} on {euros(negotiation.terms.price)}.",
+            "ended": f"The agent let the seller of {address} go{why}.",
+            "owner": f"The agent handed {address} to you{why}.",
+        }[negotiation.status]
+
     def waiting(self) -> List[Negotiation]:
         """The negotiations the next look at the messages serves."""
         return self.negotiations.with_status(*STARTS) + self._answered()
