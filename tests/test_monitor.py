@@ -15,6 +15,7 @@ from decimal import Decimal
 
 from config import APP_CONFIG, SITE_CONFIGS
 from agent import Agent, Deals, Reading
+from chrono24 import FULL_SET, USED
 from filters import Filter, FilterStore
 from monitor import WatchMonitor, SCRAPER_CLASSES
 from models import WatchData, ScrapingSession
@@ -1100,6 +1101,98 @@ async def test_not_taken_notification_cli_remembers_only_successful_alerts(
 
     assert mock_aiohttp_session.post.call_count == (1 if first_status == 204 else 2)
     assert list(shop.seen_ids) == [watch.composite_id]
+
+
+@pytest.mark.parametrize("price_text,pressed,expired,removed", [
+    ("9000 €", True, False, False),
+    ("17790 €", True, False, False),
+    ("VB", True, False, False),
+    ("9000 €", True, True, False),
+    ("9000 €", True, False, True),
+    ("9000 €", False, False, False),
+])
+async def test_press_kept_until_prices_come_after_restart(price_text, pressed, expired, removed, tmp_path, monkeypatch):
+    store = FilterStore(tmp_path / "filters.json")
+    store.add(Filter("42", "1", "kleinanzeigen", "private", "Rolex"))
+    watch = WatchData(title="Rolex", url="https://www.kleinanzeigen.de/s-anzeige/123",
+                      site_name="Kleinanzeigen", site_key="filter:42")
+    reading = Reading(is_watch_for_sale=True, brand="Rolex", model="Submariner", reference="116610LV",
+                      year=None, condition="good", box=True, papers=True)
+    read = AsyncMock(return_value=reading)
+    monkeypatch.setattr("agent.read", read)
+
+    def monitor_with(fetch):
+        monitor = WatchMonitor(log_level="ERROR")
+        monitor.persistence = Mock()
+        monitor.filter_store = store
+        monitor._sync_filters()
+        monitor._read_trades = AsyncMock()
+        monitor._scrape_single_site = AsyncMock()
+        monitor.prices = Prices(tmp_path / "prices.sqlite3")
+        monitor.deals = Deals(tmp_path / "deals.sqlite3")
+        monitor._tell_owner = AsyncMock()
+        monitor.negotiator = Negotiator(None, Negotiations(tmp_path / "deals.sqlite3"),
+                                        monitor._tell_owner, monitor.logger)
+        monitor.agent = Agent(None, fetch, monitor.prices, monitor.deals, monitor.logger,
+                              monitor._negotiate_if_asked, monitor._negotiate_by_hand, monitor._tell_owner)
+        return monitor
+
+    monitor = monitor_with(AsyncMock(return_value=f'<h1 id="viewad-title">Rolex</h1>'
+                                                f'<h2 id="viewad-price">{price_text}</h2>'))
+    try:
+        if pressed:
+            monitor._negotiate_pressed({"data": {"custom_id": "negotiate:123"}, "channel_id": "42"})
+            await asyncio.gather(*monitor._judging)
+            monitor._tell_owner.assert_awaited_once_with(
+                watch.site_key, f"The agent leaves {watch.url} alone: too few Chrono24 offers for 116610LV yet."
+            )
+        else:
+            await monitor.agent.consider([watch])
+            monitor._tell_owner.assert_not_awaited()
+        assert monitor.negotiator.negotiations.with_status("pending") == []
+        if expired:
+            with monitor.deals._db:
+                monitor.deals._db.execute(
+                    "UPDATE verdicts SET judged = ?", ((datetime.now() - timedelta(days=8)).isoformat(timespec="seconds"),)
+                )
+    finally:
+        await monitor.cleanup()
+
+    if removed:
+        store.remove("42")
+    fetch = AsyncMock()
+    restarted = monitor_with(fetch)
+    try:
+        offers = [WatchData(title="Rolex", url=f"https://www.chrono24.de/{number}", site_name="Chrono24",
+                            site_key="chrono24", reference="116610LV", price=Decimal("10800"))
+                  for number in range(5)]
+        restarted.prices.searched("116610LV", USED, len(offers), offers, datetime.now())
+        await restarted.run_monitoring_cycle()
+        await asyncio.gather(*restarted._judging)
+        assert restarted.negotiator.negotiations.with_status("pending") == []
+        restarted._tell_owner.assert_not_awaited()  # Full sets still await their own search.
+
+        restarted.prices.searched("116610LV", FULL_SET, 0, [], datetime.now())
+        for _ in range(2):
+            await restarted.run_monitoring_cycle()
+            await asyncio.gather(*restarted._judging)
+        pending = restarted.negotiator.negotiations.with_status("pending")
+        if pressed and not (expired or removed):
+            (negotiation,) = pending
+            assert (negotiation.ad_id, negotiation.channel, negotiation.limit, negotiation.offered) == (
+                "123", watch.site_key, 8608, 7550,
+            )
+            assert negotiation.asking == (None if price_text == "VB" else int(price_text.split()[0]))
+            restarted._tell_owner.assert_awaited_once_with(
+                watch.site_key, f"The agent negotiates on {watch.url}: it opens at 7.550 € and pays 8.608 € at most."
+            )
+        else:
+            assert pending == []
+            restarted._tell_owner.assert_not_awaited()
+        fetch.assert_not_awaited()
+        read.assert_awaited_once()
+    finally:
+        await restarted.cleanup()
 
 
 @pytest.mark.parametrize("requested", [False, True])

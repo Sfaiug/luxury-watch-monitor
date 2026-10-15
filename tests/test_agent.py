@@ -3,6 +3,7 @@
 import asyncio
 import json
 import logging
+from dataclasses import replace
 from datetime import datetime
 from decimal import Decimal
 from pathlib import Path
@@ -249,6 +250,68 @@ async def test_a_match_is_judged_from_its_own_page_and_the_verdict_kept(prices, 
     assert ("Rolex", "116610LV", USED) in prices.due([USED], SEARCHED, 20)
 
 
+@pytest.mark.parametrize("listed_price", [None, Decimal("9000")])
+async def test_press_kept_prices_the_first_reference_at_its_own_page_s_price(prices, deals, listed_price):
+    watch = replace(match(), price=listed_price, price_display=None)
+    agent = Agent(Claude(reading(reference="116610LV").model_dump_json()), AsyncMock(return_value=OFFER),
+                  prices, deals, logging.getLogger("test"))
+
+    await agent.consider([watch], requested=True)
+
+    assert ("Rolex", "116610LV", USED) in prices.due([USED], SEARCHED, 20)
+    assert prices._db.execute(
+        "SELECT reference, price FROM offers WHERE site_key = ? AND address = ?", (watch.site_key, watch.address)
+    ).fetchone() == ("116610LV", 17790)
+    assert deals.latest(1)[0]["requested"] == 1
+    assert watch.price == listed_price
+
+
+async def test_press_kept_across_an_automatic_rereading_and_restart(prices, deals, tmp_path):
+    requested, automatic = AsyncMock(), Mock()
+    agent = Agent(Claude(reading(reference="116610LV").model_dump_json()),
+                  AsyncMock(side_effect=[OFFER.replace("17.790", "9.000"), OFFER.replace("17.790", "8.800")]),
+                  prices, deals, logging.getLogger("test"), automatic, requested)
+    await agent.consider([match()], requested=True)
+    await agent.consider([match("8800")])
+    assert (deals.latest(1)[0]["asking"], deals.latest(1)[0]["requested"]) == (8800, 1)
+    automatic.assert_not_called()
+    deals.close()
+
+    reopened = Deals(tmp_path / "deals.sqlite3")
+    requested.reset_mock()
+    try:
+        found, offers = chrono24.read((PAGES / "chrono24.html").read_text(encoding="utf-8"), "Rolex", "116610LV", SEARCHED)
+        prices.searched("116610LV", USED, found, offers, SEARCHED)
+        prices.searched("116610LV", FULL_SET, 0, [], SEARCHED)
+        restarted = Agent(None, None, prices, reopened, logging.getLogger("test"), automatic, requested)
+        await restarted.reconsider()
+        await restarted.reconsider()
+        requested.assert_awaited_once()
+        watch, verdict = requested.await_args.args
+        assert (watch.url, watch.site_key, watch.price, verdict.limit) == (
+            match().url, match().site_key, Decimal("8800"), Decimal("8608"),
+        )
+        automatic.assert_not_called()
+    finally:
+        reopened.close()
+
+
+def test_press_kept_migration_leaves_old_verdicts_unrequested(prices, deals, tmp_path):
+    verdict = decide(reading(), match().price, prices)
+    deals.judged(match(), match().price, reading(), verdict, SEARCHED)
+    # The previous schema has no record of presses once their reading was saved.
+    with deals._db:
+        deals._db.execute("ALTER TABLE verdicts DROP COLUMN requested")
+    deals.close()
+
+    reopened = Deals(tmp_path / "deals.sqlite3")
+    try:
+        (kept,) = reopened.latest(1)
+        assert (kept["address"], kept["why"], kept["requested"]) == (match().url, "worth contacting", 0)
+    finally:
+        reopened.close()
+
+
 async def test_each_verdict_goes_on_to_what_follows_it(prices, deals):
     follows = Mock()
 
@@ -264,18 +327,18 @@ async def test_a_match_that_came_before_its_watch_s_prices_is_decided_again_once
     agent = Agent(Claude(reading(reference="116610LV").model_dump_json()), AsyncMock(return_value=OFFER.replace("17.790", "9.000")),
                   prices, deals, logging.getLogger("test"), follows)
     await agent.consider([match()])
-    agent.reconsider()
+    await agent.reconsider()
     assert [call.args[1].why for call in follows.call_args_list] == ["too few Chrono24 offers for 116610LV yet"]
 
     found, offers = chrono24.read((PAGES / "chrono24.html").read_text(encoding="utf-8"), "Rolex", "116610LV", SEARCHED)
     prices.searched("116610LV", USED, found, offers, SEARCHED)
-    agent.reconsider()
+    await agent.reconsider()
     assert follows.call_count == 1  # a full set waits for the full sets' search too
 
     full_sets = [offer for offer in offers if offer.price >= 11000]
     prices.searched("116610LV", FULL_SET, len(full_sets), full_sets, SEARCHED)
-    agent.reconsider()
-    agent.reconsider()
+    await agent.reconsider()
+    await agent.reconsider()
 
     watch, verdict = follows.call_args.args
     assert follows.call_count == 2 and (watch.url, watch.site_key) == (match().url, "filter:42")
@@ -293,7 +356,7 @@ async def test_a_full_set_that_comes_between_its_two_searches_waits_for_the_seco
     await agent.consider([match()])
     full_sets = [offer for offer in offers if offer.price >= 11000]
     prices.searched("116610LV", FULL_SET, len(full_sets), full_sets, SEARCHED)
-    agent.reconsider()
+    await agent.reconsider()
 
     assert [(call.args[1].why, call.args[1].worth) for call in follows.call_args_list] == [
         ("too few Chrono24 offers for 116610LV yet", None),
@@ -305,11 +368,11 @@ async def test_each_cycle_decides_again_on_the_matches_that_wait_for_their_price
     monitor = WatchMonitor(log_level="ERROR")
     monitor.filter_store = FilterStore(tmp_path / "filters.json")
     monitor.persistence = Mock()
-    monitor.agent = Mock(retry=AsyncMock())
+    monitor.agent = Mock(retry=AsyncMock(), reconsider=AsyncMock())
 
     await monitor.run_monitoring_cycle()
 
-    monitor.agent.reconsider.assert_called_once_with()
+    monitor.agent.reconsider.assert_awaited_once_with()
     await asyncio.gather(*monitor._judging)
     monitor.agent.retry.assert_awaited_once_with(monitor.filters)
 
@@ -496,13 +559,130 @@ async def test_owed_a_verdict_for_a_fresh_reading_is_not_cleared_by_reconsiderin
     pending = agent.consider([match()], requested=True)
     try:
         prices.set_buy_price("116610LV", 8600, datetime.now())
-        agent.reconsider()
+        await agent.reconsider()
         assert deals.judging(match())["requested"]
         assert deals.latest(1)[0]["buy_limit"] is None
     finally:
         await pending
     requested.assert_awaited_once()
     assert deals.owed() == []
+
+
+async def test_press_kept_while_an_earlier_reconsidered_press_is_reported(prices, deals):
+    first, second = match(), replace(match(), url=match().url + "2")
+    pending = None
+
+    async def report(watch, verdict):
+        nonlocal pending
+        if watch.url == first.url and verdict.limit is not None:
+            pending = agent.consider([second], requested=True)
+
+    agent = Agent(Claude(reading(reference="116610LV").model_dump_json()), AsyncMock(return_value=OFFER),
+                  prices, deals, logging.getLogger("test"), on_requested_verdict=report)
+    await agent.consider([first, second], requested=True)
+    prices.set_buy_price("116610LV", 8600, datetime.now())
+    try:
+        await agent.reconsider()
+        assert pending is not None
+        assert deals.judging(second) is not None
+        assert deals.judging(second)["requested"]
+    finally:
+        if pending is not None:
+            await pending
+
+
+@pytest.mark.parametrize("second_requested", [False, True])
+async def test_press_kept_later_matches_recover_after_a_notification_is_cancelled(prices, deals, tmp_path, second_requested):
+    first, second = match(), replace(match(), url=match().url + "2")
+    entered = asyncio.Event()
+    automatic = Mock()
+
+    async def report(watch, verdict):
+        if verdict.limit is not None:
+            entered.set()
+            await asyncio.Future()
+
+    agent = Agent(Claude(reading(reference="116610LV").model_dump_json()), AsyncMock(return_value=OFFER),
+                  prices, deals, logging.getLogger("test"), automatic, report)
+    await agent.consider([first], requested=True)
+    await agent.consider([second], requested=second_requested)
+    prices.set_buy_price("116610LV", 20000, datetime.now())
+    automatic.reset_mock()
+    task = asyncio.create_task(agent.reconsider())
+    try:
+        await asyncio.wait_for(entered.wait(), 2)
+    finally:
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        deals.close()
+
+    reopened = Deals(tmp_path / "deals.sqlite3")
+    requested = AsyncMock()
+    try:
+        restarted = Agent(None, None, prices, reopened, logging.getLogger("test"), automatic, requested)
+        await restarted.reconsider()
+        await restarted.reconsider()
+        if second_requested:
+            requested.assert_awaited_once()
+            assert requested.await_args.args[0].url == second.url
+            automatic.assert_not_called()
+        else:
+            automatic.assert_called_once()
+            assert automatic.call_args.args[0].url == second.url
+            assert automatic.call_args.args[1].contact
+            requested.assert_not_awaited()
+    finally:
+        reopened.close()
+
+
+@pytest.mark.parametrize("second_requested", [False, True])
+@pytest.mark.parametrize("fresh_finished", [False, True])
+async def test_press_kept_reconsideration_uses_a_later_match_s_current_reading(
+    prices, deals, monkeypatch, second_requested, fresh_finished
+):
+    first, second = match(), replace(match(), url=match().url + "2")
+    entered, release = asyncio.Event(), asyncio.Event()
+    started = []
+
+    def automatic(watch, verdict):
+        if verdict.contact:
+            started.append(watch.url)
+
+    async def report(watch, verdict):
+        if watch.url == first.url and verdict.limit is not None:
+            entered.set()
+            await release.wait()
+        elif verdict.limit is not None:
+            started.append(watch.url)
+
+    agent = Agent(Claude(reading(reference="116610LV").model_dump_json()), AsyncMock(return_value=OFFER),
+                  prices, deals, logging.getLogger("test"), automatic, report)
+    await agent.consider([first], requested=True)
+    await agent.consider([second], requested=second_requested)
+    prices.set_buy_price("116610LV", 20000, datetime.now())
+    task = asyncio.create_task(agent.reconsider())
+    pending = None
+    try:
+        await asyncio.wait_for(entered.wait(), 2)
+        monkeypatch.setattr("agent.read", AsyncMock(return_value=reading(
+            reference="116610LV", red_flags=["signs_of_a_replica"],
+        )))
+        pending = agent.consider([second], requested=True)
+        if fresh_finished:
+            await pending
+            pending = None
+        release.set()
+        await task
+        assert started == []
+        if not fresh_finished:
+            assert deals.judging(second) is not None
+    finally:
+        release.set()
+        await asyncio.gather(task, return_exceptions=True)
+        if pending is not None:
+            await pending
+    assert next(row for row in deals.latest(2) if row["address"] == second.url)["why"] == "red flags: signs of a replica"
 
 
 async def test_a_filter_s_new_matches_go_to_the_agent_and_a_shop_s_do_not(prices):
