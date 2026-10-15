@@ -4,7 +4,7 @@ import asyncio
 import json
 import logging
 from dataclasses import replace
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
 from pathlib import Path
 from unittest.mock import AsyncMock, Mock
@@ -19,9 +19,11 @@ import chrono24
 from agent import ATTEMPTS, Agent, Deals, Reading, decide, offer_page, read
 from chrono24 import FULL_SET, USED
 from config import APP_CONFIG, SITE_CONFIGS, AppConfig
+from controlling import Trade
 from filters import Filter, FilterStore
 from models import ScrapingSession, WatchData
 from monitor import WatchMonitor
+from negotiation import Negotiations, Negotiator
 from prices import Prices
 from prices_page import PATH, PricesPage, key
 from worth import worth
@@ -233,6 +235,63 @@ def test_the_owner_s_buy_price_is_the_limit_before_chrono24_has_enough_offers(pr
     verdict = decide(reading(reference="126610LN"), Decimal("9000"), prices)
 
     assert (verdict.contact, verdict.worth, verdict.limit, verdict.opening) == (True, None, Decimal("10000"), Decimal("7900"))
+
+
+async def test_confirmed_reference_an_unread_patek_is_judged_on_its_likely_reference(prices):
+    inferred = reading(brand="Patek Philippe", model="Calatrava", reference=None, likely_reference="3445",
+                       box=False, papers=False)
+    prices.traded([Trade("3445", False, date.today(), Decimal("13500"), date.today(), Decimal("19000"), "Patek Philippe")])
+    prices.searched("3445", USED, 0, [], SEARCHED)
+    claude = Claude(inferred.model_dump_json())
+
+    result = await read(claude, offer_page(OFFER))
+    verdict = decide(result, Decimal("9999"), prices)
+
+    assert result.reference is None and result.likely_reference == "3445"
+    assert (verdict.contact, verdict.limit, verdict.opening) == (True, Decimal("13500"), Decimal("8750"))
+    instructions = claude.requests[0]["system"]
+    assert "only likely_reference may be inferred" in instructions and "inside an unseen caseback" in instructions
+
+
+def test_confirmed_reference_a_read_reference_takes_precedence_over_a_likely_one(prices):
+    verdict = decide(reading(likely_reference="unknown"), Decimal("9000"), prices)
+
+    assert (verdict.contact, verdict.limit) == (True, Decimal("8608"))
+
+
+@pytest.mark.parametrize("requested", [False, True])
+async def test_confirmed_reference_a_likely_reference_is_searched_then_negotiated_after_restart(prices, deals, tmp_path, requested):
+    monitor = WatchMonitor(log_level="ERROR")
+    monitor.filter_store = FilterStore(tmp_path / "filters.json")
+    monitor.filter_store.add(Filter("42", "1", "kleinanzeigen", "private", "Rolex", negotiate=not requested))
+    monitor._sync_filters()
+    kept = Negotiations(tmp_path / "deals.sqlite3")
+    monitor.negotiator = Negotiator(None, kept, AsyncMock(), logging.getLogger("test"), prices=prices)
+    monitor._tell_owner = AsyncMock()
+    inferred = reading(reference=None, likely_reference="116610LV")
+    agent = Agent(Claude(inferred.model_dump_json()), AsyncMock(return_value=OFFER.replace("17.790", "9.000")),
+                  prices, deals, logging.getLogger("test"), monitor._negotiate_if_asked, monitor._negotiate_by_hand)
+
+    await agent.consider([match()], requested=requested)
+
+    assert ("Rolex", "116610LV", USED) in prices.due([USED], SEARCHED, 20)
+    assert kept.all() == []
+    assert Reading.model_validate_json(deals.latest(1)[0]["reading"]) == inferred
+    deals.close()
+    reopened = Deals(tmp_path / "deals.sqlite3")
+    prices.set_buy_price("116610LV", 8500, SEARCHED)
+    try:
+        await Agent(None, None, prices, reopened, logging.getLogger("test"),
+                    monitor._negotiate_if_asked, monitor._negotiate_by_hand).reconsider()
+
+        (pending,) = kept.with_status("pending")
+        assert pending.terms.reference_required and pending.terms.reference is None
+        assert pending.reading == inferred.model_dump()
+        if requested:
+            assert "before naming a price" in monitor._tell_owner.await_args.args[1]
+    finally:
+        reopened.close()
+        kept.close()
 
 
 async def test_a_match_is_judged_from_its_own_page_and_the_verdict_kept(prices, deals):
