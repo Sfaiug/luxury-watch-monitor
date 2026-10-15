@@ -18,7 +18,7 @@ from playwright.async_api import TimeoutError
 import negotiation
 from agent import Agent, Deals, Reading, Verdict
 from filters import Filter, FilterStore
-from kleinanzeigen_messages import Messages, Unsent
+from kleinanzeigen_messages import CannotWrite, LoggedOut, Messages, Unsent
 from models import WatchData
 from monitor import WatchMonitor
 from negotiation import Move, Negotiation, Negotiations, Negotiator, SellerSays, Terms, filled, move
@@ -827,6 +827,108 @@ async def test_a_first_message_that_never_left_is_sent_as_it_was_at_the_next_loo
     assert kept.get("1").status == "owner" and "took no message" in kept.get("1").notice
 
 
+@pytest.mark.parametrize("stage", ["read", "reply", "closing", "ended"])
+async def test_cannot_write_repeated_refusals_go_to_the_owner_with_the_site_answer(kept, tmp_path, stage):
+    box, notify = Box(), AsyncMock(side_effect=[RuntimeError("Discord is down"), None])
+    await opened(kept, box)
+    current = kept.get("3535834511")
+    refusal = CannotWrite("Kleinanzeigen answered the conversation with 403: seller blocked you")
+    claude = Claude(reads=[says(price=9500)], writes=["Wie wäre es mit [BETRAG]?"])
+    if stage in ("read", "ended"):
+        box.conversation = AsyncMock(side_effect=refusal)
+        if stage == "ended":
+            current.status = "ended"
+    else:
+        box.reply = AsyncMock(side_effect=refusal)
+        if stage == "closing":
+            current.status, current.ends = "closing", "agreed"
+            current.seen = len(box.said)
+            current.sent.append("Danke! Der Kaufvertrag kommt gleich.")
+        else:
+            box.seller("9500 wäre mein Preis.")
+    kept.save(current)
+
+    for look in range(negotiation.TRIES):
+        # The counter and pending reply survive a new database connection at every look.
+        with_connection = Negotiations(tmp_path / "deals.sqlite3")
+        try:
+            talking = negotiator(claude, with_connection, notify)
+            await talking.follow_up(box)
+            current = with_connection.get(current.ad_id)
+            assert current.tries == look + 1
+            assert current.status == ("owner" if look == negotiation.TRIES - 1 else
+                                      {"closing": "closing", "ended": "ended"}.get(stage, "talking"))
+            await talking.tell_owner()
+        finally:
+            with_connection.close()
+
+    assert str(refusal) in current.why
+    talking = negotiator(claude, kept, notify)
+    assert current.ad_id not in {n.ad_id for n in talking.waiting()}
+    await talking.tell_owner()
+    await talking.tell_owner()
+    assert notify.await_count == 2
+    assert "hands this negotiation to you" in notify.await_args.args[1]
+    assert str(refusal) in notify.await_args.args[1]
+    if stage in ("reply", "closing"):
+        assert box.reply.await_count == negotiation.TRIES
+        assert len({call.args[1] for call in box.reply.await_args_list}) == 1
+
+
+@pytest.mark.parametrize("stage", ["pending", "opening"])
+async def test_cannot_write_first_contact_api_outages_never_count_as_a_refused_form(kept, stage):
+    text = "Ist die Uhr noch zu haben?"
+    box, claude = Box(), Claude(writes=[text])
+    talking = negotiator(claude, kept)
+    talking.ask_to_start(asked_for())
+    if stage == "pending":
+        box.contact = AsyncMock(side_effect=RuntimeError("Kleinanzeigen token service answered 503"))
+    else:
+        box.contact_fails = True
+        await talking.start(box)
+        box.bought = AsyncMock(side_effect=RuntimeError("Kleinanzeigen gateway answered 502"))
+
+    for _ in range(negotiation.TRIES + 1):
+        await talking.start(box)
+        current = kept.get("3535834511")
+        assert (current.status, current.tries, current.sent, current.notice) == (stage, 0, [text], "")
+    await talking.tell_owner()
+    talking.notify.assert_not_awaited()
+    assert claude.asked == ["write"]
+
+    if stage == "pending":
+        del box.contact
+    else:
+        box.bought = AsyncMock(return_value="c1")
+        box.said.append(Said(True, text))
+    await talking.start(box)
+    assert kept.get("3535834511").status == "talking"
+
+
+async def test_cannot_write_a_successful_look_resets_refusals_but_outages_count_for_nothing(kept):
+    box = Box()
+    await opened(kept, box)
+    talking = negotiator(Claude(), kept)
+    refusal = CannotWrite("Kleinanzeigen answered 404: conversation deleted")
+    box.conversation = AsyncMock(side_effect=refusal)
+    await talking.follow_up(box)
+    box.conversation.side_effect = RuntimeError("Kleinanzeigen answered 503: gateway unavailable")
+    for _ in range(negotiation.TRIES):
+        await talking.follow_up(box)
+    current = kept.get("3535834511")
+    assert (current.status, current.tries, current.notice) == ("talking", 1, "")
+
+    del box.conversation
+    await talking.follow_up(box)
+    assert kept.get(current.ad_id).tries == 0
+    box.conversation = AsyncMock(side_effect=refusal)
+    for _ in range(negotiation.TRIES - 1):
+        await talking.follow_up(box)
+    assert kept.get(current.ad_id).status == "talking"
+    await talking.follow_up(box)
+    assert kept.get(current.ad_id).status == "owner"
+
+
 class Browser:
     """Chrome as the talk loop opens it: one window holding the session, on the message box's page."""
 
@@ -889,6 +991,57 @@ async def test_an_ended_login_is_said_to_the_owner(monkeypatch, kept):
 
     assert box.said == []
     notify.assert_awaited_once_with("filter:42", negotiation.LOGGED_OUT)
+
+
+@pytest.mark.parametrize("stage", ["start", "read", "reply"])
+async def test_cannot_write_a_401_mid_look_is_said_as_an_ended_login(monkeypatch, kept, stage):
+    box, notify, browser = Box(), AsyncMock(), Browser()
+    expired = LoggedOut("Kleinanzeigen answered with 401")
+    if stage == "start":
+        box.contact = AsyncMock(side_effect=expired)
+    else:
+        await opened(kept, box)
+        if stage == "read":
+            box.conversation = AsyncMock(side_effect=expired)
+        else:
+            current = kept.get("3535834511")
+            current.sent.append("Wie wäre es mit 8.000 €?")
+            current.seen = len(box.said)
+            kept.save(current)
+            box.reply = AsyncMock(side_effect=expired)
+
+    await one_look(monkeypatch, kept, box, browser, 10, notify)
+
+    current = kept.get("3535834511")
+    assert (current.status, current.tries, current.notice) == ("pending" if stage == "start" else "talking", 0, "")
+    assert browser.kept == ["session.json"]
+    notify.assert_awaited_once_with("filter:42", negotiation.LOGGED_OUT)
+
+
+async def test_cannot_write_login_expiry_is_said_once_until_the_api_works_again(monkeypatch, kept):
+    box, notify, browser = Box(), AsyncMock(), Browser()
+    await opened(kept, box)
+    healthy = await box.conversation("c1")
+    expired = LoggedOut("Kleinanzeigen answered 401")
+    box.conversation = AsyncMock(side_effect=[expired, expired, healthy, expired])
+    looks = 0
+
+    async def pause(seconds):
+        nonlocal looks
+        looks += 1
+        if looks == 4:
+            raise asyncio.CancelledError
+
+    monkeypatch.setattr(negotiation.chrome, "Chrome", lambda: browser)
+    monkeypatch.setattr(negotiation, "Messages", lambda page: box)
+    monkeypatch.setattr(negotiation.asyncio, "sleep", pause)
+    with pytest.raises(asyncio.CancelledError):
+        await negotiation.keep_talking(negotiator(Claude(), kept, notify), "session.json", logging.getLogger("test"),
+                                       now=lambda: datetime(2026, 10, 11, 10, tzinfo=negotiation.GERMANY))
+
+    assert notify.await_count == 2
+    assert all(call.args == ("filter:42", negotiation.LOGGED_OUT) for call in notify.await_args_list)
+    assert kept.get("3535834511").tries == 0
 
 
 def test_a_match_worth_contacting_is_negotiated_where_its_filter_says_so(tmp_path, kept):

@@ -8,6 +8,7 @@ contact form. A message counts as sent once its conversation shows it.
 
 import asyncio
 import html
+import json
 from dataclasses import dataclass
 from typing import Callable, List, Optional
 
@@ -16,29 +17,36 @@ from playwright.async_api import TimeoutError
 from scrapers.kleinanzeigen import offer_url
 
 GATEWAY = "https://gateway.kleinanzeigen.de"
-_TOKEN = "(await fetch('/m-access-token.json', {credentials: 'include'})).headers.get('authorization')"
+_RESPONSE = """const response = async (answer, path) => ({status: answer.status, path, text: await answer.text()});"""
+_TOKEN = """const session = await fetch('/m-access-token.json', {credentials: 'include'});
+  const token = session.headers.get('authorization');
+  if (!session.ok || !token) return {...await response(session, '/m-access-token.json'), error: 'no access token'};"""
 
 # The message box's own call (bffstatic/messagebox-web, 11 Oct 2026): a token from the session, then the gateway
 _CALL = """async ([method, path, body]) => {
-  const token = %s;
+  %s
+  %s
   const headers = {Accept: 'application/json', Authorization: token, 'X-ECG-USER-AGENT': 'messagebox-1'};
   if (body !== null) headers['Content-Type'] = 'application/json';
   const answer = await fetch('%s' + path, {
     method, headers, mode: 'cors', credentials: 'include', body: body === null ? undefined : JSON.stringify(body),
   });
-  const text = await answer.text();
-  return {status: answer.status, data: text ? JSON.parse(text) : null};
-}""" % (_TOKEN, GATEWAY)
-_USER = "async () => (await (await fetch('/messagebox-api/view', {credentials: 'include'})).json()).user.id"
+  return await response(answer, path);
+}""" % (_RESPONSE, _TOKEN, GATEWAY)
+_USER = """async () => {
+  %s
+  return await response(await fetch('/messagebox-api/view', {credentials: 'include'}), '/messagebox-api/view');
+}""" % _RESPONSE
 
 # The message box reads attachments[].gatewayUrl with the same authorization as its API calls.
 # Read into memory only: no browser cache, local storage or file containing the picture.
 _PICTURE = """async url => {
-  const token = %s;
+  %s
+  %s
   const answer = await fetch(url, {
     headers: {Accept: 'image/*', Authorization: token}, mode: 'cors', credentials: 'include', cache: 'no-store',
   });
-  if (!answer.ok) throw new Error('Could not read a chat picture');
+  if (!answer.ok) return await response(answer, 'chat picture');
   const blob = await answer.blob();
   return await new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -46,7 +54,7 @@ _PICTURE = """async url => {
     reader.onerror = reject;
     reader.readAsDataURL(blob);
   });
-}""" % _TOKEN
+}""" % (_RESPONSE, _TOKEN)
 
 
 def plain(text: str) -> str:
@@ -60,6 +68,34 @@ class NotSent(Exception):
 
 class Unsent(Exception):
     """The message went nowhere: the contact form was never sent."""
+
+
+class CannotWrite(RuntimeError):
+    """The site refuses access to a conversation."""
+
+
+class LoggedOut(RuntimeError):
+    """The owner's Kleinanzeigen session has ended."""
+
+
+def _data(answer):
+    """Keep service and session failures separate from a refused conversation."""
+    status, path, text = answer["status"], answer["path"], answer["text"]
+    why = f"Kleinanzeigen answered {path} with {status}: {text[:500]}"
+    if answer.get("error"):
+        why += f" ({answer['error']})"
+    if status == 401:
+        raise LoggedOut(why)
+    if status == 429 or status >= 500 or answer.get("error"):
+        raise RuntimeError(why)
+    if status >= 400:
+        if path.startswith("/messagebox/api/users/") and not text.lstrip().startswith("<"):
+            raise CannotWrite(why)
+        raise RuntimeError(why)
+    try:
+        return json.loads(text) if text else None
+    except ValueError:
+        raise RuntimeError(why) from None
 
 
 @dataclass
@@ -87,14 +123,11 @@ class Messages:
         self._user: Optional[int] = None
 
     async def _call(self, method: str, path: str, body=None):
-        answer = await self._page.evaluate(_CALL, [method, path, body])
-        if answer["status"] >= 400:
-            raise RuntimeError(f"Kleinanzeigen answered {method} {path} with {answer['status']}")
-        return answer["data"]
+        return _data(await self._page.evaluate(_CALL, [method, path, body]))
 
     async def _conversations(self) -> str:
         if self._user is None:
-            self._user = await self._page.evaluate(_USER)
+            self._user = _data(await self._page.evaluate(_USER))["user"]["id"]
         return f"/messagebox/api/users/{self._user}/conversations"
 
     async def conversation(self, conversation_id: str) -> Conversation:
@@ -122,9 +155,13 @@ class Messages:
         """A chat picture, as media type and base64 data, read through the owner's session without keeping it."""
         try:
             picture = await self._page.evaluate(_PICTURE, url)
+            if "status" in picture:
+                _data(picture)
             if picture["media_type"] not in ("image/jpeg", "image/png", "image/gif", "image/webp") or not picture["data"]:
                 raise ValueError("not a picture")
             return picture
+        except LoggedOut:
+            raise LoggedOut("Kleinanzeigen answered a chat picture request with 401") from None
         except Exception:
             # Neither a private attachment URL nor its contents belongs in a log.
             raise RuntimeError("Could not read a chat picture") from None
@@ -146,9 +183,9 @@ class Messages:
         form = None
         submit = "#viewad-contact-form button.viewad-contact-submit"
         try:
+            earlier = await self.bought(ad_id)
+            before = len((await self.conversation(earlier)).messages) if earlier else 0
             try:
-                earlier = await self.bought(ad_id)
-                before = len((await self.conversation(earlier)).messages) if earlier else 0
                 form = await self._page.context.new_page()
                 await form.add_init_script(f"""window.addEventListener('pointerdown', event => {{
                     if (event.target.closest({submit!r})) window.__watchMonitorContactPressed = true;

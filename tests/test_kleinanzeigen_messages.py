@@ -1,17 +1,21 @@
 """The owner's Kleinanzeigen messages, through a stand-in for a page of the site."""
 
 import asyncio
-import copy
 import html
+import json
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 from playwright.async_api import TimeoutError
 
-from kleinanzeigen_messages import Messages, NotSent, Unsent
+from kleinanzeigen_messages import CannotWrite, LoggedOut, Messages, NotSent, Unsent
 
 USER = 4242
+
+
+def response(path, status=200, data=None):
+    return {"status": status, "path": path, "text": json.dumps(data) if data is not None else ""}
 
 
 def conversation(*messages, ad_id="3535834511"):
@@ -61,21 +65,21 @@ class Site:
 
     async def evaluate(self, script, args=None):
         if args is None:
-            return USER
+            return response("/messagebox-api/view", data={"user": {"id": USER}})
         method, path, body = args
         self.calls.append((method, path, body))
         base = f"/messagebox/api/users/{USER}/conversations"
         if method == "GET" and path.startswith(base + "?"):
             page = int(path.split("page=")[1].split("&")[0])
             links = {"next": {"href": "…"}} if page + 1 < len(self.listed_pages) else {}
-            return {"status": 200, "data": {"conversations": self.listed_pages[page], "_links": links}}
+            return response(path, data={"conversations": self.listed_pages[page], "_links": links})
         conversation_id = path[len(base) + 1:].split("?")[0]
         if conversation_id not in self.conversations:
-            return {"status": 404, "data": None}
+            return response(path, 404)
         if method == "POST":
             self._sent(conversation_id, body["message"])
-            return {"status": 201, "data": None}
-        return {"status": 200, "data": copy.deepcopy(self.conversations[conversation_id])}
+            return response(path, 201)
+        return response(path, data=self.conversations[conversation_id])
 
 
 class OfferTab:
@@ -257,6 +261,69 @@ async def test_the_conversation_found_is_the_one_the_account_buys_in():
 async def test_an_answer_with_an_error_is_no_answer():
     with pytest.raises(RuntimeError, match="404"):
         await Messages(Site()).conversation("gone")
+
+
+@pytest.mark.parametrize("method", ["GET", "POST"])
+@pytest.mark.parametrize("status, text, error", [
+    (400, '{"message": "conversation deleted"}', CannotWrite),
+    (403, '{"message": "seller blocked you"}', CannotWrite),
+    (403, "seller blocked you", CannotWrite),
+    (404, "", CannotWrite),
+    (409, '{"message": "conversation closed"}', CannotWrite),
+    (401, "<html>Log in</html>", LoggedOut),
+    (429, '{"message": "Too many requests"}', RuntimeError),
+    (500, '{"message": "Internal error"}', RuntimeError),
+    (502, "<html>Bad gateway</html>", RuntimeError),
+    (503, "<html>Unavailable</html>", RuntimeError),
+    (200, "<html>Try again later</html>", RuntimeError),
+    (403, "<html>Try again later</html>", RuntimeError),
+])
+async def test_cannot_write_keeps_a_refusal_separate_from_an_outage_and_a_401(method, status, text, error):
+    path = f"/messagebox/api/users/{USER}/conversations/abc:1:xyz"
+    page = SimpleNamespace(evaluate=AsyncMock(return_value={"status": status, "path": path, "text": text}))
+
+    with pytest.raises(error) as raised:
+        await Messages(page)._call(method, path, {"message": "Hallo"} if method == "POST" else None)
+
+    assert type(raised.value) is error
+    assert str(status) in str(raised.value) and path in str(raised.value) and text in str(raised.value)
+
+
+@pytest.mark.parametrize("source", ["/messagebox-api/view", "/m-access-token.json", "conversations"])
+@pytest.mark.parametrize("status, error", [(401, LoggedOut), (403, RuntimeError), (429, RuntimeError), (503, RuntimeError)])
+async def test_cannot_write_a_first_contact_does_not_blame_its_form_for_api_failures(source, status, error):
+    site, before_send = Site(), Mock()
+    box = Messages(site)
+    if source != "/messagebox-api/view":
+        await box._conversations()
+    path = f"/messagebox/api/users/{USER}/conversations?page=0&size=100" if source == "conversations" else source
+    answer = response(path, status, {"message": "refused"})
+    if source == "/m-access-token.json":
+        answer["error"] = "no access token"
+    site.evaluate = AsyncMock(return_value=answer)
+    expected = CannotWrite if source == "conversations" and status == 403 else error
+
+    with pytest.raises(expected) as raised:
+        await box.contact("3535834511", "Ist die Uhr noch da?", before_send=before_send)
+
+    assert type(raised.value) is expected
+    before_send.assert_not_called()
+    assert not site.tabs
+
+
+async def test_cannot_write_a_missing_access_token_is_an_outage():
+    page = SimpleNamespace(evaluate=AsyncMock(return_value={
+        **response("/m-access-token.json", 200), "error": "no access token",
+    }))
+    with pytest.raises(RuntimeError) as raised:
+        await Messages(page)._call("GET", f"/messagebox/api/users/{USER}/conversations")
+    assert type(raised.value) is RuntimeError
+
+
+async def test_cannot_write_a_401_reading_a_picture_ends_the_login_without_leaking_the_picture():
+    page = SimpleNamespace(evaluate=AsyncMock(return_value=response("chat picture", 401, "private contents")))
+    with pytest.raises(LoggedOut, match="^Kleinanzeigen answered a chat picture request with 401$"):
+        await Messages(page).picture("private attachment URL")
 
 
 @pytest.mark.parametrize("failure", ["goto", "fill", "click"])
