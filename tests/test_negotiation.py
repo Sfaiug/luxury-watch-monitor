@@ -865,6 +865,59 @@ async def test_above_asking_the_lowest_chat_price_survives_a_failed_reply_and_re
     assert current.offered == 7800 and box.said[-1].text == "Für 7.800 € würde ich sie nehmen."
 
 
+async def test_above_asking_the_observed_price_survives_failed_drafting_and_a_database_restart(kept, tmp_path, monkeypatch):
+    box = Box()
+    await opened(kept, box)
+    current = kept.get("3535834511")
+    current.asking = 9000
+    kept.save(current)
+    box.seller("8.050 wären ok.")
+    monkeypatch.setattr(negotiation, "ask", AsyncMock(side_effect=[says(price=8050, bank_transfer=False),
+                                                                 RuntimeError("temporary AI outage while drafting")]))
+
+    await negotiator(None, kept).follow_up(box)
+
+    observed = kept.get(current.ad_id)
+    assert observed.terms.lowest == 8050
+    assert observed.terms.price is None and observed.terms.asked_again == []
+    assert observed.offered == OPENING and observed.sent == current.sent
+    kept.close()
+    restarted = Negotiations(tmp_path / "deals.sqlite3")
+    box.seller("Jetzt doch 8.300.")
+    monkeypatch.setattr(negotiation, "ask", AsyncMock(side_effect=[says(price=8300),
+                                                                 negotiation.Written(message="Für [BETRAG] würde ich sie nehmen.")]))
+
+    await negotiator(None, restarted).follow_up(box)
+
+    current = restarted.get(current.ad_id)
+    assert current.terms.lowest == 8050 and current.terms.price is None
+    assert current.offered == 7800 and box.said[-1].text == "Für 7.800 € würde ich sie nehmen."
+    restarted.close()
+
+
+async def test_above_asking_a_delayed_read_keeps_the_chat_minimum_separate_from_the_current_ask(kept):
+    box = Box()
+    await opened(kept, box)
+    current = kept.get("3535834511")
+    current.asking = 9000
+    kept.save(current)
+    box.seller("8.050 wären ok.")
+    box.seller("Jetzt doch 8.300.")
+    claude = Claude(reads=[says(price=8300, lowest=8050)], writes=["[BETRAG] passt. Geht Überweisung?"])
+
+    await negotiator(claude, kept).follow_up(box)
+
+    request = json.loads(claude.requests[0])
+    assert "lowest" in request["output_config"]["format"]["schema"]["properties"]
+    assert "entire conversation" in request["system"]
+    read = request["messages"][0]["content"][0]["text"]
+    assert "8.050 wären ok." in read and "Jetzt doch 8.300." in read
+    current = kept.get(current.ad_id)
+    assert current.terms.lowest == 8050 and current.terms.asked == 8300
+    assert current.terms.price is None and current.offered == 7800
+    assert box.said[-1].text == "7.800 € passt. Geht Überweisung?"
+
+
 async def test_the_owner_hears_once_all_is_agreed_and_the_id_card_shown(kept):
     box, notify = Box(), AsyncMock()
     await opened(kept, box)
