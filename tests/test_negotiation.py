@@ -1608,10 +1608,18 @@ async def test_earlier_messages_stay_history_after_the_agent_joins_and_restarts(
         kept.close()
 
 
-async def test_earlier_messages_in_a_negotiation_saved_without_its_first_boundary(kept, tmp_path):
+@pytest.mark.parametrize("before_offer", [False, True])
+async def test_earlier_messages_in_a_negotiation_saved_without_its_first_boundary(kept, tmp_path, before_offer):
     box = Box()
-    box.said = [Said(True, "Ist das noch verfügbar?"), Said(False, "Ja.")]
-    await opened(kept, box)
+    opener = "Ist die Uhr noch zu haben?"
+    box.said = [Said(True, opener if before_offer else "Ist das noch verfügbar?"),
+                Said(False, "Ja."), Said(True, "Ich melde mich später.")]
+    if before_offer:
+        talking = negotiator(Claude(writes=[opener]), kept)
+        talking.ask_to_start(asked_for())
+        await talking.start(box)
+    else:
+        await opened(kept, box)
     with kept._db:
         saved = json.loads(kept._db.execute("SELECT kept FROM negotiations").fetchone()[0])
         del saved["first"]
@@ -1620,10 +1628,16 @@ async def test_earlier_messages_in_a_negotiation_saved_without_its_first_boundar
     kept = Negotiations(tmp_path / "deals.sqlite3")
     try:
         box.seller("8.000 € wären ok.")
-        await negotiator(Claude(reads=[says(price=8000)], writes=["[BETRAG] passt. Geht Überweisung?"]), kept).follow_up(box)
+        reply = "Ich biete [BETRAG]." if before_offer else "[BETRAG] passt. Geht Überweisung?"
+        await negotiator(Claude(reads=[says(price=8000)], writes=[reply]), kept).follow_up(box)
 
         assert kept.get("3535834511").status == "talking"
-        assert box.said[-1].text == "8.000 € passt. Geht Überweisung?"
+        assert box.said[-1].text == ("Ich biete 7.550 €." if before_offer else "8.000 € passt. Geht Überweisung?")
+        if before_offer:
+            box.seller("8.000 € ist mein Preis.")
+            await negotiator(Claude(reads=[says(price=8000)], writes=["[BETRAG] passt. Geht Überweisung?"]), kept).follow_up(box)
+            assert kept.get("3535834511").status == "talking"
+            assert box.said[-1].text == "8.000 € passt. Geht Überweisung?"
     finally:
         kept.close()
 

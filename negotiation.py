@@ -426,7 +426,7 @@ class Negotiation:
     ends: str = ""  # what a closing negotiation ends as once its last message reached the seller: agreed or ended
     tries: int = 0  # looks at which its offer's page took no first message
     seen: int = 0  # the messages in the conversation when the agent wrote its latest, or ended it
-    first: int = 0  # the messages before the agent's first; zero in older saved negotiations
+    first: Optional[int] = None  # the messages before the agent's first; absent in older saved negotiations
     before: dict = field(default_factory=dict)  # its offer and the terms as they stood before its latest message
     why: str = ""
     notice: str = ""  # what the owner is still to hear of it
@@ -579,6 +579,9 @@ class Negotiator:
     async def _answer(self, messages, negotiation: Negotiation):
         talk = await messages.conversation(negotiation.conversation)
         said = talk.messages
+        if negotiation.first is None:
+            # With only its opener sent, `seen` still records the conversation before that message.
+            negotiation.first = negotiation.seen if len(negotiation.sent) == 1 and negotiation.status == "talking" else 0
         first = next((i for i, message in enumerate(said[negotiation.first:], negotiation.first)
                       if message.outbound and plain(message.text) == plain(negotiation.sent[0])), len(said))
         shown = [plain(message.text) for message in said[first:] if message.outbound]
