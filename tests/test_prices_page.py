@@ -1,6 +1,7 @@
 """The owner's page of watch prices: what each watch is worth, the most to pay, and the owner's own buy price."""
 
 import asyncio
+import gc
 from datetime import date, datetime
 from decimal import Decimal
 from pathlib import Path
@@ -92,6 +93,7 @@ async def test_opening_the_prices_page_holds_up_nothing():
               date.today(), Decimal("10000"), "Rolex")
         for n in range(2329)
     ])
+    gc.collect()  # the earlier tests' garbage is not the page's to collect while it is timed
 
     app = web.Application()
     PricesPage(prices, SECRET).add_to(app)
