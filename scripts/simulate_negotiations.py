@@ -9,6 +9,7 @@ venv/bin/python3 scripts/simulate_negotiations.py [seller ...]
 """
 
 import asyncio
+import base64
 import logging
 import sys
 from dataclasses import dataclass
@@ -103,6 +104,7 @@ SELLERS = {
 }
 
 BUYER = "Jonas M."  # the buyer's name as Kleinanzeigen shows it to the seller: a pretend one
+ID_CARD = Path(__file__).with_name("id_card.png")  # a synthetic specimen, never a seller's document
 TURNS = MOST_WRITTEN + 6  # the seller's messages at most: the agent hands over after its own most
 SELLER = """You are a private person selling a watch on Kleinanzeigen, chatting with a buyer in German, short and
 casual, as people write on their phone. The ad: {title}, asking {asking}. {brief}
@@ -123,14 +125,17 @@ class Box:
 
     async def contact(self, ad_id: str, text: str, *, before_send=lambda before: None) -> str:
         before_send(len(self.said))
-        self.said.append(Message(True, text, 0, ""))
+        self.said.append(Message(True, text, [], ""))
         return ad_id
 
     async def conversation(self, conversation_id: str) -> Conversation:
         return Conversation(conversation_id, conversation_id, "the seller", list(self.said), BUYER)
 
     async def reply(self, conversation_id: str, text: str):
-        self.said.append(Message(True, text, 0, ""))
+        self.said.append(Message(True, text, [], ""))
+
+    async def picture(self, url: str) -> dict:
+        return {"media_type": "image/png", "data": base64.b64encode(Path(url).read_bytes()).decode("ascii")}
 
 
 async def seller_writes(client, seller: Seller, said: List[Message]) -> Message:
@@ -138,7 +143,7 @@ async def seller_writes(client, seller: Seller, said: List[Message]) -> Message:
     chat = "\n".join(f"{'Buyer' if m.outbound else 'You'}: {m.text}" for m in said)
     written = await ask(client, SELLER.format(title=title, asking=euros(asking), brief=seller.brief),
                         [{"type": "text", "text": f"The chat so far:\n{chat}\n\nYour next message:"}], SellerWrites)
-    return Message(False, written.message if written else "", int(bool(written and written.picture)), "")
+    return Message(False, written.message if written else "", [str(ID_CARD)] if written and written.picture else [], "")
 
 
 async def simulate(name: str, seller: Seller, client) -> Tuple[Negotiation, List[Message], List[str]]:
