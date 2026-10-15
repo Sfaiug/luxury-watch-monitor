@@ -96,6 +96,7 @@ class OfferTab:
 
     async def goto(self, url, **options):
         self.visited.append(url)
+        return SimpleNamespace(status=200, text=AsyncMock(return_value="<html>Contact form</html>"))
 
     async def fill(self, selector, text):
         self.typed[selector] = text
@@ -309,6 +310,26 @@ async def test_cannot_write_a_first_contact_does_not_blame_its_form_for_api_fail
     assert type(raised.value) is expected
     before_send.assert_not_called()
     assert not site.tabs
+
+
+@pytest.mark.parametrize("status, error", [
+    (401, LoggedOut), (403, RuntimeError), (404, RuntimeError),
+    (429, RuntimeError), (500, RuntimeError), (503, RuntimeError),
+])
+async def test_cannot_write_a_first_contact_does_not_blame_its_form_for_page_failures(status, error):
+    site, before_send = Site(), Mock()
+    body = "<html>Service or login error</html>"
+    answer = SimpleNamespace(status=status, text=AsyncMock(return_value=body))
+    with patch.object(OfferTab, "goto", return_value=answer), \
+            patch.object(OfferTab, "fill", side_effect=TimeoutError("no contact form")) as fill:
+        with pytest.raises(error) as raised:
+            await Messages(site).contact("3535834511", "Ist die Uhr noch da?", before_send=before_send)
+
+    assert type(raised.value) is error
+    assert str(status) in str(raised.value) and body in str(raised.value)
+    fill.assert_not_awaited()
+    before_send.assert_not_called()
+    assert site.tabs[0].closed and not site.tabs[0].clicked
 
 
 async def test_cannot_write_a_missing_access_token_is_an_outage():

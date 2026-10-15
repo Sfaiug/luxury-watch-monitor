@@ -661,7 +661,7 @@ async def test_a_first_message_written_wrong_each_time_goes_to_the_owner_who_hea
 @pytest.mark.parametrize("earlier", [None, [], [Said(True, "Ist die Uhr noch zu haben?")]])
 @pytest.mark.parametrize("click_times_out", [False, True])
 async def test_a_first_message_shown_later_counts_as_sent_without_sending_twice(kept, earlier, click_times_out):
-    page = SimpleNamespace(goto=AsyncMock(), fill=AsyncMock(), click=AsyncMock(), wait_for_selector=AsyncMock(), close=AsyncMock(),
+    page = SimpleNamespace(goto=AsyncMock(return_value=SimpleNamespace(status=200)), fill=AsyncMock(), click=AsyncMock(), wait_for_selector=AsyncMock(), close=AsyncMock(),
                            add_init_script=AsyncMock(), evaluate=AsyncMock(return_value=False))
 
     async def click(selector):
@@ -710,7 +710,7 @@ async def test_an_interrupted_first_message_keeps_its_boundary_until_shown_later
     kept = Negotiations(path)
     text = "Ist die Uhr noch zu haben?"
     earlier = [Said(True, text)]
-    page = SimpleNamespace(goto=AsyncMock(), fill=AsyncMock(), click=AsyncMock(),
+    page = SimpleNamespace(goto=AsyncMock(return_value=SimpleNamespace(status=200)), fill=AsyncMock(), click=AsyncMock(),
                            wait_for_selector=AsyncMock(side_effect=asyncio.CancelledError), close=AsyncMock(),
                            add_init_script=AsyncMock(), evaluate=AsyncMock())
     box = Messages(SimpleNamespace(context=SimpleNamespace(new_page=AsyncMock(return_value=page))))
@@ -750,7 +750,7 @@ async def test_an_interrupted_first_message_keeps_its_boundary_until_shown_later
 async def test_an_old_identical_first_message_is_not_the_one_to_be_shown_later(kept, later):
     text = "Ist die Uhr noch zu haben?"
     earlier = [Said(True, text)]
-    page = SimpleNamespace(goto=AsyncMock(), fill=AsyncMock(), click=AsyncMock(), wait_for_selector=AsyncMock(), close=AsyncMock(),
+    page = SimpleNamespace(goto=AsyncMock(return_value=SimpleNamespace(status=200)), fill=AsyncMock(), click=AsyncMock(), wait_for_selector=AsyncMock(), close=AsyncMock(),
                            add_init_script=AsyncMock(), evaluate=AsyncMock())
     box = Messages(SimpleNamespace(context=SimpleNamespace(new_page=AsyncMock(return_value=page))))
     box.bought = AsyncMock(return_value="c1")
