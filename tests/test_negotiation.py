@@ -1049,6 +1049,48 @@ async def test_id_card_seen_unreadable_pictures_cannot_complete_the_purchase(kep
     assert box.said[-1].text == "Hier mein Ausweis."
 
 
+@pytest.mark.parametrize("retry", ["none", "overloaded", "timeout", "connection"])
+@pytest.mark.parametrize("sdk_logger", ["anthropic", "anthropic._base_client"])
+async def test_id_card_seen_picture_is_sent_without_entering_sdk_debug_logs(kept, caplog, monkeypatch, retry, sdk_logger):
+    box = Box()
+    await opened(kept, box)
+    box.seller("Schon verkauft.", pictures=1)
+    picture = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9Zl1sAAAAASUVORK5CYII="
+    box.picture = AsyncMock(return_value={"media_type": "image/png", "data": picture})
+    attempts = []
+
+    def respond(request):
+        content = json.loads(request.content)["messages"][0]["content"]
+        assert content[1]["source"]["data"] == picture
+        attempts.append(request)
+        if len(attempts) == 1:
+            if retry == "overloaded":
+                return httpx2.Response(503, json={"error": {"type": "overloaded_error", "message": "Retry"}})
+            if retry == "timeout":
+                raise httpx2.ReadTimeout("timed out", request=request)
+            if retry == "connection":
+                raise httpx2.ConnectError("connection failed", request=request)
+        return httpx2.Response(200, json={
+            "id": "m", "type": "message", "role": "assistant", "model": "m", "stop_reason": "end_turn",
+            "usage": {"input_tokens": 1, "output_tokens": 1},
+            "content": [{"type": "text", "text": says(ended=True).model_dump_json()}],
+        })
+
+    caplog.set_level(logging.DEBUG, logger=sdk_logger)
+    async with AsyncAnthropic(api_key="test", max_retries=1,
+                              http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(respond))) as client:
+        monkeypatch.setattr(client, "_calculate_retry_timeout", lambda *args: 0)
+        await negotiator(client, kept).follow_up(box)
+
+    assert len(attempts) == (1 if retry == "none" else 2)
+    assert kept.get("3535834511").status == "ended"
+    assert "Sending HTTP Request" in caplog.text and "HTTP Response" in caplog.text
+    assert picture not in caplog.text
+    assert all(picture not in json.dumps(record.args, default=str) for record in caplog.records)
+    # SDK exceptions and their traceback frames hold the request, including its pictures.
+    assert all(record.exc_info is None and record.exc_text is None for record in caplog.records)
+
+
 def instructed(claude):
     """What the AI was told to write the latest draft as."""
     return json.loads(claude.requests[-1])["system"]
