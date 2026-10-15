@@ -5,6 +5,7 @@ import asyncio
 import signal
 import json
 import logging
+import sqlite3
 from dataclasses import replace
 from unittest.mock import AsyncMock, Mock, patch
 from decimal import Decimal
@@ -85,6 +86,35 @@ class TestWatchMonitor:
                             assert (
                                 len(monitor.scrapers) > 0 or len(SCRAPER_CLASSES) == 0
                             )
+
+    @pytest.mark.asyncio
+    async def test_cleanup_preserves_history_after_initialization_failure(self, tmp_path):
+        state_file = tmp_path / "seen_watches.json"
+        backup_file = tmp_path / "seen_watches.json.bak"
+        seed = {"shop": ["old"], "filter:111": ["offer1"]}
+        for path in (state_file, backup_file):
+            path.write_text(json.dumps(seed), encoding="utf-8")
+        bad_prices = tmp_path / "prices.sqlite3"
+        bad_prices.mkdir()
+
+        with patch.multiple(
+            APP_CONFIG,
+            seen_watches_file=str(state_file),
+            prices_file=str(bad_prices),
+            enable_muv_actions=False,
+            discord_interactions_enabled=False,
+            muv_http_actions_enabled=False,
+            muv_offer_link_urls=[],
+        ):
+            monitor = WatchMonitor(log_level="ERROR")
+            try:
+                with pytest.raises(sqlite3.OperationalError, match="unable to open database file"):
+                    await monitor.initialize()
+            finally:
+                await monitor.cleanup()
+
+        for path in (state_file, backup_file):
+            assert json.loads(path.read_text(encoding="utf-8")) == seed
 
     @pytest.mark.asyncio
     async def test_cleanup(self):
