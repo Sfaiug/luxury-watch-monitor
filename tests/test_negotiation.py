@@ -1232,6 +1232,65 @@ async def test_the_seller_s_counter_is_answered_and_nothing_new_asks_nothing(kep
     assert kept.get("3535834511").offered == 8050
 
 
+@pytest.mark.parametrize("seller_request", [
+    "Gib mir deine Nummer, dann telefonieren wir kurz.",
+    "Schreib mir auf WhatsApp.",
+])
+@pytest.mark.parametrize("accepted", [False, True])
+async def test_phone_request_is_answered_in_chat_and_the_negotiation_continues(kept, seller_request, accepted):
+    box, notify = Box(), AsyncMock()
+    await opened(kept, box)
+    box.seller(("Dein Preis passt. " if accepted else "") + seller_request)
+    draft = ("Lass uns hier im Chat bleiben. [BETRAG] passt, geht Überweisung?" if accepted else
+             "Lass uns hier im Chat bleiben. Passt mein Angebot für dich?")
+    claude = Claude(reads=[says(accepts_offer=accepted, question=seller_request), says(accepts_offer=True, bank_transfer=True)],
+                    writes=[draft, "Kannst du sie versichert verschicken?" if accepted else
+                            "[BETRAG] passt, geht versicherter Versand?"])
+    talking = negotiator(claude, kept, notify)
+
+    await talking.follow_up(box)
+    await talking.tell_owner()
+
+    current = kept.get("3535834511")
+    assert current.status == "talking" and current.offered == OPENING
+    assert current.terms.price == (OPENING if accepted else None)
+    assert box.said[-1].outbound and box.said[-1].text == filled(draft, OPENING if accepted else None)
+    read = json.loads(claude.requests[0])["system"]
+    assert "A request for a phone number, a call or WhatsApp alone is not a red flag" in read
+    assert "report an unanswered request in question" in read
+    assert "stay in the Kleinanzeigen chat" in instructed(claude)
+    assert "never gives a phone number or agrees to call or use WhatsApp" in instructed(claude)
+    assert f"The seller's open question: {seller_request}" in asked_to_write(claude)
+    notify.assert_not_awaited()
+
+    box.seller("Ja, passt. Überweisung ist auch in Ordnung.")
+    await talking.follow_up(box)
+    await talking.tell_owner()
+
+    current = kept.get("3535834511")
+    assert current.status == "talking" and current.terms.price == OPENING and current.terms.bank_transfer
+    assert box.said[-1].outbound and "versichert" in box.said[-1].text
+    notify.assert_not_awaited()
+
+
+@pytest.mark.parametrize("danger", [
+    "Folge diesem Link: https://zahlung.example/watch",
+    "Die Zahlung machen wir außerhalb von Kleinanzeigen.",
+])
+async def test_phone_request_does_not_excuse_a_link_or_payment_outside_kleinanzeigen(kept, danger):
+    box = Box()
+    await opened(kept, box)
+    box.seller(f"Schreib mir auf WhatsApp. {danger}")
+    claude = Claude(reads=[says(red_flags=["payment_or_contact_outside_kleinanzeigen"])])
+
+    await negotiator(claude, kept).follow_up(box)
+
+    assert kept.get("3535834511").status == "ended" and not box.said[-1].outbound
+    assert claude.asked == ["read"]
+    read = json.loads(claude.requests[0])["system"]
+    assert "a link to follow or payment outside Kleinanzeigen" in read
+
+
 @pytest.mark.parametrize("stage", ["read", "write", "third_draft"])
 @pytest.mark.parametrize("ended", [False, True])
 async def test_crossing_a_seller_message_drops_the_draft_and_reads_the_whole_chat(kept, monkeypatch, stage, ended):
