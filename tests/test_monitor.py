@@ -8,16 +8,18 @@ import logging
 import sqlite3
 import csv
 import os
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from dataclasses import replace
 from unittest.mock import AsyncMock, DEFAULT, Mock, patch
 from decimal import Decimal
 
 from config import APP_CONFIG, SITE_CONFIGS
-from filters import Filter
+from agent import Agent, Deals, Reading
+from filters import Filter, FilterStore
 from monitor import WatchMonitor, SCRAPER_CLASSES
 from models import WatchData, ScrapingSession
 from notifications import NotificationManager
+from negotiation import Negotiations, Negotiator
 from persistence import SeenIds
 from prices import Prices
 from scrapers.base import BaseScraper
@@ -1098,3 +1100,157 @@ async def test_not_taken_notification_cli_remembers_only_successful_alerts(
 
     assert mock_aiohttp_session.post.call_count == (1 if first_status == 204 else 2)
     assert list(shop.seen_ids) == [watch.composite_id]
+
+
+@pytest.mark.parametrize("requested", [False, True])
+@pytest.mark.parametrize("removed", ["never", "before_restart", "during_read"])
+async def test_owed_a_verdict_survives_cleanup_but_only_negotiates_while_the_filter_exists(
+    requested, removed, tmp_path, monkeypatch
+):
+    monkeypatch.setattr(APP_CONFIG, "enable_notifications", True)
+    monkeypatch.setattr(APP_CONFIG, "controlling_file", str(tmp_path / "absent.csv"))
+    asked = Filter("42", "1", "kleinanzeigen", "private", "Rolex", negotiate=not requested)
+    store = FilterStore(tmp_path / "filters.json")
+    store.add(asked)
+    watch = WatchData(title="Rolex", url="https://www.kleinanzeigen.de/s-anzeige/123",
+                      site_name="Kleinanzeigen", site_key=asked.key, price=Decimal("9000"))
+    reading = Reading(is_watch_for_sale=True, brand="Rolex", model="Submariner", reference="116610LN",
+                      year=None, condition="good", box=False, papers=False)
+    read = AsyncMock(return_value=reading)
+    monkeypatch.setattr("agent.read", read)
+    entered = asyncio.Event()
+
+    async def interrupted(url):
+        entered.set()
+        await asyncio.Future()
+
+    def monitor_with(fetch):
+        monitor = WatchMonitor(log_level="ERROR")
+        monitor.persistence = Mock()
+        monitor.filter_store = store
+        monitor.filters = {f.key: f for f in store.all()}
+        monitor.prices = Prices(tmp_path / "prices.sqlite3")
+        monitor.prices.set_buy_price("116610LN", 8600, datetime.now())
+        monitor.deals = Deals(tmp_path / "deals.sqlite3")
+        monitor._tell_owner = AsyncMock()
+        monitor.negotiator = Negotiator(None, Negotiations(tmp_path / "deals.sqlite3"),
+                                        monitor._tell_owner, monitor.logger)
+        monitor.agent = Agent(None, fetch, monitor.prices, monitor.deals, monitor.logger,
+                              monitor._negotiate_if_asked, monitor._negotiate_by_hand, monitor._tell_owner)
+        monitor.notification_manager = AsyncMock()
+        return monitor
+
+    monitor = monitor_with(interrupted)
+    scraper = Mock(config=asked.scraper(monitor.logger).config, scrape=AsyncMock(return_value=[watch]),
+                   seen_ids=SeenIds(), last_scan=[])
+
+    async def alert(watches, config, **kwargs):
+        # The obligation is committed before the alert can mark the match seen, even before its task runs.
+        assert monitor.deals.judging(watch) is not None
+        kwargs["seen_ids"].add(watch.composite_id)
+        return 1
+
+    monitor.notification_manager.send_notifications.side_effect = alert
+    try:
+        await monitor._scrape_single_site(asked.key, scraper, ScrapingSession())
+        await asyncio.wait_for(entered.wait(), 2)
+        assert watch.composite_id in monitor.seen_items[asked.key]
+        monitor.persistence.save_seen_items.assert_called_once()
+        if requested:
+            reply = monitor._negotiate_pressed({"data": {"custom_id": "negotiate:123"}, "channel_id": "42"})
+            assert "reads the offer again" in reply
+    finally:
+        await monitor.cleanup()
+    assert not monitor._judging
+
+    # No new match arrives in the next process. Only the saved claim can start this deal.
+    if removed == "before_restart":
+        store.remove(asked.channel_id)
+    price = "17790" if requested else "9000"
+
+    async def page(url):
+        if removed == "during_read":
+            store.remove(asked.channel_id)
+            restarted._sync_filters()
+        return f'<h1 id="viewad-title">Rolex</h1><h2 id="viewad-price">{price} €</h2>'
+
+    fetch = AsyncMock(side_effect=page)
+    restarted = monitor_with(fetch)
+    try:
+        await restarted.run_monitoring_cycle()
+        await asyncio.gather(*restarted._judging)
+        pending = restarted.negotiator.negotiations.with_status("pending")
+        if removed == "never":
+            (negotiation,) = pending
+            assert (negotiation.ad_id, negotiation.channel, negotiation.limit, negotiation.asking) == (
+                "123", "filter:42", 8600, int(price),
+            )
+        else:
+            assert pending == []
+        if removed == "before_restart":
+            assert restarted.deals.judging(watch)["attempts"] == 1
+        else:
+            assert restarted.deals.owed() == []
+        await restarted.run_monitoring_cycle()
+        await asyncio.gather(*restarted._judging)
+        expected_reads = int(removed != "before_restart")
+        assert fetch.await_count == read.await_count == expected_reads
+        assert restarted._tell_owner.await_count == int(requested and removed == "never")
+        restarted.notification_manager.send_notifications.assert_not_called()
+    finally:
+        await restarted.cleanup()
+
+
+@pytest.mark.parametrize("during_tend", [False, True])
+async def test_owed_a_verdict_manual_request_before_the_initial_filter_sync_is_completed(
+    during_tend, tmp_path, monkeypatch
+):
+    monitor = WatchMonitor(log_level="ERROR")
+    monitor.filter_store = FilterStore(tmp_path / "filters.json")
+    monitor.filter_store.add(Filter("42", "1", "kleinanzeigen", "private", "Rolex"))
+    monitor.persistence = Mock()
+    monitor._read_trades = AsyncMock()
+    monitor._scrape_single_site = AsyncMock()
+    monitor.prices = Prices(tmp_path / "prices.sqlite3")
+    monitor.prices.set_buy_price("116610LN", 8600, datetime.now())
+    monitor.deals = Deals(tmp_path / "deals.sqlite3")
+    monitor._tell_owner = AsyncMock()
+    monitor.negotiator = Negotiator(None, Negotiations(tmp_path / "deals.sqlite3"),
+                                    monitor._tell_owner, monitor.logger)
+    fetch = AsyncMock(return_value='<h1 id="viewad-title">Rolex</h1><h2 id="viewad-price">9000 €</h2>')
+    reading = Reading(is_watch_for_sale=True, brand="Rolex", model="Submariner", reference="116610LN",
+                      year=None, condition="good", box=False, papers=False)
+    monkeypatch.setattr("agent.read", AsyncMock(return_value=reading))
+    monitor.agent = Agent(None, fetch, monitor.prices, monitor.deals, monitor.logger,
+                          monitor._negotiate_if_asked, monitor._negotiate_by_hand, monitor._tell_owner)
+    entered, release = asyncio.Event(), asyncio.Event()
+
+    async def tend():
+        entered.set()
+        await release.wait()
+
+    monitor.filter_flow = Mock(tend=AsyncMock(side_effect=tend))
+    cycle = None
+    try:
+        if during_tend:
+            cycle = asyncio.create_task(monitor.run_monitoring_cycle())
+            await asyncio.wait_for(entered.wait(), 2)
+        assert monitor.filters == {}
+        monitor._negotiate_pressed({"data": {"custom_id": "negotiate:123"}, "channel_id": "42"})
+        await asyncio.gather(*monitor._judging)
+        (negotiation,) = monitor.negotiator.negotiations.with_status("pending")
+        assert (negotiation.ad_id, negotiation.channel, negotiation.limit) == ("123", "filter:42", 8600)
+        monitor._tell_owner.assert_awaited_once()
+        assert monitor.deals.owed() == []
+        release.set()
+        if cycle is not None:
+            await cycle
+        await monitor.run_monitoring_cycle()
+        await asyncio.gather(*monitor._judging)
+        fetch.assert_awaited_once()
+        monitor._tell_owner.assert_awaited_once()
+    finally:
+        release.set()
+        if cycle is not None:
+            await asyncio.gather(cycle, return_exceptions=True)
+        await monitor.cleanup()

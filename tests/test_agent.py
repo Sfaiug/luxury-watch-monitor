@@ -15,7 +15,7 @@ from aiohttp.test_utils import TestClient, TestServer
 from anthropic import AsyncAnthropic
 
 import chrono24
-from agent import Agent, Deals, Reading, decide, offer_page, read
+from agent import ATTEMPTS, Agent, Deals, Reading, decide, offer_page, read
 from chrono24 import FULL_SET, USED
 from config import APP_CONFIG, SITE_CONFIGS, AppConfig
 from filters import Filter, FilterStore
@@ -178,10 +178,12 @@ def test_without_price_the_verdict_keeps_its_worth_and_limit(prices):
 
 
 @pytest.mark.parametrize("price_text", ["VB", "Preis auf Anfrage"])
-async def test_without_price_a_negotiate_press_opens_from_the_limit(prices, deals, price_text):
+async def test_without_price_a_negotiate_press_opens_from_the_limit(prices, deals, price_text, tmp_path):
     monitor = WatchMonitor(log_level="ERROR")
+    monitor.filter_store = FilterStore(tmp_path / "filters.json")
+    monitor.filter_store.add(Filter("42", "1", "kleinanzeigen", "private", "Rolex"))
     monitor.agent = Agent(Claude(reading().model_dump_json()), AsyncMock(return_value=OFFER.replace("17.790 €", price_text)),
-                          prices, deals, logging.getLogger("test"))
+                          prices, deals, logging.getLogger("test"), on_requested_verdict=monitor._negotiate_by_hand)
     monitor.negotiator = Mock(pressed=Mock(return_value=None))
     monitor._tell_owner = AsyncMock()
 
@@ -303,11 +305,13 @@ async def test_each_cycle_decides_again_on_the_matches_that_wait_for_their_price
     monitor = WatchMonitor(log_level="ERROR")
     monitor.filter_store = FilterStore(tmp_path / "filters.json")
     monitor.persistence = Mock()
-    monitor.agent = Mock()
+    monitor.agent = Mock(retry=AsyncMock())
 
     await monitor.run_monitoring_cycle()
 
     monitor.agent.reconsider.assert_called_once_with()
+    await asyncio.gather(*monitor._judging)
+    monitor.agent.retry.assert_awaited_once_with(monitor.filters)
 
 
 async def test_what_is_no_watch_for_sale_stays_out_of_the_price_database(prices, deals):
@@ -327,6 +331,178 @@ async def test_a_match_that_cannot_be_read_is_left_for_the_log(prices, deals):
 
     assert deals.latest(10) == []
     logger.warning.assert_called_once()
+
+
+@pytest.mark.parametrize("failure", ["page", "empty_page", "credit", "429", "529", "invalid_answer"])
+async def test_owed_a_verdict_after_a_failed_reading_is_judged_after_restarting(prices, deals, tmp_path, failure):
+    class UnavailableOnce(Claude):
+        def answer(self, request):
+            if not self.requests and failure not in ("page", "empty_page"):
+                self.requests.append(json.loads(request.content))
+                if failure == "invalid_answer":
+                    return httpx2.Response(200, json={"broken": "answer"})
+                status = 400 if failure == "credit" else int(failure)
+                return httpx2.Response(status, json={"type": "error", "error": {
+                    "type": "invalid_request_error", "message": "credit balance too low" if failure == "credit" else failure,
+                }})
+            return super().answer(request)
+
+    claude = UnavailableOnce(reading().model_dump_json())
+    page = OFFER.replace("17.790 €", "VB")  # The kept match supplies the price when the page names none.
+    fetch = AsyncMock(side_effect=[RuntimeError("no page"), page] if failure == "page"
+                      else ["", page] if failure == "empty_page" else [page, page])
+    follows = Mock()
+    agent = Agent(claude, fetch, prices, deals, logging.getLogger("test"), follows)
+
+    await agent.consider([match()])
+
+    assert deals.latest(10) == []
+    assert deals.judging(match())["attempts"] == 1
+    follows.assert_not_called()
+    deals.close()
+    reopened = Deals(tmp_path / "deals.sqlite3")
+    try:
+        agent = Agent(claude, fetch, prices, reopened, logging.getLogger("test"), follows)
+        await agent.retry()
+        await agent.retry()
+        watch, verdict = follows.call_args.args
+        assert follows.call_count == 1
+        assert (watch.title, watch.url, watch.site_key, watch.price) == (
+            match().title, match().url, "filter:42", Decimal("9000"),
+        )
+        assert verdict.contact
+        assert reopened.latest(1)[0]["why"] == "worth contacting"
+        assert reopened.owed() == []
+        assert fetch.await_count == 2
+    finally:
+        reopened.close()
+
+
+@pytest.mark.parametrize("started", [False, True])
+async def test_owed_a_verdict_keeps_the_entire_batch_when_its_task_is_cancelled(prices, deals, tmp_path, started):
+    entered = asyncio.Event()
+
+    async def blocked_page(url):
+        entered.set()
+        await asyncio.Future()
+
+    watches = [match(), WatchData(title="Second", url=match().url,
+                                 site_name="Kleinanzeigen", site_key="filter:43", price=Decimal("9000"))]
+    agent = Agent(Claude(reading().model_dump_json()), blocked_page, prices, deals, logging.getLogger("test"))
+    task = asyncio.create_task(agent.consider(watches))
+    if started:
+        await asyncio.wait_for(entered.wait(), 2)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert len(deals.owed()) == 2
+    assert deals.judging(watches[0])["attempts"] == int(started)
+    assert deals.judging(watches[1])["attempts"] == 0
+    deals.close()
+
+    reopened = Deals(tmp_path / "deals.sqlite3")
+    try:
+        follows = Mock()
+        agent = Agent(Claude(reading().model_dump_json()), AsyncMock(return_value=OFFER), prices, reopened,
+                      logging.getLogger("test"), follows)
+        await agent.retry()
+        await agent.retry()
+        assert follows.call_count == 2
+        assert {call.args[0].site_key for call in follows.call_args_list} == {"filter:42", "filter:43"}
+        assert reopened.owed() == []
+    finally:
+        reopened.close()
+
+
+async def test_owed_a_verdict_has_bounded_attempts_and_reports_failure_once_even_across_restarts(prices, deals, tmp_path):
+    fetch = AsyncMock(side_effect=RuntimeError("AI credit used up"))
+    notify = AsyncMock(side_effect=[RuntimeError("Discord unavailable"), None])
+    agent = Agent(None, fetch, prices, deals, logging.getLogger("test"), notify=notify)
+    await agent.consider([match(), match()])
+    for _ in range(ATTEMPTS - 1):
+        await agent.retry()
+    assert fetch.await_count == ATTEMPTS
+    assert notify.await_count == 1
+    deals.close()
+
+    for _ in range(2):
+        reopened = Deals(tmp_path / "deals.sqlite3")
+        try:
+            agent = Agent(None, fetch, prices, reopened, logging.getLogger("test"), notify=notify)
+            await agent.consider([match()])  # Another scan cannot renew an exhausted budget.
+            await agent.retry()
+        finally:
+            reopened.close()
+    assert fetch.await_count == ATTEMPTS
+    assert notify.await_count == 2  # One rejected post, one delivered post.
+    channel, text = notify.await_args.args
+    assert channel == "filter:42" and "AI credit used up" in text and match().url in text
+
+
+async def test_owed_a_verdict_is_judged_once_when_retries_and_a_manual_request_overlap(prices, deals):
+    entered, release = asyncio.Event(), asyncio.Event()
+
+    async def page(url):
+        entered.set()
+        await release.wait()
+        return OFFER
+
+    fetch, follows, requested = AsyncMock(side_effect=page), Mock(), AsyncMock()
+    agent = Agent(Claude(reading().model_dump_json()), fetch, prices, deals, logging.getLogger("test"), follows, requested)
+    task = asyncio.create_task(agent.consider([match()]))
+    try:
+        await asyncio.wait_for(entered.wait(), 2)
+        await agent.consider([match()], requested=True)
+        await agent.retry()
+        fetch.assert_awaited_once()
+    finally:
+        release.set()
+        await task
+    requested.assert_awaited_once()
+    follows.assert_not_called()
+    assert deals.owed() == []
+
+
+async def test_owed_a_verdict_counts_cancelled_attempts_toward_its_limit(prices, deals):
+    entered = asyncio.Event()
+
+    async def interrupted(url):
+        entered.set()
+        await asyncio.Future()
+
+    fetch, notify = AsyncMock(side_effect=interrupted), AsyncMock()
+    agent = Agent(None, fetch, prices, deals, logging.getLogger("test"), notify=notify)
+    for attempt in range(ATTEMPTS):
+        entered.clear()
+        task = asyncio.create_task(agent.consider([match()]) if attempt == 0 else agent.retry())
+        try:
+            await asyncio.wait_for(entered.wait(), 2)
+        finally:
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+    await agent.retry()
+    await agent.retry()
+    assert fetch.await_count == ATTEMPTS
+    notify.assert_awaited_once()
+    assert "interrupted" in notify.await_args.args[1]
+
+
+async def test_owed_a_verdict_for_a_fresh_reading_is_not_cleared_by_reconsidering_old_prices(prices, deals):
+    requested = AsyncMock()
+    agent = Agent(Claude(reading(reference="116610LV").model_dump_json()), AsyncMock(return_value=OFFER),
+                  prices, deals, logging.getLogger("test"), on_requested_verdict=requested)
+    await agent.consider([match()])
+    pending = agent.consider([match()], requested=True)
+    try:
+        prices.set_buy_price("116610LV", 8600, datetime.now())
+        agent.reconsider()
+        assert deals.judging(match())["requested"]
+        assert deals.latest(1)[0]["buy_limit"] is None
+    finally:
+        await pending
+    requested.assert_awaited_once()
+    assert deals.owed() == []
 
 
 async def test_a_filter_s_new_matches_go_to_the_agent_and_a_shop_s_do_not(prices):
