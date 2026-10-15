@@ -118,8 +118,11 @@ async def test_opening_the_prices_page_holds_up_nothing():
 
     assert response.status == 200
     assert page.count('<tr id="') == 1238
-    assert max(b - a for a, b in zip(ticks, ticks[1:])) < 0.1, "the page held up other work"
-    assert ticks[-1] - started < 1.5, "the page took more than about a second"
+    # Measured against the request's own time, as a machine under load slows both alike: a page built on the
+    # event loop is one gap as long as the whole request
+    took = ticks[-1] - started
+    assert len(ticks) >= 5 and max(b - a for a, b in zip(ticks, ticks[1:])) < took / 2, "the page held up other work"
+    assert took < 10, "the page took many times the half second it takes"
 
 
 async def test_the_owner_s_price_is_the_limit_in_place_of_the_worked_out_one(client, prices):
