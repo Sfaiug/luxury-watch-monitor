@@ -101,8 +101,8 @@ async def test_a_refused_request_is_made_again_through_a_proxy(monkeypatch, mock
     ]
 
 
-@pytest.mark.parametrize("unreachable", [True, False])
-async def test_an_unreachable_site_is_asked_through_a_proxy_from_its_next_page_on(monkeypatch, mock_logger, unreachable):
+@pytest.mark.parametrize("answered", [False, True])
+async def test_an_unreachable_site_is_asked_through_a_proxy_from_its_next_page_on(monkeypatch, mock_logger, answered):
     use(monkeypatch, ONE, TWO)
     web = served(monkeypatch, Web(refuses=set()))
     get = web.get
@@ -110,9 +110,9 @@ async def test_an_unreachable_site_is_asked_through_a_proxy_from_its_next_page_o
     async def dropped(url, timeout=None, proxy=None, proxy_auth=None):
         if proxy is None and "rueschenbeck" in url:
             web.requests.append(("www.rueschenbeck.de", None))
-            if unreachable:
-                raise Timeout("Failed to perform, curl: (28) Connection timed out after 15003 milliseconds.")
-            raise HTTPError("HTTP Error 500")
+            if answered and len(web.requests) == 1:
+                return Mock(status_code=500, raise_for_status=Mock(side_effect=HTTPError("HTTP Error 500")))
+            raise Timeout("Failed to perform, curl: (28) Connection timed out after 15003 milliseconds.")
         return await get(url, timeout, proxy, proxy_auth)
 
     web.get = dropped
@@ -122,9 +122,9 @@ async def test_an_unreachable_site_is_asked_through_a_proxy_from_its_next_page_o
     web.requests.clear()
     page = await fetch_page("https://www.rueschenbeck.de/vintage-certified-pre-owned", mock_logger)
 
-    # A site that answers, if with an error, is not refusing the server
-    assert page == ("page of www.rueschenbeck.de" if unreachable else None)
-    assert web.requests[0] == ("www.rueschenbeck.de", "http://10.0.0.2:2222" if unreachable else None)
+    # A site that answered at one try, if with an error, is not refusing the server
+    assert page == (None if answered else "page of www.rueschenbeck.de")
+    assert web.requests[0] == ("www.rueschenbeck.de", None if answered else "http://10.0.0.2:2222")
 
 
 async def test_a_site_that_answers_is_asked_directly(monkeypatch):

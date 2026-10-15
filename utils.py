@@ -87,12 +87,15 @@ async def fetch_page(url: str, logger=None) -> Optional[str]:
     """
 
     host = urlsplit(url).netloc
+    answered = False
 
     async def _fetch():
+        nonlocal answered
         async with AsyncSession(impersonate="chrome") as browser:
             response = await browser.get(
                 url, timeout=APP_CONFIG.request_timeout, **proxies.ROUTES.way_to(host)
             )
+        answered = True
         if response.status_code in (403, 429) and proxies.ROUTES.refused(host) and logger:
             logger.warning(
                 f"{host} refused the request ({response.status_code}); "
@@ -120,7 +123,7 @@ async def fetch_page(url: str, logger=None) -> Optional[str]:
             return await retry_with_backoff(_fetch, exceptions=(RequestException,))
     except Exception as e:
         # A site that drops the server's connections refuses it as a 403 does (Rüschenbeck, 15 Oct 2026)
-        if isinstance(e, (CannotConnect, Timeout)) and proxies.ROUTES.refused(host) and logger:
+        if not answered and isinstance(e, (CannotConnect, Timeout)) and proxies.ROUTES.refused(host) and logger:
             logger.warning(f"{host} could not be reached; its requests go through a proxy from now on")
         if logger:
             logger.error(f"Failed to fetch {url}: {e}")
