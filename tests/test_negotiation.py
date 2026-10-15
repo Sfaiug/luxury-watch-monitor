@@ -1,6 +1,7 @@
 """The buying agent's negotiation: what it answers a seller by the owner's terms, and how it writes to them."""
 
 import asyncio
+import html
 import json
 import logging
 from dataclasses import dataclass, field
@@ -1565,6 +1566,175 @@ async def test_a_word_that_only_holds_a_term_s_word_does_not_name_it(kept):
                      kept).follow_up(box)
 
     assert box.said[-1].text.endswith("kurzen Kaufvertrag, passt das?")
+
+
+@pytest.mark.parametrize("same_first", [False, True])
+@pytest.mark.parametrize("delayed", [False, True])
+async def test_earlier_messages_stay_history_after_the_agent_joins_and_restarts(kept, tmp_path, same_first, delayed):
+    first = "Hallo, ist die Uhr & das Band noch da?"
+    box = Box(contact_fails=delayed)
+    box.said = [Said(True, first if same_first else "Ist das noch verfügbar?"),
+                Said(False, "Ja, noch da."), Said(True, "Ich melde mich später.")]
+    talking = negotiator(Claude(reads=[says()], writes=[first, "Ich biete [BETRAG]."]), kept)
+    talking.ask_to_start(asked_for())
+    await talking.start(box)
+    if delayed:
+        box.bought = AsyncMock(return_value="c1")
+        box.said.append(Said(True, html.escape(first)))
+        await talking.start(box)
+    box.seller("Ja.")
+    await talking.follow_up(box)
+    assert kept.get("3535834511").status == "talking"
+    assert box.said[-1].text == "Ich biete 7.550 €."
+    kept.close()
+    kept = Negotiations(tmp_path / "deals.sqlite3")
+    try:
+        box.seller("8.000 € wären ok.")
+        claude = Claude(reads=[says(price=8000)], writes=["[BETRAG] passt. Geht Überweisung?"])
+        talking = negotiator(claude, kept)
+        await talking.follow_up(box)
+        await talking.tell_owner()
+
+        assert box.said[-1].text == "8.000 € passt. Geht Überweisung?"
+        assert kept.get("3535834511").status == "talking"
+        talking.notify.assert_not_awaited()
+
+        box.said.append(Said(True, "Ich melde mich später."))
+        await talking.follow_up(box)
+        await talking.tell_owner()
+        assert kept.get("3535834511").status == "owner"
+        assert "the owner wrote in the conversation" in talking.notify.await_args.args[1]
+    finally:
+        kept.close()
+
+
+@pytest.mark.parametrize("before_offer", [False, True])
+async def test_earlier_messages_in_a_negotiation_saved_without_its_first_boundary(kept, tmp_path, before_offer):
+    box = Box()
+    opener = "Ist die Uhr noch zu haben?"
+    box.said = [Said(True, opener if before_offer else "Ist das noch verfügbar?"),
+                Said(False, "Ja."), Said(True, "Ich melde mich später.")]
+    if before_offer:
+        talking = negotiator(Claude(writes=[opener]), kept)
+        talking.ask_to_start(asked_for())
+        await talking.start(box)
+    else:
+        await opened(kept, box)
+    with kept._db:
+        saved = json.loads(kept._db.execute("SELECT kept FROM negotiations").fetchone()[0])
+        del saved["first"]
+        kept._db.execute("UPDATE negotiations SET kept = ?", (json.dumps(saved),))
+    kept.close()
+    kept = Negotiations(tmp_path / "deals.sqlite3")
+    try:
+        box.seller("8.000 € wären ok.")
+        reply = "Ich biete [BETRAG]." if before_offer else "[BETRAG] passt. Geht Überweisung?"
+        await negotiator(Claude(reads=[says(price=8000)], writes=[reply]), kept).follow_up(box)
+
+        assert kept.get("3535834511").status == "talking"
+        assert box.said[-1].text == ("Ich biete 7.550 €." if before_offer else "8.000 € passt. Geht Überweisung?")
+        if before_offer:
+            box.seller("8.000 € ist mein Preis.")
+            await negotiator(Claude(reads=[says(price=8000)], writes=["[BETRAG] passt. Geht Überweisung?"]), kept).follow_up(box)
+            assert kept.get("3535834511").status == "talking"
+            assert box.said[-1].text == "8.000 € passt. Geht Überweisung?"
+    finally:
+        kept.close()
+
+
+@pytest.mark.parametrize("owner_writes", [False, True])
+async def test_earlier_messages_a_legacy_reply_rollback_keeps_the_opener_and_detects_takeover(kept, tmp_path, owner_writes):
+    box = Box()
+    opener = "Ist die Uhr noch zu haben?"
+    talking = negotiator(Claude(reads=[says()], writes=[opener, "Ich biete [BETRAG]."]), kept)
+    talking.ask_to_start(asked_for())
+    await talking.start(box)
+    box.seller("Ja.")
+    box.reply = AsyncMock(side_effect=RuntimeError("temporary send failure"))
+    await talking.follow_up(box)
+    box.seller("Noch Interesse?")
+    rollback = negotiator(Claude(), kept)
+    rollback.client.messages.create = AsyncMock(side_effect=RuntimeError("temporary read failure"))
+    await rollback.follow_up(box)
+    with kept._db:
+        saved = json.loads(kept._db.execute("SELECT kept FROM negotiations").fetchone()[0])
+        assert saved["sent"] == [opener] and saved["seen"] == 2 and saved["before"]
+        del saved["first"]
+        kept._db.execute("UPDATE negotiations SET kept = ?", (json.dumps(saved),))
+    kept.close()
+    kept = Negotiations(tmp_path / "deals.sqlite3")
+    try:
+        del box.reply
+        if owner_writes:
+            box.said.append(Said(True, "Ich mache das selbst, bitte nicht mehr schreiben."))
+        claude = Claude(reads=[says()], writes=["Ich biete [BETRAG]."])
+        talking = negotiator(claude, kept)
+        await talking.follow_up(box)
+        await talking.tell_owner()
+
+        current = kept.get("3535834511")
+        assert current.sent[0] == opener
+        assert current.status == ("owner" if owner_writes else "talking")
+        if owner_writes:
+            assert claude.asked == []
+            talking.notify.assert_awaited_once()
+            assert "the owner wrote in the conversation" in talking.notify.await_args.args[1]
+        else:
+            assert box.said[-1].text == "Ich biete 7.550 €."
+            talking.notify.assert_not_awaited()
+    finally:
+        kept.close()
+
+
+async def test_earlier_messages_the_agents_escaped_reply_is_its_own(kept):
+    box = Box()
+    await opened(kept, box)
+    box.seller("Unter 9.500 € nicht.")
+    await negotiator(Claude(reads=[says(price=9500)], writes=["Für Uhr & Band biete ich [BETRAG]."]), kept).follow_up(box)
+    box.said[-1].text = html.escape(box.said[-1].text).replace(" ", "&nbsp;")
+    box.seller("Ist das mit Versand?")
+    claude = Claude(reads=[says(price=9500, question="Ist das mit Versand?")],
+                    writes=["Ja, versichert. Was ginge bei dir noch?"])
+
+    await negotiator(claude, kept).follow_up(box)
+
+    assert claude.asked == ["read", "write"]
+    assert kept.get("3535834511").status == "talking"
+    assert box.said[-1].text == "Ja, versichert. Was ginge bei dir noch?"
+
+
+@pytest.mark.parametrize("reason, read, writes, notified", [
+    ("the owner wrote in the conversation", None, [], True),
+    ("red flags", says(red_flags=["payment_or_contact_outside_kleinanzeigen"]), [], True),
+    ("red flags", says(ended=True, red_flags=["payment_or_contact_outside_kleinanzeigen"]), [], True),
+    ("the seller ended it", says(ended=True), [], False),
+    ("above the limit", says(price=12000), ["Schade, da komme ich nicht mit."], False),
+])
+async def test_earlier_messages_stops_are_reported_unless_the_seller_said_no(kept, reason, read, writes, notified):
+    box = Box()
+    await opened(kept, box)
+    current = kept.get("3535834511")
+    current.offered = LIMIT
+    kept.save(current)
+    box.seller("Die Antwort des Verkäufers.")
+    if read is None:
+        box.said.append(Said(True, "Passt, mache ich selbst."))
+    notify = AsyncMock(side_effect=[RuntimeError("Discord is down"), None])
+    talking = negotiator(Claude(reads=[read] if read else [], writes=writes), kept, notify)
+
+    await talking.follow_up(box)
+    await talking.tell_owner()
+    if notified:
+        assert reason in kept.get(current.ad_id).notice
+    await talking.tell_owner()
+    await talking.tell_owner()
+
+    assert kept.get(current.ad_id).notice == ""
+    assert notify.await_count == (2 if notified else 0)
+    if notified:
+        channel, text, buttons = notify.await_args.args
+        assert channel == current.channel and reason in text
+        assert current.title in text and current.address in text and buttons == []
 
 
 async def test_once_the_owner_writes_in_the_conversation_the_agent_stays_out(kept):

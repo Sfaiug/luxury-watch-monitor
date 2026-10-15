@@ -7,6 +7,7 @@ contact form. A message counts as sent once its conversation shows it.
 """
 
 import asyncio
+import html
 from dataclasses import dataclass
 from typing import Callable, List, Optional
 
@@ -49,8 +50,8 @@ _PICTURE = """async url => {
 
 
 def plain(text: str) -> str:
-    """A message as both its writer and the site show it: the same words, however the lines break."""
-    return " ".join(text.split())
+    """A message as its writer and the site show it, with HTML escapes and line breaks normalized."""
+    return " ".join(html.unescape(text).split())
 
 
 class NotSent(Exception):
