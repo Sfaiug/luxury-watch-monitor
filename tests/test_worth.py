@@ -112,6 +112,80 @@ def test_a_shop_s_offers_are_not_the_market(prices):
     assert worth(prices, "116610LN", USED) == Decimal("9500")
 
 
+@pytest.mark.parametrize("kind", [USED, FULL_SET])
+@pytest.mark.parametrize("found,asked,expected", [
+    (9, (450, 850, 47000, 47500, 48000, 49000, 50000, 51000, 52000), Decimal("47500")),
+    (6, (450, 850, 47500, 50000, 55000, 60000), None),
+    (7, (450, 850, 47500, 50000, 55000, 60000, 65000), Decimal("50000")),
+    # The quarter still uses all offers found, including those beyond the cards read.
+    (25, (450, 47000, 47500, 48000, 49000, 50000, 51000, 52000, 53000), Decimal("51000")),
+    # Exactly half the median counts; only the price below it is junk.
+    (7, (9999, 10000, 10000, 20000, 21000, 22000, 23000), Decimal("10000")),
+])
+def test_junk_counts_neither_toward_the_quarter_nor_the_five_offers_needed(prices, kind, found, asked, expected):
+    searched(prices, found, chrono24_offers(*asked), kind=kind)
+
+    assert worth(prices, "116610LN", kind) == expected
+
+
+@pytest.mark.parametrize("asked,expected", [
+    ((450, 850, 50000, 52000, 55000, 60000), None),
+    ((450, 850, 42000, 45000, 48000, 50000, 52000), Decimal("47500")),
+    ((42000, 45000, 48000, 50000, 52000), Decimal("47500")),
+    ((450, 850, 52000, 55000, 58000, 60000, 62000), Decimal("55000")),
+])
+def test_a_full_set_with_junk_never_falls_below_used_worth_or_starts_at_an_accessory_price(prices, asked, expected):
+    searched(prices, 5, chrono24_offers(45000, 47500, 49000, 50000, 52000, reference="3800"), reference="3800")
+    full_sets = chrono24_offers(*asked, reference="3800")
+    for offer in full_sets:
+        offer.url = offer.url.replace("--id", "-full-set--id")
+    searched(prices, len(full_sets), full_sets, reference="3800", kind=FULL_SET)
+    reading = Reading(is_watch_for_sale=True, brand="Patek Philippe", model="Nautilus", reference="3800",
+                      year=None, condition="good", box=True, papers=True)
+
+    verdict = decide(reading, Decimal("42000"), prices)
+
+    assert worth(prices, "3800", USED) == Decimal("47500")
+    assert worth(prices, "3800", FULL_SET) == expected
+    value = expected if expected is not None else Decimal("47500")
+    assert (verdict.contact, verdict.worth, verdict.limit) == (True, value, most_to_pay(value))
+    assert verdict.opening > Decimal("30000")
+
+
+def test_junk_filtering_leaves_the_business_s_own_lower_sales_in_place(prices, trades):
+    trades()
+    for kind in (USED, FULL_SET):
+        searched(prices, 7, chrono24_offers(450, 850, 52000, 55000, 58000, 60000, 62000, reference="3800"),
+                 reference="3800", kind=kind)
+
+    assert worth(prices, "3800", USED, "Patek Philippe") == Decimal("46750")
+    assert worth(prices, "3800", FULL_SET, "Patek Philippe") == Decimal("46750")
+    assert buy_limit(prices, "3800", FULL_SET, "Patek Philippe") == Decimal("37000")
+
+
+@pytest.mark.parametrize("junk", [(), (450, 850)])
+def test_a_full_sets_lower_own_sales_cap_survives_the_junk_floor(prices, junk):
+    asked = (48000, 50000, 53000, 55000, 58000, 60000, 62000)
+    for kind, amounts in ((USED, asked), (FULL_SET, asked[2:])):
+        offers = chrono24_offers(*junk, *amounts, reference="3800")
+        for offer in offers:
+            offer.url = offer.url.replace("--id", f"-{kind}--id")
+        searched(prices, len(offers), offers, reference="3800", kind=kind)
+    prices.traded([
+        controlling.Trade("3800", full_set, None, None, date.today(), Decimal(amount), "Patek Philippe")
+        for full_set, amount in ((True, 40000), (False, 60000), (False, 62000))
+    ])
+    reading = Reading(is_watch_for_sale=True, brand="Patek Philippe", model="Nautilus", reference="3800",
+                      year=None, condition="good", box=True, papers=True)
+
+    verdict = decide(reading, Decimal("42000"), prices)
+
+    assert worth(prices, "3800", USED, "Patek Philippe") == Decimal("50000")
+    assert worth(prices, "3800", FULL_SET, "Patek Philippe") == Decimal("40000")
+    assert buy_limit(prices, "3800", FULL_SET, "Patek Philippe") == Decimal("32074")
+    assert (verdict.contact, verdict.worth, verdict.limit) == (False, Decimal("40000"), Decimal("32074"))
+
+
 def test_the_least_profit_is_a_tenth_of_the_worth_and_never_under_500_euros():
     assert least_profit(Decimal("10000")) == Decimal("1000")
     assert least_profit(Decimal("3000")) == Decimal("500")
