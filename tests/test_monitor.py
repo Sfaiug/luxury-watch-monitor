@@ -10,7 +10,7 @@ import csv
 import os
 from datetime import date, timedelta
 from dataclasses import replace
-from unittest.mock import AsyncMock, Mock, patch
+from unittest.mock import AsyncMock, DEFAULT, Mock, patch
 from decimal import Decimal
 
 from config import APP_CONFIG, SITE_CONFIGS
@@ -155,12 +155,12 @@ async def test_unreadable_export_retries_the_warning_until_discord_accepts_it(co
     replies = [(503, {}), (201, {})] if unavailable == "failed_post" else [(201, {})]
     with patch("monitor.DiscordApi.call", new=AsyncMock(side_effect=replies)) as posted:
         await monitor.run_monitoring_cycle()
-        assert not monitor._trades_warned
+        assert not monitor.prices.trades_warned
         monkeypatch.setattr(APP_CONFIG, "discord_alert_channel_id", "42")
         monkeypatch.setattr(APP_CONFIG, "discord_bot_token", "bot-token")
         await monitor.run_monitoring_cycle()
         await monitor.run_monitoring_cycle()
-        assert monitor._trades_warned
+        assert monitor.prices.trades_warned
         assert posted.await_count == len(replies)
         monitor.logger.error.assert_called_once()
 
@@ -174,6 +174,98 @@ async def test_unreadable_export_can_warn_in_the_existing_shop_channel(controlli
     with patch("monitor.DiscordApi.call", new=AsyncMock(return_value=(201, {}))) as posted:
         await monitor._read_trades()
     assert posted.await_args.args[1] == "/channels/42/messages"
+
+
+@pytest.mark.parametrize("failure", ["read_error", "database_lock"])
+async def test_unreadable_export_retries_transient_failures_without_another_upload(
+    controlling_monitor, monkeypatch, tmp_path, failure
+):
+    monitor, write = controlling_monitor
+    monkeypatch.setattr(APP_CONFIG, "discord_bot_token", "")
+    monkeypatch.setattr("monitor.SITE_CONFIGS", {})
+    await monitor._read_trades()
+    write(Referenznummer="126610LN")
+    modified = os.path.getmtime(APP_CONFIG.controlling_file)
+    monitor.prices._db.execute("PRAGMA busy_timeout = 1")
+    lock = sqlite3.connect(tmp_path / "prices.sqlite3")
+    try:
+        with patch("monitor.controlling.read", wraps=controlling.read) as read:
+            if failure == "database_lock":
+                lock.execute("BEGIN IMMEDIATE")
+            else:
+                read.side_effect = [PermissionError("Temporarily unavailable"), DEFAULT]
+            await monitor._read_trades()
+            assert monitor._trades_read != modified
+            assert monitor.prices.traded_for("116610LN", False, date(2000, 1, 1), True) == [10000] * 10
+            lock.rollback()
+
+            await monitor._read_trades()
+            await monitor._read_trades()
+            assert os.path.getmtime(APP_CONFIG.controlling_file) == modified
+            assert monitor._trades_read == modified
+            assert monitor.prices.traded_for("126610LN", False, date(2000, 1, 1), True) == [10000] * 10
+            assert monitor.prices.traded_for("116610LN", False, date(2000, 1, 1), True) == []
+            assert read.call_count == 2
+    finally:
+        lock.close()
+
+
+async def test_unreadable_export_warning_survives_restarts_until_readable_trades_arrive(controlling_monitor, tmp_path):
+    monitor, write = controlling_monitor
+    await monitor._read_trades()
+    write("renamed")
+    with patch("monitor.DiscordApi.call", new=AsyncMock(return_value=(201, {}))) as posted:
+        await monitor._read_trades()
+        posted.assert_awaited_once()
+        monitor.prices.close()
+        restarted = WatchMonitor(log_level="CRITICAL")
+        restarted.prices = Prices(tmp_path / "prices.sqlite3")
+        try:
+            await restarted._read_trades()
+            write("semicolon")
+            await restarted._read_trades()
+            posted.assert_awaited_once()
+            assert restarted.prices.trades_warned
+
+            write()
+            await restarted._read_trades()
+            assert not restarted.prices.trades_warned
+            write("renamed")
+            await restarted._read_trades()
+            assert posted.await_count == 2
+        finally:
+            restarted.prices.close()
+
+
+@pytest.mark.parametrize("first_status", [204, 503])
+async def test_unreadable_export_warns_once_through_an_existing_webhook(
+    controlling_monitor, monkeypatch, mock_aiohttp_session, first_status
+):
+    monitor, write = controlling_monitor
+    await monitor._read_trades()
+    write("renamed")
+    monkeypatch.setattr(APP_CONFIG, "discord_bot_token", "")
+    monkeypatch.setattr(APP_CONFIG, "discord_alert_channel_id", "")
+    monkeypatch.setenv("WORLDOFTIME_WEBHOOK_URL", "https://discord.test/webhook")
+    monitor.session = mock_aiohttp_session
+    mock_aiohttp_session.post.return_value.__aenter__.side_effect = [
+        AsyncMock(status=first_status), AsyncMock(status=204),
+    ]
+    with patch("monitor.DiscordApi.call", new=AsyncMock()) as bot:
+        await monitor._read_trades()
+        assert monitor.prices.trades_warned == (first_status == 204)
+        await monitor._read_trades()
+        await monitor._read_trades()
+        bot.assert_not_awaited()
+
+    assert monitor.prices.trades_warned
+    assert mock_aiohttp_session.post.call_count == (1 if first_status == 204 else 2)
+    for call in mock_aiohttp_session.post.call_args_list:
+        assert call.args == ("https://discord.test/webhook",)
+        message = call.kwargs["json"]["content"]
+        assert "previous trades are still in use" in message
+        assert "Missing CSV columns: EK" in message
+        assert "Private Seller" not in message
 
 
 class TestWatchMonitor:

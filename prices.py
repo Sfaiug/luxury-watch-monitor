@@ -65,6 +65,7 @@ class Prices:
             if "brand" not in {column[1] for column in self._db.execute("PRAGMA table_info(trades)")}:
                 self._db.execute("ALTER TABLE trades ADD COLUMN brand TEXT")
             self._db.execute("CREATE INDEX IF NOT EXISTS trades_reference ON trades (reference)")
+            self._db.execute("CREATE TABLE IF NOT EXISTS controlling_warning (sent INTEGER PRIMARY KEY CHECK (sent = 1))")
             # Searches made before they asked for one kind of watch held new ones too: they count as none
             if self._db.execute("PRAGMA user_version").fetchone()[0] < 2:
                 self._db.execute("DROP TABLE IF EXISTS searches")
@@ -196,6 +197,15 @@ class Prices:
             "COUNT(CASE WHEN sold IS NOT NULL AND sold_for IS NOT NULL THEN 1 END) FROM trades"
         ).fetchone()
 
+    @property
+    def trades_warned(self) -> bool:
+        """Whether the owner heard of the unreadable export, until readable trades arrive."""
+        return self._db.execute("SELECT 1 FROM controlling_warning").fetchone() is not None
+
+    def warned_about_trades(self):
+        with self._db:
+            self._db.execute("INSERT OR IGNORE INTO controlling_warning VALUES (1)")
+
     def traded(self, trades: Iterable):
         """Keep these trades, the controlling tool's latest export, in place of the ones kept before."""
         with self._db:
@@ -208,6 +218,7 @@ class Prices:
                     for t in trades
                 ],
             )
+            self._db.execute("DELETE FROM controlling_warning")
 
     def traded_for(self, reference: str, full_sets_only: bool, since: date, sold: bool,
                    brand: Optional[str] = None) -> List[float]:

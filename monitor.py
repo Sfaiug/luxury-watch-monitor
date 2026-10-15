@@ -86,9 +86,8 @@ class WatchMonitor:
         self._scanning: Set[str] = set()
         self.filter_store = FilterStore(APP_CONFIG.filters_file)
         self.filters: Dict[str, Filter] = {}  # as last read
-        self._trades_read: Optional[float] = None  # modification time of the last export attempted
+        self._trades_read: Optional[float] = None  # modification time of the last accepted or rejected export
         self._trades_error: Optional[str] = None
-        self._trades_warned = False
         self.filter_flow: Optional[FilterFlow] = None
         self.running = False
         self.shutdown_event = asyncio.Event()
@@ -585,10 +584,15 @@ class WatchMonitor:
         try:
             changed = os.path.getmtime(APP_CONFIG.controlling_file)
             if changed != self._trades_read:
+                previous = self.prices.trade_counts()
+                try:
+                    trades = controlling.read(APP_CONFIG.controlling_file, previous)
+                except ValueError:
+                    self._trades_read = changed
+                    raise
+                self.prices.traded(trades)
                 self._trades_read = changed
-                self.prices.traded(controlling.read(APP_CONFIG.controlling_file, self.prices.trade_counts()))
                 self._trades_error = None
-                self._trades_warned = False
         except FileNotFoundError:
             pass
         except Exception as e:
@@ -596,21 +600,29 @@ class WatchMonitor:
                 self.logger.error(f"The controlling tool's export could not be read: {e}")
             self._trades_error = str(e)
 
-        if self._trades_error and not self._trades_warned:
-            channel = APP_CONFIG.discord_alert_channel_id or next(
-                (site.discord_channel_id for site in SITE_CONFIGS.values() if site.discord_channel_id), None
-            )
-            if isinstance(channel, str) and channel and APP_CONFIG.discord_bot_token:
-                try:
-                    await self._tell_owner(
-                        channel,
-                        "The controlling export could not be read. The previous trades are still in use. "
-                        + self._trades_error,
-                    )
-                except Exception as e:
-                    self.logger.warning(f"The controlling export warning could not be posted: {e}")
+        if self._trades_error:
+            try:
+                if self.prices.trades_warned:
+                    return
+                channel = APP_CONFIG.discord_alert_channel_id or next(
+                    (site.discord_channel_id for site in SITE_CONFIGS.values() if site.discord_channel_id), None
+                )
+                use_bot = isinstance(channel, str) and channel and APP_CONFIG.discord_bot_token
+                webhook = next((site.webhook_url for site in SITE_CONFIGS.values() if site.webhook_url), None)
+                message = "The controlling export could not be read. The previous trades are still in use. " + self._trades_error
+                if use_bot:
+                    await self._tell_owner(channel, message)
+                elif webhook:
+                    async with self.session.post(
+                        webhook, json={"content": message}, timeout=aiohttp.ClientTimeout(total=15)
+                    ) as response:
+                        if response.status not in (200, 204):
+                            raise RuntimeError(f"Discord webhook answered {response.status}")
                 else:
-                    self._trades_warned = True
+                    return
+                self.prices.warned_about_trades()
+            except Exception as e:
+                self.logger.warning(f"The controlling export warning could not be posted: {e}")
 
     def _negotiate_if_asked(self, watch: WatchData, verdict: Verdict):
         """A match worth contacting is negotiated on where its filter says so (owner rule, 11 Oct 2026)."""
