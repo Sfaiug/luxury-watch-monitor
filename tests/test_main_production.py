@@ -9,25 +9,32 @@ from pathlib import Path
 import pytest
 
 import main_production
+from config import APP_CONFIG
 
 
 @pytest.mark.parametrize(
-    "webhook_url, bot_channel_id",
-    [("https://discord.com/api/webhooks/test/token", ""), ("", "123456789"), ("", "")],
+    "webhook_url, bot_channel_id, shared_channel_id",
+    [
+        ("https://discord.com/api/webhooks/test/token", "", ""),
+        ("", "123456789", ""),
+        ("", "", "123456789"),
+        ("", "", ""),
+    ],
 )
 def test_validate_environment_webhook_or_bot_channel(
-    monkeypatch, tmp_path, test_site_config, webhook_url, bot_channel_id
+    monkeypatch, tmp_path, test_site_config, webhook_url, bot_channel_id, shared_channel_id
 ):
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("TEST_WEBHOOK_URL", webhook_url)
     monkeypatch.setenv("TEST_CHANNEL_ID", bot_channel_id)
     monkeypatch.setenv("PYTHONIOENCODING", "utf-8")
+    monkeypatch.setattr(APP_CONFIG, "discord_alert_channel_id", shared_channel_id)
     monkeypatch.setattr(main_production, "SITE_CONFIGS", {"test_site": test_site_config})
 
     is_valid, messages = main_production.validate_environment()
 
     assert is_valid
-    if webhook_url or bot_channel_id:
+    if webhook_url or bot_channel_id or shared_channel_id:
         assert messages == []
     else:
         assert len(messages) == 1

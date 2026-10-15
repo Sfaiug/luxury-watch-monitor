@@ -275,7 +275,8 @@ class NotificationManager:
             }
         ]
 
-    def bot_channel_id(self, site_config: SiteConfig) -> Optional[str]:
+    @staticmethod
+    def bot_channel_id(site_config: SiteConfig) -> Optional[str]:
         channel_id = site_config.discord_channel_id or getattr(
             APP_CONFIG, "discord_alert_channel_id", ""
         )
