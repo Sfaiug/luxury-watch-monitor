@@ -1,5 +1,7 @@
 """Configuration management for watch monitor application."""
 
+import logging
+import math
 import os
 from dataclasses import dataclass, field
 from typing import Dict, Optional
@@ -8,6 +10,27 @@ from typing import Dict, Optional
 def _env_bool(name: str, default: str = "false") -> bool:
     """Parse common boolean environment values."""
     return os.getenv(name, default).lower() in ("true", "1", "yes", "on")
+
+
+def _env_money(name: str, default: float, *, share: bool = False) -> float:
+    """Read a nonnegative amount or share, accepting decimal commas and percentages."""
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    try:
+        text = raw.strip().replace(",", ".")
+        percent = share and text.endswith("%")
+        value = float(text[:-1] if percent else text)
+        if share and (percent or value > 1):
+            value /= 100
+        if not math.isfinite(value) or value < 0 or (share and value > 1):
+            raise ValueError
+        return value
+    except ValueError:
+        logging.getLogger(__name__).warning(
+            "Invalid %s=%r; using default %s", name, raw, default
+        )
+        return default
 
 
 @dataclass
@@ -142,10 +165,10 @@ class AppConfig:
     # least profit is a share of its worth and never less than a floor (owner
     # rule, 10 Oct 2026: 10 % and at least 500 EUR, which the owner moves),
     # after Chrono24's fee on the sale and insured shipping
-    least_profit_share: float = float(os.getenv("LEAST_PROFIT_SHARE", "0.10"))
-    least_profit_eur: float = float(os.getenv("LEAST_PROFIT_EUR", "500"))
-    sale_fee_share: float = float(os.getenv("SALE_FEE_SHARE", "0.065"))
-    sale_shipping_eur: float = float(os.getenv("SALE_SHIPPING_EUR", "60"))
+    least_profit_share: float = _env_money("LEAST_PROFIT_SHARE", 0.10, share=True)
+    least_profit_eur: float = _env_money("LEAST_PROFIT_EUR", 500.0)
+    sale_fee_share: float = _env_money("SALE_FEE_SHARE", 0.065, share=True)
+    sale_shipping_eur: float = _env_money("SALE_SHIPPING_EUR", 60.0)
 
     # The buying agent: which model reads the offers and negotiates, and how
     # hard it thinks: whichever negotiate best in chats with simulated sellers
