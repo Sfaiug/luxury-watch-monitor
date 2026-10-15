@@ -33,9 +33,9 @@ def worth(prices: Prices, reference: str, kind: str, brand: Optional[str] = None
     those read count toward neither the quarter nor the five offers needed.
     A search reads the cheapest 120:
     for a watch offered more than 480 times the dearest of those stands in for
-    the quarter, which only lowers it. The business: the middle of its own
-    sales of the watch within the last year. A full set is worth at least the
-    same watch used.
+    the quarter, which only lowers it. A full set's market value is at least
+    the same watch's used worth. The business: the middle of its own sales of
+    the watch within the last year, which still caps its worth.
     """
     found, asked = prices.market(reference, kind)
     if asked:
@@ -44,13 +44,12 @@ def worth(prices: Prices, reference: str, kind: str, brand: Optional[str] = None
         found -= len(asked) - len(kept)
         asked = kept
     market = Decimal(str(asked[min(math.ceil(found / 4), len(asked)) - 1])) if found >= FEWEST and asked else None
-    known = [value for value in (market, ours(prices, reference, kind, brand=brand)[1]) if value is not None]
-    value = min(known) if known else None
-    if kind == FULL_SET and value is not None:
+    if kind == FULL_SET and market is not None:
         used = worth(prices, reference, USED, brand)
         if used is not None:
-            value = max(value, used)
-    return value
+            market = max(market, used)
+    known = [value for value in (market, ours(prices, reference, kind, brand=brand)[1]) if value is not None]
+    return min(known) if known else None
 
 
 def least_profit(worth: Decimal) -> Decimal:
