@@ -681,6 +681,7 @@ class WatchMonitor:
 
     async def _negotiate_by_hand(self, watch: WatchData, verdict: Verdict):
         """The member chose this match: the agent negotiates on it wherever it has a limit, whatever the asking price."""
+        self._sync_filters()
         if watch.site_key not in self.filters:
             return
         if verdict.limit is None:

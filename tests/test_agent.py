@@ -178,9 +178,10 @@ def test_without_price_the_verdict_keeps_its_worth_and_limit(prices):
 
 
 @pytest.mark.parametrize("price_text", ["VB", "Preis auf Anfrage"])
-async def test_without_price_a_negotiate_press_opens_from_the_limit(prices, deals, price_text):
+async def test_without_price_a_negotiate_press_opens_from_the_limit(prices, deals, price_text, tmp_path):
     monitor = WatchMonitor(log_level="ERROR")
-    monitor.filters = {"filter:42": Filter("42", "1", "kleinanzeigen", "private", "Rolex")}
+    monitor.filter_store = FilterStore(tmp_path / "filters.json")
+    monitor.filter_store.add(Filter("42", "1", "kleinanzeigen", "private", "Rolex"))
     monitor.agent = Agent(Claude(reading().model_dump_json()), AsyncMock(return_value=OFFER.replace("17.790 €", price_text)),
                           prices, deals, logging.getLogger("test"), on_requested_verdict=monitor._negotiate_by_hand)
     monitor.negotiator = Mock(pressed=Mock(return_value=None))

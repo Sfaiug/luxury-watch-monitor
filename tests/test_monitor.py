@@ -1199,3 +1199,58 @@ async def test_owed_a_verdict_survives_cleanup_but_only_negotiates_while_the_fil
         restarted.notification_manager.send_notifications.assert_not_called()
     finally:
         await restarted.cleanup()
+
+
+@pytest.mark.parametrize("during_tend", [False, True])
+async def test_owed_a_verdict_manual_request_before_the_initial_filter_sync_is_completed(
+    during_tend, tmp_path, monkeypatch
+):
+    monitor = WatchMonitor(log_level="ERROR")
+    monitor.filter_store = FilterStore(tmp_path / "filters.json")
+    monitor.filter_store.add(Filter("42", "1", "kleinanzeigen", "private", "Rolex"))
+    monitor.persistence = Mock()
+    monitor._read_trades = AsyncMock()
+    monitor._scrape_single_site = AsyncMock()
+    monitor.prices = Prices(tmp_path / "prices.sqlite3")
+    monitor.prices.set_buy_price("116610LN", 8600, datetime.now())
+    monitor.deals = Deals(tmp_path / "deals.sqlite3")
+    monitor._tell_owner = AsyncMock()
+    monitor.negotiator = Negotiator(None, Negotiations(tmp_path / "deals.sqlite3"),
+                                    monitor._tell_owner, monitor.logger)
+    fetch = AsyncMock(return_value='<h1 id="viewad-title">Rolex</h1><h2 id="viewad-price">9000 €</h2>')
+    reading = Reading(is_watch_for_sale=True, brand="Rolex", model="Submariner", reference="116610LN",
+                      year=None, condition="good", box=False, papers=False)
+    monkeypatch.setattr("agent.read", AsyncMock(return_value=reading))
+    monitor.agent = Agent(None, fetch, monitor.prices, monitor.deals, monitor.logger,
+                          monitor._negotiate_if_asked, monitor._negotiate_by_hand, monitor._tell_owner)
+    entered, release = asyncio.Event(), asyncio.Event()
+
+    async def tend():
+        entered.set()
+        await release.wait()
+
+    monitor.filter_flow = Mock(tend=AsyncMock(side_effect=tend))
+    cycle = None
+    try:
+        if during_tend:
+            cycle = asyncio.create_task(monitor.run_monitoring_cycle())
+            await asyncio.wait_for(entered.wait(), 2)
+        assert monitor.filters == {}
+        monitor._negotiate_pressed({"data": {"custom_id": "negotiate:123"}, "channel_id": "42"})
+        await asyncio.gather(*monitor._judging)
+        (negotiation,) = monitor.negotiator.negotiations.with_status("pending")
+        assert (negotiation.ad_id, negotiation.channel, negotiation.limit) == ("123", "filter:42", 8600)
+        monitor._tell_owner.assert_awaited_once()
+        assert monitor.deals.owed() == []
+        release.set()
+        if cycle is not None:
+            await cycle
+        await monitor.run_monitoring_cycle()
+        await asyncio.gather(*monitor._judging)
+        fetch.assert_awaited_once()
+        monitor._tell_owner.assert_awaited_once()
+    finally:
+        release.set()
+        if cycle is not None:
+            await asyncio.gather(cycle, return_exceptions=True)
+        await monitor.cleanup()
