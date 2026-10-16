@@ -205,9 +205,12 @@ class Messages:
                 _data({"status": answer.status, "path": offer_url(ad_id), "text": await answer.text()})
             try:
                 await form.fill("#viewad-contact-message", text)
-                await form.evaluate("window.__watchMonitorContactPressed = false")
             except Exception as e:
                 raise Unsent(f"the contact form of {ad_id} was not sent: {e}") from e
+            try:
+                await asyncio.wait_for(form.evaluate("window.__watchMonitorContactPressed = false"), CALL_LIMIT)
+            except asyncio.TimeoutError as e:
+                raise RuntimeError(f"the contact form of {ad_id} did not respond") from e
             before_send(before)
             try:
                 await form.click(submit)

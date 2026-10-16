@@ -372,6 +372,24 @@ async def test_a_contact_form_in_its_own_tab_that_never_sent_can_be_tried_again(
     assert [m.text for m in (await box.conversation("abc:1:xyz")).messages] == [text]
 
 
+async def test_an_unresponsive_contact_form_marker_is_a_service_failure(monkeypatch):
+    site, before_send = Site(), Mock()
+
+    async def hangs(*args):
+        await asyncio.Event().wait()
+
+    monkeypatch.setattr("kleinanzeigen_messages.CALL_LIMIT", 0.01)
+    monkeypatch.setattr(OfferTab, "evaluate", hangs)
+
+    with pytest.raises(RuntimeError, match="did not respond"):
+        await asyncio.wait_for(
+            Messages(site).contact("3535834511", "Ist die Uhr noch da?", before_send=before_send), 0.2,
+        )
+
+    before_send.assert_not_called()
+    assert site.tabs[0].closed and not site.tabs[0].clicked
+
+
 @pytest.mark.parametrize("inspection", ["pressed", "navigated", "crashed", "unresponsive"])
 async def test_a_click_in_its_own_tab_that_times_out_after_submission_is_not_unsent(inspection):
     site, before_send = Site(), Mock()
