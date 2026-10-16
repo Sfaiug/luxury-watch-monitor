@@ -1038,6 +1038,8 @@ class Browser:
         pass
 
     async def window(self, storage_state):
+        with open(storage_state) as file:  # as Playwright reads it
+            json.load(file)
         self.opened.append(storage_state)
         browser = self
 
@@ -1046,12 +1048,22 @@ class Browser:
                 return SimpleNamespace(url=browser.at, goto=AsyncMock(), **browser.page_options)
 
             async def storage_state(self, path):
+                with open(path, "w") as file:
+                    json.dump({"cookies": [], "origins": [], "look": len(browser.opened)}, file)
                 browser.kept.append(path)
 
         return Window()
 
 
-async def one_look(monkeypatch, kept, box, browser, hour, notify=None):
+@pytest.fixture
+def session(tmp_path):
+    """The owner's Kleinanzeigen session, a file on the server."""
+    path = tmp_path / "kleinanzeigen_session.json"
+    path.write_text(json.dumps({"cookies": [], "origins": []}))
+    return str(path)
+
+
+async def one_look(monkeypatch, kept, box, browser, hour, session, notify=None):
     """keep_talking's first look, at that hour in Germany; the loop ends at its first pause."""
     monkeypatch.setattr(negotiation.chrome, "Chrome", lambda: browser)
     monkeypatch.setattr(negotiation, "Messages", box.for_page)
@@ -1059,38 +1071,38 @@ async def one_look(monkeypatch, kept, box, browser, hour, notify=None):
     talking = negotiator(Claude(writes=["Ist die Uhr noch zu haben?"]), kept, notify)
     talking.ask_to_start(asked_for())
     with pytest.raises(asyncio.CancelledError):
-        await negotiation.keep_talking(talking, "session.json", logging.getLogger("test"),
+        await negotiation.keep_talking(talking, session, logging.getLogger("test"),
                                        now=lambda: datetime(2026, 10, 11, hour, 0, tzinfo=negotiation.GERMANY))
 
 
-async def test_the_talk_loop_writes_by_day_with_the_owner_s_session_and_keeps_it_renewed(monkeypatch, kept):
+async def test_the_talk_loop_writes_by_day_with_the_owner_s_session_and_keeps_it_renewed(monkeypatch, kept, session):
     box, browser = Box(), Browser()
 
-    await one_look(monkeypatch, kept, box, browser, hour=10)
+    await one_look(monkeypatch, kept, box, browser, hour=10, session=session)
 
     assert [s.text for s in box.said] == ["Ist die Uhr noch zu haben?"]
-    assert browser.opened == browser.kept == ["session.json"]
+    assert browser.opened == [session] and json.load(open(session))["look"] == 1
 
 
-async def test_at_night_the_agent_writes_nothing(monkeypatch, kept):
+async def test_at_night_the_agent_writes_nothing(monkeypatch, kept, session):
     box, browser = Box(), Browser()
 
-    await one_look(monkeypatch, kept, box, browser, hour=23)
+    await one_look(monkeypatch, kept, box, browser, hour=23, session=session)
 
     assert box.said == [] and browser.opened == []
 
 
-async def test_an_ended_login_is_said_to_the_owner(monkeypatch, kept):
+async def test_an_ended_login_is_said_to_the_owner(monkeypatch, kept, session):
     box, notify = Box(), AsyncMock()
 
-    await one_look(monkeypatch, kept, box, Browser(at="https://www.kleinanzeigen.de/m-einloggen.html"), 10, notify)
+    await one_look(monkeypatch, kept, box, Browser(at="https://www.kleinanzeigen.de/m-einloggen.html"), 10, session, notify)
 
     assert box.said == []
     notify.assert_awaited_once_with("filter:42", negotiation.LOGGED_OUT)
 
 
 @pytest.mark.parametrize("stage", ["start", "read", "reply"])
-async def test_cannot_write_a_401_mid_look_is_said_as_an_ended_login(monkeypatch, kept, stage):
+async def test_cannot_write_a_401_mid_look_is_said_as_an_ended_login(monkeypatch, kept, session, stage):
     box, notify, browser = Box(), AsyncMock(), Browser()
     expired = LoggedOut("Kleinanzeigen answered with 401")
     if stage == "start":
@@ -1106,15 +1118,15 @@ async def test_cannot_write_a_401_mid_look_is_said_as_an_ended_login(monkeypatch
             kept.save(current)
             box.reply = AsyncMock(side_effect=expired)
 
-    await one_look(monkeypatch, kept, box, browser, 10, notify)
+    await one_look(monkeypatch, kept, box, browser, 10, session, notify)
 
     current = kept.get("3535834511")
     assert (current.status, current.tries, current.notice) == ("pending" if stage == "start" else "talking", 0, "")
-    assert browser.kept == ["session.json"]
+    assert browser.kept == []  # the login ended: what the owner puts in place stays
     notify.assert_awaited_once_with("filter:42", negotiation.LOGGED_OUT)
 
 
-async def test_cannot_write_login_expiry_is_said_once_until_the_api_works_again(monkeypatch, kept):
+async def test_cannot_write_login_expiry_is_said_once_until_the_api_works_again(monkeypatch, kept, session):
     box, notify, browser = Box(), AsyncMock(), Browser()
     await opened(kept, box)
     expired = LoggedOut("Kleinanzeigen answered 401")
@@ -1131,7 +1143,7 @@ async def test_cannot_write_login_expiry_is_said_once_until_the_api_works_again(
     monkeypatch.setattr(negotiation, "Messages", box.for_page)
     monkeypatch.setattr(negotiation.asyncio, "sleep", pause)
     with pytest.raises(asyncio.CancelledError):
-        await negotiation.keep_talking(negotiator(Claude(), kept, notify), "session.json", logging.getLogger("test"),
+        await negotiation.keep_talking(negotiator(Claude(), kept, notify), session, logging.getLogger("test"),
                                        now=lambda: datetime(2026, 10, 11, 10, tzinfo=negotiation.GERMANY))
 
     assert notify.await_count == 2
@@ -1141,7 +1153,7 @@ async def test_cannot_write_login_expiry_is_said_once_until_the_api_works_again(
 
 @pytest.mark.parametrize("user_status, list_status, notices", [(503, 503, 1), (200, 503, 2), (200, 200, 2)])
 async def test_authenticated_reads_recover_the_login_even_when_contact_fails(
-        monkeypatch, kept, user_status, list_status, notices):
+        monkeypatch, kept, session, user_status, list_status, notices):
     watch = asked_for()
     watch.sent = ["Ist die Uhr noch da?"]
     kept.save(watch)
@@ -1167,7 +1179,7 @@ async def test_authenticated_reads_recover_the_login_even_when_contact_fails(
     monkeypatch.setattr(negotiation.chrome, "Chrome", lambda: browser)
     monkeypatch.setattr(negotiation.asyncio, "sleep", pause)
     with pytest.raises(asyncio.CancelledError):
-        await negotiation.keep_talking(negotiator(None, kept, notify), "session.json", logging.getLogger("test"),
+        await negotiation.keep_talking(negotiator(None, kept, notify), session, logging.getLogger("test"),
                                        now=lambda: datetime(2026, 10, 15, 10, tzinfo=negotiation.GERMANY))
 
     assert evaluate.await_count == (1 if user_status == 503 else 2)
@@ -1176,7 +1188,7 @@ async def test_authenticated_reads_recover_the_login_even_when_contact_fails(
 
 
 @pytest.mark.parametrize("stage", ["draft", "pending", "opening", "talking"])
-async def test_an_outage_between_login_redirects_does_not_repeat_the_notice(monkeypatch, kept, stage):
+async def test_an_outage_between_login_redirects_does_not_repeat_the_notice(monkeypatch, kept, session, stage):
     box, notify, browser = Box(), AsyncMock(), Browser()
     text = "Ist die Uhr noch zu haben?"
     current = asked_for()
@@ -1212,7 +1224,7 @@ async def test_an_outage_between_login_redirects_does_not_repeat_the_notice(monk
     monkeypatch.setattr(negotiation, "Messages", box.for_page)
     monkeypatch.setattr(negotiation.asyncio, "sleep", pause)
     with pytest.raises(asyncio.CancelledError):
-        await negotiation.keep_talking(negotiator(None, kept, notify), "session.json", logging.getLogger("test"),
+        await negotiation.keep_talking(negotiator(None, kept, notify), session, logging.getLogger("test"),
                                        now=lambda: datetime(2026, 10, 15, 10, tzinfo=negotiation.GERMANY))
 
     assert all(call.args == ("filter:42", negotiation.LOGGED_OUT) for call in notify.await_args_list)
@@ -1238,7 +1250,93 @@ def test_a_match_worth_contacting_is_negotiated_where_its_filter_says_so(tmp_pat
     assert [(n.ad_id, n.channel, n.limit, n.offered) for n in kept.with_status("pending")] == [("1", "filter:42", 8608, 7550)]
 
 
-async def test_with_nothing_to_do_the_session_is_used_once_a_day_to_keep_the_login_fresh(monkeypatch, kept):
+async def test_session_saved_only_from_a_look_that_was_logged_in(monkeypatch, kept, session):
+    box, notify = Box(), AsyncMock()
+    with open(session, "w") as file:  # the owner's fresh login, put in place while the old one had ended
+        json.dump({"cookies": [{"name": "access_token", "value": "fresh"}], "origins": []}, file)
+    fresh = open(session).read()
+
+    await one_look(monkeypatch, kept, box, Browser(at="https://www.kleinanzeigen.de/m-einloggen.html"), 10, session, notify)
+
+    assert open(session).read() == fresh
+    notify.assert_awaited_once_with("filter:42", negotiation.LOGGED_OUT)
+
+
+async def test_session_saved_whole_or_not_at_all(monkeypatch, kept, session, caplog):
+    class DiskFull(Browser):
+        async def window(self, storage_state):
+            window = await super().window(storage_state)
+
+            async def cut_short(path):
+                with open(path, "w") as file:
+                    file.write('{"cookies": [{"name": "access_token", "val')
+                raise OSError(28, "No space left on device")
+
+            window.storage_state = cut_short
+            return window
+
+    before = open(session).read()
+
+    await one_look(monkeypatch, kept, Box(), DiskFull(), 10, session)
+
+    assert open(session).read() == before and "No space left on device" in caplog.text
+
+
+async def test_session_saved_unreadable_is_an_ended_login_said_again_whenever_the_file_changes(monkeypatch, kept, session):
+    box, notify, browser = Box(), AsyncMock(), Browser(at="https://www.kleinanzeigen.de/m-einloggen.html")
+    await opened(kept, box)
+    with open(session, "w") as file:  # what a write cut short left
+        file.write('{"cookies": [{"name": "access_token", "val')
+    told = []
+
+    async def pause(seconds):
+        told.append(notify.await_count)
+        if len(told) == 2:
+            with open(session, "w") as file:  # the owner puts a login in place that has ended too
+                json.dump({"cookies": [], "origins": []}, file)
+        if len(told) == 4:
+            raise asyncio.CancelledError
+
+    monkeypatch.setattr(negotiation.chrome, "Chrome", lambda: browser)
+    monkeypatch.setattr(negotiation, "Messages", box.for_page)
+    monkeypatch.setattr(negotiation.asyncio, "sleep", pause)
+    with pytest.raises(asyncio.CancelledError):
+        await negotiation.keep_talking(negotiator(None, kept, notify), session, logging.getLogger("test"),
+                                       now=lambda: datetime(2026, 10, 15, 10, tzinfo=negotiation.GERMANY))
+
+    assert told == [1, 1, 2, 2]
+    assert all(call.args == ("filter:42", negotiation.LOGGED_OUT) for call in notify.await_args_list)
+
+
+async def test_session_saved_after_an_outage_keeps_the_owner_s_new_login_news(monkeypatch, kept, session):
+    login = "https://www.kleinanzeigen.de/m-einloggen.html"
+    box, notify, browser = Box(), AsyncMock(), Browser(at=login)
+    await opened(kept, box)
+    box.conversation = AsyncMock(side_effect=RuntimeError("service answered 503"))
+    told = []
+
+    async def pause(seconds):
+        told.append(notify.await_count)
+        if len(told) == 1:  # the owner puts a new login in place, and the next look finds the site down
+            with open(session, "w") as file:
+                json.dump({"cookies": [{"name": "access_token", "value": "fresh"}], "origins": []}, file)
+            browser.at = "https://www.kleinanzeigen.de/m-nachrichten.html"
+        if len(told) == 2:  # then the new login has ended too
+            browser.at = login
+        if len(told) == 3:
+            raise asyncio.CancelledError
+
+    monkeypatch.setattr(negotiation.chrome, "Chrome", lambda: browser)
+    monkeypatch.setattr(negotiation, "Messages", box.for_page)
+    monkeypatch.setattr(negotiation.asyncio, "sleep", pause)
+    with pytest.raises(asyncio.CancelledError):
+        await negotiation.keep_talking(negotiator(None, kept, notify), session, logging.getLogger("test"),
+                                       now=lambda: datetime(2026, 10, 15, 10, tzinfo=negotiation.GERMANY))
+
+    assert told == [1, 1, 2] and box.conversation.await_count == 1
+
+
+async def test_with_nothing_to_do_the_session_is_used_once_a_day_to_keep_the_login_fresh(monkeypatch, kept, session):
     browser, clock = Browser(), [datetime(2026, 10, 11, 10, tzinfo=negotiation.GERMANY)]
 
     async def pause(seconds):  # an hour on, then a day on, then the end
@@ -1251,12 +1349,12 @@ async def test_with_nothing_to_do_the_session_is_used_once_a_day_to_keep_the_log
     monkeypatch.setattr(negotiation.asyncio, "sleep", pause)
 
     with pytest.raises(asyncio.CancelledError):
-        await negotiation.keep_talking(negotiator(Claude(), kept), "session.json", logging.getLogger("test"), now=lambda: clock[0])
+        await negotiation.keep_talking(negotiator(Claude(), kept), session, logging.getLogger("test"), now=lambda: clock[0])
 
-    assert browser.kept == ["session.json", "session.json"]  # the first look, and a day on; not an hour on
+    assert len(browser.kept) == 2  # the first look, and a day on; not an hour on
 
 
-async def test_a_last_message_that_did_not_leave_is_sent_at_the_next_look_not_the_next_day(monkeypatch, kept):
+async def test_a_last_message_that_did_not_leave_is_sent_at_the_next_look_not_the_next_day(monkeypatch, kept, session):
     box, browser, notify = Box(), Browser(), AsyncMock()
     await opened(kept, box)
     agreed = kept.get("3535834511")
@@ -1278,7 +1376,7 @@ async def test_a_last_message_that_did_not_leave_is_sent_at_the_next_look_not_th
                          kept, notify)
 
     with pytest.raises(asyncio.CancelledError):
-        await negotiation.keep_talking(talking, "session.json", logging.getLogger("test"), now=lambda: clock[0])
+        await negotiation.keep_talking(talking, session, logging.getLogger("test"), now=lambda: clock[0])
 
     assert len(browser.opened) == 2 and box.said[-1].text == "Danke! Der Kaufvertrag kommt gleich, dann überweise ich 7.550 €."
     assert kept.get("3535834511").status == "agreed" and notify.await_count == 1
@@ -2669,7 +2767,7 @@ async def test_after_farewell_a_seller_renewing_a_withdrawn_agreement_is_answere
     assert box.said[-1].outbound and box.said[-1].text == answer
 
 
-async def test_the_talk_loop_keeps_running_when_a_pass_or_telling_the_owner_fails(monkeypatch, kept, caplog):
+async def test_the_talk_loop_keeps_running_when_a_pass_or_telling_the_owner_fails(monkeypatch, kept, session, caplog):
     talking = negotiator(Claude(), kept)
     talking.waiting = Mock(side_effect=[TypeError("Negotiation.__init__() got an unexpected keyword argument"), []])
     talking.tell_owner = AsyncMock(side_effect=sqlite3.OperationalError("database is locked"))
@@ -2677,7 +2775,7 @@ async def test_the_talk_loop_keeps_running_when_a_pass_or_telling_the_owner_fail
     monkeypatch.setattr(negotiation.asyncio, "sleep", pauses)
 
     with pytest.raises(asyncio.CancelledError):
-        await negotiation.keep_talking(talking, "session.json", logging.getLogger("test"),
+        await negotiation.keep_talking(talking, session, logging.getLogger("test"),
                                        now=lambda: datetime(2026, 10, 11, 23, 0, tzinfo=negotiation.GERMANY))
 
     assert talking.waiting.call_count == talking.tell_owner.await_count == pauses.await_count == 2
