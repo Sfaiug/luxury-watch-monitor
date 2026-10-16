@@ -753,8 +753,8 @@ class Negotiator:
         negotiation.sent.append(text)
         negotiation.seen, negotiation.before = len(said), before
         negotiation.wrote = datetime.now(GERMANY).isoformat()
-        if answer.kind in ("offer", "final"):
-            negotiation.offered = answer.price
+        if answer.kind in ("offer", "final", "agreed"):
+            negotiation.offered = answer.price  # a price agreed is the buyer's offer from now on
         if answer.kind in ("done", "farewell"):
             # It ends once this, its last message, has reached the seller: the owner pays no one it has not
             negotiation.status, negotiation.why = "closing", answer.why
