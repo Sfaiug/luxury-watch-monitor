@@ -42,6 +42,7 @@ def test_money_settings_defaults(money_settings, caplog):
     ("0.15", 0.15), ("0,15", 0.15), ("15", 0.15), ("15 %", 0.15),
     (" 6,5% ", 0.065), ("0", 0), ("1", 1), ("100", 1), ("100 %", 1),
     ("1 %", 0.01), ("0,15 %", 0.0015),
+    ("0,1", 0.1), ("10%", 0.1), ("10", 0.1),
 ])
 def test_money_settings_share_formats(money_settings, caplog, name, field, default, text, expected):
     settings = money_settings(**{name: text})
@@ -50,8 +51,12 @@ def test_money_settings_share_formats(money_settings, caplog, name, field, defau
 
 
 @pytest.mark.parametrize("name,field,default", AMOUNTS)
-@pytest.mark.parametrize("text,expected", [("825.50", 825.5), (" 825,50 ", 825.5), ("0", 0)])
-def test_money_settings_amount_formats(money_settings, caplog, name, field, default, text, expected):
+@pytest.mark.parametrize("text,expected", [
+    ("825.50", 825.5), (" 825,50 ", 825.5), ("0", 0),
+    ("1.000", 1000), ("1.000,00", 1000), ("1,000.00", 1000),
+    ("1000", 1000), ("1500 €", 1500),
+])
+def test_money_settings_german_and_english_amount_formats(money_settings, caplog, name, field, default, text, expected):
     settings = money_settings(**{name: text})
     assert getattr(settings, field) == expected
     assert not caplog.records
@@ -96,3 +101,10 @@ def test_money_settings_german_decimals_reach_buying_limit(monkeypatch, money_se
     monkeypatch.setattr(worth, "APP_CONFIG", settings)
     assert worth.least_profit(Decimal("4000")) == Decimal("800")
     assert worth.most_to_pay(Decimal("10000")) == Decimal("7370")
+
+
+def test_money_settings_german_thousands_reach_buying_limit(monkeypatch, money_settings):
+    settings = money_settings(LEAST_PROFIT_EUR="1.000")
+    monkeypatch.setattr(worth, "APP_CONFIG", settings)
+    assert worth.least_profit(Decimal("5000")) == Decimal("1000")
+    assert worth.most_to_pay(Decimal("5000")) == Decimal("3351")

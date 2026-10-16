@@ -6,6 +6,8 @@ import os
 from dataclasses import dataclass, field
 from typing import Dict, Optional
 
+from money import parse_price
+
 
 def _env_bool(name: str, default: str = "false") -> bool:
     """Parse common boolean environment values."""
@@ -13,16 +15,22 @@ def _env_bool(name: str, default: str = "false") -> bool:
 
 
 def _env_money(name: str, default: float, *, share: bool = False) -> float:
-    """Read a nonnegative amount or share, accepting decimal commas and percentages."""
+    """Read a nonnegative price or a share (fraction or percentage)."""
     raw = os.getenv(name)
     if raw is None:
         return default
     try:
-        text = raw.strip().replace(",", ".")
-        percent = share and text.endswith("%")
-        value = float(text[:-1] if percent else text)
-        if share and (percent or value > 1):
-            value /= 100
+        if share:
+            text = raw.strip().replace(",", ".")
+            percent = text.endswith("%")
+            value = float(text[:-1] if percent else text)
+            if percent or value > 1:
+                value /= 100
+        else:
+            amount = parse_price(raw)
+            if amount is None:
+                raise ValueError
+            value = float(amount)
         if not math.isfinite(value) or value < 0 or (share and value > 1):
             raise ValueError
         return value
