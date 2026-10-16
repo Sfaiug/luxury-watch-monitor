@@ -31,6 +31,7 @@ from pydantic import BaseModel, Field
 import chrome
 from agent import STEP, Reading, RedFlag, ask, decide, flagged, opening
 from kleinanzeigen_messages import CannotWrite, LoggedOut, Messages, Unsent, plain
+from prices import reference_key
 from prices_page import euros
 from scrapers.kleinanzeigen import BASE_URL
 
@@ -706,17 +707,19 @@ class Negotiator:
         if says is None:
             return self._hand_over(negotiation, "the AI declined to read the seller's answer")
         terms = Terms(**asdict(negotiation.terms))
-        if terms.reference_required and says.reference and not (says.reference_unavailable or says.ended or says.red_flags):
+        if (terms.reference_required and says.reference and not (says.reference_unavailable or says.ended or says.red_flags)
+                # The limit is the confirmed reference's from its confirmation on, not worked out again at every reading
+                and reference_key(says.reference) != reference_key(terms.reference or "")):
             confirmed = Reading.model_validate(negotiation.reading).model_copy(update={"reference": says.reference})
             verdict = decide(confirmed, Decimal(negotiation.asking) if negotiation.asking is not None else None,
                              self.prices) if self.prices is not None else None
             if verdict is None or verdict.limit is None:
                 return self._hand_over(negotiation, f"no buy limit for the seller's confirmed reference {says.reference}")
-            negotiation.limit = int(verdict.limit)
+            # Kept with its limit, so a draft discarded or a reply taken back takes neither back without the other
+            negotiation.limit, negotiation.terms.reference = int(verdict.limit), says.reference
             price = says.price if says.price is not None else terms.price
             if (negotiation.opened and negotiation.offered > negotiation.limit
                     and (price is None or price > negotiation.limit)):
-                negotiation.terms.reference = says.reference
                 return self._hand_over(negotiation, f"the confirmed reference {says.reference} has a buy limit of "
                                        f"{euros(negotiation.limit)}, below its sent offer of {euros(negotiation.offered)}")
             if not negotiation.opened:
