@@ -4,6 +4,8 @@ import csv
 from datetime import date, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
+from unittest.mock import AsyncMock
+from urllib.parse import parse_qs, urlsplit
 
 import pytest
 from aiohttp import web
@@ -83,22 +85,37 @@ def test_fewer_than_five_offers_say_too_little(prices):
     (4, (48000, 50000, 52000, 54000, 56000), Decimal("50000")),
     (2, (450, 850, 48000, 50000, 52000, 54000), None),
     (4, (450, 850, 48000, 50000, 52000, 54000, 56000), Decimal("50000")),
+    (124, (58000,), None),
+    (72, tuple(48000 + 100 * n for n in range(120)), Decimal("50900")),
+    (125, (), None),
 ])
-def test_only_priced_offers_count_toward_the_minimum_and_quarter(prices, kind, on_request, asked, expected):
+async def test_only_priced_offers_count_toward_the_minimum_and_quarter(prices, monkeypatch, kind, on_request, asked, expected):
     # Live, 16 Oct 2026: six EU offers, five on request, left one price of 58,000 euros.
-    soup = BeautifulSoup(PAGE, "lxml")
     found = len(asked) + on_request
-    soup.find("strong").string = f"{found} Inserate"
-    for n, card in enumerate(soup.select(".js-listing-item-container")):
-        if n >= found:
-            card.decompose()
-        else:
-            card.select_one(".wt-listing-item-price").string = (
-                f"{asked[n]} €" if n < len(asked) else "Preis auf Anfrage"
-            )
-    count, offers = chrono24.read(str(soup), "Rolex", "116610LN", SEARCHED)
-    searched(prices, count, offers, kind=kind)
+    pages = []
+    for offset in range(0, found, chrono24.PAGE):
+        soup = BeautifulSoup(PAGE, "lxml")
+        soup.find("strong").string = f"{found} Inserate"
+        for n, card in enumerate(soup.select(".js-listing-item-container"), start=offset):
+            if n >= found:
+                card.decompose()
+            else:
+                card.select_one("a.js-listing-item-link")["href"] = f"/rolex/submariner--id{n}.htm"
+                card.select_one(".wt-listing-item-price").string = (
+                    f"{asked[n]} €" if n < len(asked) else "Preis auf Anfrage"
+                )
+        pages.append(str(soup))
+    browser = AsyncMock()
+    browser.__aenter__.return_value = browser
+    browser.page.side_effect = lambda url: pages[int(parse_qs(urlsplit(url).query).get("page", ["1"])[0]) - 1]
+    monkeypatch.setattr(chrono24, "PAUSE", 0)
+    seed = chrono24_offers(9000)
+    seed[0].site_key = "worldoftime"
+    prices.saw(seed)
 
+    assert await chrono24.search_round(prices, browser, now=lambda: SEARCHED) == len(chrono24.KINDS)
+
+    assert prices.market("116610LN", kind)[0] == len(asked)
     assert worth(prices, "116610LN", kind) == expected
     assert buy_limit(prices, "116610LN", kind) == (most_to_pay(expected) if expected is not None else None)
 

@@ -68,8 +68,8 @@ def search_url(brand: Optional[str], reference: str, kind: str) -> str:
     )
 
 
-def read(html: str, brand: Optional[str], reference: str, seen: datetime) -> Tuple[int, List[WatchData]]:
-    """The search's count, excluding cards without a price, and its priced offers."""
+def read(html: str, brand: Optional[str], reference: str, seen: datetime, page: int = 1) -> Tuple[int, List[WatchData]]:
+    """The total search count for pagination, including unpriced offers, and this page's priced offers."""
     soup = BeautifulSoup(html, "lxml")
     count = soup.find("strong", string=re.compile(r"^\s*[\d.]+ Inserate\s*$"))
     if count:
@@ -104,11 +104,11 @@ def read(html: str, brand: Optional[str], reference: str, seen: datetime) -> Tup
                 scraped_at=seen,
             )
         )
-    expected = min(found, PAGE)
+    expected = min(max(found - (page - 1) * PAGE, 0), PAGE)
     # Losing most of a page's cards means its markup changed
     if cards < expected / 2:
         raise NotResults(f"could not read search result: {cards} of {expected} expected offers ({found} found)")
-    return found - (cards - len(offers)), offers
+    return found, offers
 
 
 async def _without_pictures(route):
@@ -150,8 +150,14 @@ async def search_round(prices: Prices, chrome, now=datetime.now) -> int:
             if searched:
                 await asyncio.sleep(PAUSE)
             seen = now()
-            found, offers = read(await browser.page(search_url(brand, reference, kind)), brand, reference, seen)
-            prices.searched(reference, kind, found, offers, seen)
+            url = search_url(brand, reference, kind)
+            found, offers = read(await browser.page(url), brand, reference, seen)
+            # Count priced offers throughout the search, keeping only the cheapest page of them.
+            for page in range(2, (found + PAGE - 1) // PAGE + 1):
+                await asyncio.sleep(PAUSE)
+                _, more = read(await browser.page(f"{url}&page={page}"), brand, reference, seen, page=page)
+                offers.extend(more)
+            prices.searched(reference, kind, len(offers), offers[:PAGE], seen)
     return len(due)
 
 

@@ -55,9 +55,23 @@ class Chrome:
 
     async def page(self, url):
         assert self.open
-        words = parse_qs(urlsplit(url).query)["query"][0]
+        asked = parse_qs(urlsplit(url).query)
+        words = asked["query"][0]
         self.asked.append(words)
-        return page(self.pages[words])
+        html = page(self.pages[words])
+        number = int(asked.get("page", ["1"])[0])
+        if number > 1:
+            soup = BeautifulSoup(html, "lxml")
+            remaining = int(soup.find("strong").get_text().split()[0]) - (number - 1) * chrono24.PAGE
+            for n, card in enumerate(soup.select(".js-listing-item-container")):
+                if n >= remaining:
+                    card.decompose()
+                else:
+                    link = card.select_one("a.js-listing-item-link")
+                    link["href"] = link["href"].replace(".htm", f"-page{number}.htm")
+                    card.select_one(".wt-listing-item-price").string = "12.000 €"
+            html = str(soup)
+        return html
 
 
 @pytest.fixture
@@ -122,7 +136,7 @@ def test_cards_unread_are_compared_with_the_offers_expected_on_one_page(found, r
 
 
 @pytest.mark.parametrize(("found", "on_request"), [(1, 1), (4, 4), (5, 1), (6, 5), (9, 4), (192, 100)])
-def test_only_priced_offers_count_without_treating_on_request_cards_as_unread(found, on_request):
+def test_priced_offers_are_read_with_the_total_count_needed_for_pagination(found, on_request):
     # Live, 15 Oct 2026: the one full-set Patek Philippe 3416 asked "Preis auf Anfrage"
     soup = BeautifulSoup(page("chrono24.html"), "lxml")
     soup.find("strong").string = f"{found} Inserate"
@@ -134,7 +148,7 @@ def test_only_priced_offers_count_without_treating_on_request_cards_as_unread(fo
 
     count, offers = read(str(soup), "Patek Philippe", "3416", SEEN)
 
-    assert (count, len(offers)) == (found - on_request, min(found, chrono24.PAGE) - on_request)
+    assert (count, len(offers)) == (found, min(found, chrono24.PAGE) - on_request)
 
 
 def test_cloudflare_s_human_check_is_no_search_result():
@@ -169,7 +183,7 @@ async def test_a_reference_the_shops_offer_is_searched_for_each_kind_and_its_eu_
 
     assert await search_round(prices, chrome, now=lambda: SEEN) == 2
 
-    assert chrome.asked == ["Rolex 116610LN", "Rolex 116610LN"]
+    assert chrome.asked == ["Rolex 116610LN"] * 4
     assert not chrome.open
     assert prices._db.execute(
         "SELECT COUNT(*), MIN(price), MIN(reference), MIN(first_seen) FROM offers WHERE site_key = 'chrono24'"
@@ -191,7 +205,7 @@ async def test_a_reference_is_searched_again_around_the_clock_an_hour_on_at_the_
 
     an_hour_on = Chrome(pages)
     assert await search_round(prices, an_hour_on, now=lambda: SEEN + timedelta(hours=1, seconds=1)) == 2
-    assert an_hour_on.asked == ["Rolex 116610LN", "Rolex 116610LN"]
+    assert an_hour_on.asked == ["Rolex 116610LN"] * 4
 
 
 async def test_searches_never_made_come_before_the_ones_made_longest_ago(prices):
@@ -270,7 +284,8 @@ async def test_a_page_that_is_no_search_result_ends_the_round_and_leaves_its_ref
 
 
 @pytest.mark.parametrize("unreadable", [120, 100])
-async def test_cards_unread_keep_the_last_good_offers_and_limit_leave_the_reference_due_and_log_it(prices, monkeypatch, caplog, unreadable):
+@pytest.mark.parametrize("failed_page", [1, 2])
+async def test_cards_unread_keep_the_last_good_offers_and_limit_leave_the_reference_due_and_log_it(prices, monkeypatch, caplog, unreadable, failed_page):
     prices.saw([shop_offer("116610LN")])
     pages = {"Rolex 116610LN": "chrono24.html"}
     last_good = datetime.now() - chrono24.FRESH - timedelta(seconds=1)
@@ -283,21 +298,24 @@ async def test_cards_unread_keep_the_last_good_offers_and_limit_leave_the_refere
 
     class ChangedChrome(Chrome):
         async def page(self, url):
-            return (await super().page(url)).replace("wt-listing-item-price", "changed-price", unreadable)
+            html = await super().page(url)
+            number = int(parse_qs(urlsplit(url).query).get("page", ["1"])[0])
+            return html.replace("wt-listing-item-price", "changed-price", unreadable) if number == failed_page else html
 
     chrome = ChangedChrome(pages)
     monkeypatch.setattr(chrono24, "Chrome", lambda ways: chrome)
     monkeypatch.setattr(chrono24.proxies, "for_browser", lambda path: [])
 
     async def stop_after_round(delay):
-        assert delay == chrono24.IDLE
-        raise asyncio.CancelledError
+        if delay == chrono24.IDLE:
+            raise asyncio.CancelledError
+        assert delay == chrono24.PAUSE
 
     monkeypatch.setattr(chrono24.asyncio, "sleep", stop_after_round)
     with pytest.raises(asyncio.CancelledError):
         await chrono24.keep_up(prices, logging.getLogger(__name__))
 
-    assert chrome.asked == ["Rolex 116610LN"]
+    assert chrome.asked == ["Rolex 116610LN"] * failed_page
     assert not chrome.open
     for table, rows in kept.items():
         assert prices._db.execute(f"SELECT * FROM {table}").fetchall() == rows
@@ -307,7 +325,8 @@ async def test_cards_unread_keep_the_last_good_offers_and_limit_leave_the_refere
     assert [buy_limit(prices, "116610LN", kind) for kind in KINDS] == [Decimal("8608")] * 2
     assert "Chrono24: searching stopped:" in caplog.text
     assert "could not read" in caplog.text
-    assert f"{120 - unreadable} of 120" in caplog.text
+    expected = 120 if failed_page == 1 else 72
+    assert f"{max(expected - unreadable, 0)} of {expected}" in caplog.text
 
 
 async def test_the_search_runs_beside_the_monitor_and_stops_with_it(monkeypatch, prices):
