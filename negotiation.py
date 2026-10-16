@@ -894,9 +894,13 @@ async def _window(browser, session: str):
 
 
 async def _keep(window, session: str):
-    """Write the window's session over the file, whole or not at all."""
+    """Write the window's session over the file, whole or not at all, readable by this account alone: it holds the
+    owner's login."""
     part = f"{session}.part"
-    await window.storage_state(path=part)
+    file = os.open(part, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    os.fchmod(file, 0o600)  # a part file left from a write cut short keeps its own mode otherwise
+    os.close(file)
+    await window.storage_state(path=part)  # Playwright writes into the file as it stands, keeping its mode
     os.replace(part, session)
 
 

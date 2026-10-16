@@ -4,7 +4,9 @@ import asyncio
 import html
 import json
 import logging
+import os
 import sqlite3
+import stat
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timedelta
 from decimal import Decimal
@@ -1169,6 +1171,20 @@ async def test_the_talk_loop_writes_by_day_with_the_owner_s_session_and_keeps_it
 
     assert [s.text for s in box.said] == ["Ist die Uhr noch zu haben?"]
     assert browser.opened == [session] and json.load(open(session))["look"] == 1
+
+
+async def test_the_session_kept_stays_readable_by_the_service_alone(monkeypatch, kept, session):
+    os.chmod(session, 0o600)
+    with open(f"{session}.part", "w") as file:  # what a write cut short left, readable by all
+        file.write('{"cookies": [{"name": "access_token", "val')
+    os.chmod(f"{session}.part", 0o644)
+    previous = os.umask(0o022)
+    try:
+        await one_look(monkeypatch, kept, Box(), Browser(), hour=10, session=session)
+    finally:
+        os.umask(previous)
+
+    assert json.load(open(session))["look"] == 1 and stat.S_IMODE(os.stat(session).st_mode) == 0o600
 
 
 async def test_at_night_the_agent_writes_nothing(monkeypatch, kept, session):
