@@ -553,6 +553,37 @@ async def test_confirmed_reference_the_seller_s_reference_sets_the_price_after_a
     assert "Versand" in box.said[-1].text  # the earlier agreement to bank transfer was kept
 
 
+async def test_confirmed_reference_its_limit_stands_while_the_seller_keeps_to_it(kept, tmp_path):
+    prices = Prices(tmp_path / "prices.sqlite3")
+    prices.set_buy_price("3445", 9000, datetime.now())
+    box = Box()
+    claude = Claude(reads=[says(), says(reference="3445"), says(price=8800, reference="3445"),
+                           says(bank_transfer=True, reference="3445", turns_down=False),
+                           says(reference="5196G", turns_down=False)],
+                    writes=["Hallo, ist die Uhr noch da?", "Kannst du mir die Referenz aus den Papieren nennen?",
+                            "Ich würde [BETRAG] bieten.", "[BETRAG] passt. Geht Überweisung?",
+                            "Super. Verschickst du sie versichert?"])
+    talking = negotiator(claude, kept, prices=prices)
+    talking.ask_to_start(unconfirmed_watch())
+    await talking.start(box)
+    for text in ("Ja, noch da.", "Referenz ist 3445.", "8.800 € und sie gehört dir."):
+        box.seller(text)
+        await talking.follow_up(box)
+    assert kept.get("3535834511").terms.price == 8800
+
+    prices.set_buy_price("3445", 8500, datetime.now())  # the owner's price, or a Chrono24 search, lowers the limit
+    box.seller("Ja, Überweisung passt.")
+    await talking.follow_up(box)
+    current = kept.get("3535834511")
+    assert (current.status, current.limit, current.terms.price, current.terms.bank_transfer) == ("talking", 9000, 8800, True)
+    assert box.said[-1].text == "Super. Verschickst du sie versichert?"
+
+    # Another reference is another watch: its own limit, none here, is worked out
+    box.seller("Sorry, in den Papieren steht doch 5196G.")
+    await talking.follow_up(box)
+    assert kept.get("3535834511").status == "owner"
+
+
 @pytest.mark.parametrize("reference, unavailable", [(None, True), ("unknown", False)])
 async def test_confirmed_reference_an_unavailable_reference_or_its_missing_limit_goes_to_the_owner(
         kept, tmp_path, reference, unavailable):
