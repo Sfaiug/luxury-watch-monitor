@@ -14,7 +14,7 @@ from datetime import datetime, timedelta
 from decimal import Decimal
 from typing import List, Literal, Optional, Tuple, Type, TypeVar
 
-from anthropic import AsyncAnthropic, transform_schema
+from anthropic import APIConnectionError, APIStatusError, AsyncAnthropic, transform_schema
 from bs4 import BeautifulSoup
 from pydantic import BaseModel, Field
 
@@ -299,10 +299,11 @@ class Deals:
                 "UPDATE judging SET attempts = attempts + 1 WHERE address = ? AND filter = ?", (watch.url, watch.site_key)
             )
 
-    def failed(self, watch: WatchData, error: str):
+    def failed(self, watch: WatchData, error: str, *, outage: bool = False):
         with self._db:
             self._db.execute(
-                "UPDATE judging SET error = ? WHERE address = ? AND filter = ?", (error, watch.url, watch.site_key)
+                "UPDATE judging SET error = ?, attempts = attempts - ? WHERE address = ? AND filter = ?",
+                (error, outage, watch.url, watch.site_key),
             )
 
     def warned(self, watch: WatchData):
@@ -397,7 +398,10 @@ class Agent:
                     requested = self.deals.judging(watch)["requested"]
                     self.deals.judged(watch, asking, reading, verdict, datetime.now(), requested=requested)
                 except Exception as e:
-                    self.deals.failed(watch, str(e))
+                    outage = isinstance(e, (APIConnectionError, ConnectionError, TimeoutError)) or (
+                        isinstance(e, APIStatusError) and (e.status_code == 429 or e.status_code >= 500)
+                    )
+                    self.deals.failed(watch, str(e), outage=outage)
                     self.logger.warning(f"Agent could not judge {watch.url}: {e}")
                     await self._warn(watch)
                     continue

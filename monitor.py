@@ -812,7 +812,7 @@ class WatchMonitor:
     async def _page(self, url: str) -> str:
         page = await fetch_page(url, self.logger)
         if page is None:
-            raise RuntimeError(f"{url} could not be read")
+            raise ConnectionError(f"{url} could not be read")
         return page
 
     async def _monitor_muv_offer_links(self, *, force: bool = False) -> int:

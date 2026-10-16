@@ -479,7 +479,7 @@ async def test_owed_a_verdict_after_a_failed_reading_is_judged_after_restarting(
     await agent.consider([match()])
 
     assert deals.latest(10) == []
-    assert deals.judging(match())["attempts"] == 1
+    assert deals.judging(match())["attempts"] == (0 if failure in ("429", "529") else 1)
     follows.assert_not_called()
     deals.close()
     reopened = Deals(tmp_path / "deals.sqlite3")
@@ -496,6 +496,62 @@ async def test_owed_a_verdict_after_a_failed_reading_is_judged_after_restarting(
         assert reopened.latest(1)[0]["why"] == "worth contacting"
         assert reopened.owed() == []
         assert fetch.await_count == 2
+    finally:
+        reopened.close()
+
+
+@pytest.mark.parametrize("failure", ["page", "connection", "timeout", 429, 500, 502, 503, 504, 529])
+@pytest.mark.parametrize("spent", [0, ATTEMPTS - 1])
+async def test_outage_uses_no_attempt_and_is_judged_after_restarting(prices, deals, tmp_path, monkeypatch, failure, spent):
+    class Offline(Claude):
+        unavailable = True
+
+        def answer(self, request):
+            if not self.unavailable or failure == "page":
+                return super().answer(request)
+            if failure in ("connection", "timeout"):
+                error = httpx2.ConnectError if failure == "connection" else httpx2.ReadTimeout
+                raise error("hub unavailable", request=request)
+            return httpx2.Response(failure, json={"type": "error", "error": {
+                "type": "api_error", "message": "upstream unavailable",
+            }})
+
+    client = Offline(reading().model_dump_json())
+    monitor = WatchMonitor(log_level="ERROR")
+    pages = AsyncMock(return_value="")
+    monkeypatch.setattr("monitor.fetch_page", pages)
+    follows, notify = AsyncMock(), AsyncMock()
+    agent = Agent(client, monitor._page, prices, deals, logging.getLogger("test"),
+                  on_requested_verdict=follows, notify=notify)
+    if spent:
+        await agent.consider([match()], requested=True)
+        for _ in range(spent - 1):
+            await agent.retry()
+    pages.return_value = None if failure == "page" else OFFER.replace("17.790", "9.000")
+    if not spent:
+        await agent.consider([match()], requested=True)
+    for _ in range(ATTEMPTS + 1):
+        await agent.retry()
+        assert deals.judging(match())["attempts"] == spent
+    assert deals.latest(10) == []
+    follows.assert_not_awaited()
+    notify.assert_not_awaited()
+    deals.close()
+
+    reopened = Deals(tmp_path / "deals.sqlite3")
+    try:
+        assert reopened.judging(match())["attempts"] == spent
+        client.unavailable = False
+        pages.return_value = OFFER.replace("17.790", "9.000")
+        agent = Agent(client, monitor._page, prices, reopened, logging.getLogger("test"),
+                      on_requested_verdict=follows, notify=notify)
+        await agent.retry()
+        await agent.retry()
+        follows.assert_awaited_once()
+        assert follows.await_args.args[1].contact
+        assert reopened.latest(1)[0]["requested"] == 1
+        assert reopened.owed() == []
+        notify.assert_not_awaited()
     finally:
         reopened.close()
 
