@@ -9,6 +9,7 @@ from urllib.parse import parse_qs, urlsplit
 
 import pytest
 from bs4 import BeautifulSoup
+from playwright.async_api import Error, TimeoutError
 
 import chrono24
 from chrono24 import FULL_SET, KINDS, USED, NotResults, read, search_round, search_url
@@ -282,6 +283,69 @@ async def test_a_page_that_is_no_search_result_ends_the_round_and_leaves_its_ref
     assert prices.due(list(KINDS), SEEN, 20) == [
         ("Rolex", "116610LN", USED), ("Rolex", "116610LN", FULL_SET), ("Rolex", "126610LN", USED), ("Rolex", "126610LN", FULL_SET)
     ]
+
+
+@pytest.mark.parametrize("failure", [Error("Page.goto: net::ERR_TIMED_OUT"), TimeoutError("Page.goto: Timeout 60000ms exceeded")])
+@pytest.mark.parametrize("failed_page", [1, 2])
+async def test_a_page_that_fails_to_load_leaves_its_search_due_and_the_round_goes_on(prices, failure, failed_page):
+    prices.saw([shop_offer("116610LN"), shop_offer("126610LN")])
+    pages = {"Rolex 116610LN": "chrono24.html", "Rolex 126610LN": "chrono24_none.html"}
+    last_good = SEEN - chrono24.FRESH - timedelta(seconds=1)
+    await search_round(prices, Chrome(pages), now=lambda: last_good)
+    kept = {
+        table: prices._db.execute(f"SELECT * FROM {table} WHERE reference = '116610LN'").fetchall()
+        for table in ("offers", "searches", "searched_offers")
+    }
+
+    class FailingChrome(Chrome):
+        async def page(self, url):
+            html = await super().page(url)
+            asked = parse_qs(urlsplit(url).query)
+            if asked["query"] == ["Rolex 116610LN"] and int(asked.get("showPage", ["1"])[0]) == failed_page:
+                raise failure
+            return html
+
+    chrome = FailingChrome(pages)
+
+    assert await search_round(prices, chrome, now=lambda: SEEN) == 2
+
+    assert chrome.asked == ["Rolex 116610LN"] * (2 * failed_page) + ["Rolex 126610LN"] * 2
+    assert not chrome.open
+    for table, rows in kept.items():
+        assert prices._db.execute(f"SELECT * FROM {table} WHERE reference = '116610LN'").fetchall() == rows
+    assert prices.due(list(KINDS), SEEN - chrono24.FRESH, 20) == [
+        ("Rolex", "116610LN", USED), ("Rolex", "116610LN", FULL_SET)
+    ]
+    assert prices.market("126610LN", USED) == (0, [])
+
+
+async def test_when_every_page_fails_to_load_keep_up_waits_before_the_next_round(prices, monkeypatch):
+    prices.saw([shop_offer("116610LN"), shop_offer("126610LN")])
+
+    class FailingChrome(Chrome):
+        async def page(self, url):
+            assert self.open
+            self.asked.append(parse_qs(urlsplit(url).query)["query"][0])
+            raise Error("Page.goto: net::ERR_TIMED_OUT")
+
+    chrome = FailingChrome({})
+    monkeypatch.setattr(chrono24, "Chrome", lambda ways: chrome)
+    monkeypatch.setattr(chrono24.proxies, "for_browser", lambda path: [])
+    pauses = []
+
+    async def stop_after_round(delay):
+        pauses.append(delay)
+        if delay == chrono24.IDLE:
+            raise asyncio.CancelledError
+
+    monkeypatch.setattr(chrono24.asyncio, "sleep", stop_after_round)
+    with pytest.raises(asyncio.CancelledError):
+        await chrono24.keep_up(prices, logging.getLogger(__name__))
+
+    assert chrome.asked == ["Rolex 116610LN"] * 2 + ["Rolex 126610LN"] * 2
+    assert pauses == [chrono24.PAUSE] * 3 + [chrono24.IDLE]
+    assert not chrome.open
+    assert prices._db.execute("SELECT COUNT(*) FROM searches").fetchone() == (0,)
 
 
 @pytest.mark.parametrize("unreadable", [120, 100])

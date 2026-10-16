@@ -16,6 +16,7 @@ from typing import Dict, Iterator, List, Optional, Tuple
 from urllib.parse import urlencode
 
 from bs4 import BeautifulSoup
+from playwright.async_api import Error as PageError
 
 import chrome
 import proxies
@@ -139,26 +140,33 @@ class Chrome(chrome.Chrome):
 async def search_round(prices: Prices, chrome, now=datetime.now) -> int:
     """Make the Chrono24 searches most due, one Chrome for the round; how many were made.
 
+    A page that fails to load leaves its search due and goes on to the next.
     A page that is no search result ends the round with that search still
     due: what refuses one search refuses the next.
     """
     due = prices.due(list(KINDS), now() - FRESH, ROUND)
     if not due:
         return 0
+    searched = 0
     async with chrome as browser:
-        for searched, (brand, reference, kind) in enumerate(due):
-            if searched:
+        for attempted, (brand, reference, kind) in enumerate(due):
+            if attempted:
                 await asyncio.sleep(PAUSE)
             seen = now()
             url = search_url(brand, reference, kind)
-            found, offers = read(await browser.page(url), brand, reference, seen)
-            # Count priced offers throughout the search, keeping only the cheapest page of them.
-            for page in range(2, (found + PAGE - 1) // PAGE + 1):
-                await asyncio.sleep(PAUSE)
-                _, more = read(await browser.page(f"{url}&showPage={page}"), brand, reference, seen, page=page)
-                offers.extend(more)
+            try:
+                found, offers = read(await browser.page(url), brand, reference, seen)
+                # Count priced offers throughout the search, keeping only the cheapest page of them.
+                for page in range(2, (found + PAGE - 1) // PAGE + 1):
+                    await asyncio.sleep(PAUSE)
+                    _, more = read(await browser.page(f"{url}&showPage={page}"), brand, reference, seen, page=page)
+                    offers.extend(more)
+            except PageError as e:
+                logging.getLogger(__name__).warning(f"Chrono24: page failed to load for {reference} ({kind}): {e}")
+                continue
             prices.searched(reference, kind, len(offers), offers[:PAGE], seen)
-    return len(due)
+            searched += 1
+    return searched
 
 
 async def keep_up(prices: Prices, logger: logging.Logger):
