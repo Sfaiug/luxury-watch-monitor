@@ -15,6 +15,7 @@ watch is still there, its reference when unread, then the price, then each term 
 
 import asyncio
 import json
+import os
 import random
 import re
 import sqlite3
@@ -873,18 +874,42 @@ class Negotiator:
                   f"The agent hands this negotiation to you ({why}): {negotiation.title}, {negotiation.address}")
 
 
+async def _window(browser, session: str):
+    """A window holding the owner's session; a session file that cannot be read is the login having ended."""
+    try:
+        return await browser.window(storage_state=session)
+    except (OSError, ValueError) as e:  # Playwright reads the file itself: gone, or cut short
+        raise LoggedOut(f"the owner's Kleinanzeigen session cannot be read: {e}") from e
+
+
+async def _keep(window, session: str):
+    """Write the window's session over the file, whole or not at all."""
+    part = f"{session}.part"
+    await window.storage_state(path=part)
+    os.replace(part, session)
+
+
+def _contents(path: str) -> bytes:
+    """What the file holds; nothing where there is none."""
+    try:
+        with open(path, "rb") as file:
+            return file.read()
+    except OSError:
+        return b""
+
+
 async def keep_talking(negotiator: Negotiator, session: str, logger, now=lambda: datetime.now(GERMANY)):
     """Start the negotiations asked for and answer the sellers every few minutes of the day, and tell the owner what
     they are still to hear, until cancelled.
 
     Each look is a window of Chrome holding the owner's Kleinanzeigen session
-    (`session`, a file on the server), which keeps the session's renewed tokens.
+    (`session`, a file on the server), which keeps the session's renewed tokens from every look that was logged in.
     """
-    login_notice_sent, last_look = False, None
+    told, last_look = None, None  # the session file as it stood when the owner was told their login had ended
 
     def session_used():
-        nonlocal login_notice_sent
-        login_notice_sent = False
+        nonlocal told
+        told = None
 
     while True:
         # A pass that fails is logged, and the next one comes as usual
@@ -894,22 +919,28 @@ async def keep_talking(negotiator: Negotiator, session: str, logger, now=lambda:
             if (busy or stale) and now().hour in AWAKE:
                 last_look = now()
                 async with chrome.Chrome() as browser:
-                    window = await browser.window(storage_state=session)
+                    logged_in = False
                     try:
+                        window = await _window(browser, session)
                         page = await window.new_page()
                         await page.goto(f"{BASE_URL}/m-nachrichten.html", wait_until="domcontentloaded")
                         if "einloggen" in page.url or "login." in page.url:
                             raise LoggedOut("the owner's Kleinanzeigen session has ended")
+                        logged_in = True
                         messages = Messages(page, on_success=session_used)
                         await negotiator.start(messages)
                         await negotiator.follow_up(messages)
                     except LoggedOut:
-                        if busy and not login_notice_sent:
+                        logged_in, stands = False, _contents(session)
+                        if busy and told != stands:
                             await negotiator.notify(busy[0].channel, LOGGED_OUT)
-                            login_notice_sent = True
+                            told = stands
                         raise
                     finally:
-                        await window.storage_state(path=session)
+                        if logged_in:
+                            await _keep(window, session)
+                            if told is not None:  # the agent's own write is no news to the owner
+                                told = _contents(session)
         except Exception as e:
             logger.error(f"Negotiation: {e}")
         try:
