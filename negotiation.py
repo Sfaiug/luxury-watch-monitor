@@ -428,7 +428,8 @@ class Negotiation:
     sent: List[str] = field(default_factory=list)  # the agent's messages, sent or on their way
     status: str = "pending"  # pending, opening (its first message on its way), talking, closing (its last on its way),
     # deciding (the owner's word awaited), agreed, ended, or owner
-    ends: str = ""  # what a closing negotiation ends as once its last message reached the seller: agreed or ended
+    ends: str = ""  # what a closing negotiation ends as once its last message reached the seller: agreed or ended;
+    # flagged, a seller let go for red flags, whom it never answers again
     tries: int = 0  # consecutive refused looks; service outages do not count
     seen: int = 0  # the messages in the conversation when the agent wrote its latest, or ended it
     first: Optional[int] = None  # the messages before the agent's first; absent in older saved negotiations
@@ -559,7 +560,9 @@ class Negotiator:
 
     def _answered(self) -> List[Negotiation]:
         """Those under way, and those the agent let go lately, whose seller may write again."""
-        return self.negotiations.with_status(*ANSWERS) + self.negotiations.with_status("ended", since=datetime.now() - AGAIN)
+        return self.negotiations.with_status(*ANSWERS) + [
+            negotiation for negotiation in self.negotiations.with_status("ended", since=datetime.now() - AGAIN)
+            if negotiation.ends != "flagged"]
 
     async def start(self, messages):
         """Write the first message asked for, or check at the next look that it reached the seller."""
@@ -731,6 +734,7 @@ class Negotiator:
         negotiation.terms = terms
         if answer.kind == "end":
             negotiation.seen = len(said)  # what the seller wrote before is not read again; what they write next is
+            negotiation.ends = "flagged" if says.red_flags else ""
             return self._end(negotiation, "ended", answer.why, "" if says.ended and not says.red_flags else None)
         if answer.kind == "owner":
             return self._hand_over(negotiation, answer.why)

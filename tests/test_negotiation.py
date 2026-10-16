@@ -2548,6 +2548,25 @@ async def test_a_farewell_asks_for_nothing_more(kept):
     assert "ask once more" not in task and kept.get("3535834511").status == "ended"
 
 
+async def test_a_seller_let_go_for_red_flags_is_never_answered_again(kept):
+    box, notify = Box(), AsyncMock()
+    await opened(kept, box)
+    box.seller("Die Uhr ist bei meinem Bruder in Spanien, ein Kurier bringt sie, zahl bitte vorab an ihn.")
+    await negotiator(Claude(reads=[says(red_flags=["pressure_or_a_story_that_does_not_add_up"])]), kept, notify).follow_up(box)
+    assert kept.get("3535834511").status == "ended"
+
+    box.seller("Ok, 7.550 passt, Überweisung, Versand, Kaufvertrag passt. Hier mein Ausweis.", pictures=1)
+    claude = Claude(reads=[says(accepts_offer=True, bank_transfer=True, delivery="shipping", contract=True, id_card=True)],
+                    writes=["Danke! Der Kaufvertrag kommt gleich, dann überweise ich [BETRAG]."])
+    talking = negotiator(claude, kept, notify)
+    assert talking.waiting() == []
+    await talking.follow_up(box)
+    await talking.tell_owner()
+
+    assert claude.asked == [] and kept.get("3535834511").status == "ended"
+    assert box.said[-1].text.startswith("Ok, 7.550 passt") and "pay" not in str(notify.await_args_list)
+
+
 async def test_a_seller_who_writes_again_after_the_agent_let_them_go_is_answered(kept):
     box = Box()
     await opened(kept, box)
