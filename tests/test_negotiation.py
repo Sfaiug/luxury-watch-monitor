@@ -1308,6 +1308,34 @@ async def test_session_saved_unreadable_is_an_ended_login_said_again_whenever_th
     assert all(call.args == ("filter:42", negotiation.LOGGED_OUT) for call in notify.await_args_list)
 
 
+async def test_session_saved_after_an_outage_keeps_the_owner_s_new_login_news(monkeypatch, kept, session):
+    login = "https://www.kleinanzeigen.de/m-einloggen.html"
+    box, notify, browser = Box(), AsyncMock(), Browser(at=login)
+    await opened(kept, box)
+    box.conversation = AsyncMock(side_effect=RuntimeError("service answered 503"))
+    told = []
+
+    async def pause(seconds):
+        told.append(notify.await_count)
+        if len(told) == 1:  # the owner puts a new login in place, and the next look finds the site down
+            with open(session, "w") as file:
+                json.dump({"cookies": [{"name": "access_token", "value": "fresh"}], "origins": []}, file)
+            browser.at = "https://www.kleinanzeigen.de/m-nachrichten.html"
+        if len(told) == 2:  # then the new login has ended too
+            browser.at = login
+        if len(told) == 3:
+            raise asyncio.CancelledError
+
+    monkeypatch.setattr(negotiation.chrome, "Chrome", lambda: browser)
+    monkeypatch.setattr(negotiation, "Messages", box.for_page)
+    monkeypatch.setattr(negotiation.asyncio, "sleep", pause)
+    with pytest.raises(asyncio.CancelledError):
+        await negotiation.keep_talking(negotiator(None, kept, notify), session, logging.getLogger("test"),
+                                       now=lambda: datetime(2026, 10, 15, 10, tzinfo=negotiation.GERMANY))
+
+    assert told == [1, 1, 2] and box.conversation.await_count == 1
+
+
 async def test_with_nothing_to_do_the_session_is_used_once_a_day_to_keep_the_login_fresh(monkeypatch, kept, session):
     browser, clock = Browser(), [datetime(2026, 10, 11, 10, tzinfo=negotiation.GERMANY)]
 

@@ -938,8 +938,9 @@ async def keep_talking(negotiator: Negotiator, session: str, logger, now=lambda:
                         raise
                     finally:
                         if logged_in:
+                            unchanged = told == _contents(session)  # the owner put no new file in place since told
                             await _keep(window, session)
-                            if told is not None:  # the agent's own write is no news to the owner
+                            if unchanged:  # the agent's own write is no news to the owner
                                 told = _contents(session)
         except Exception as e:
             logger.error(f"Negotiation: {e}")
