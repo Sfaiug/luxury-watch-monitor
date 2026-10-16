@@ -2282,13 +2282,18 @@ async def test_an_answer_that_did_not_reach_the_seller_is_sent_again_not_decided
     assert again.asked == []
 
 
-async def test_a_seller_who_wrote_after_an_answer_failed_is_read_and_the_answer_taken_back(kept):
+@pytest.mark.parametrize("removed_field", [False, True])
+async def test_a_seller_who_wrote_after_an_answer_failed_is_read_and_the_answer_taken_back(kept, removed_field):
     box = Box()
     await opened(kept, box)
     box.seller("Unter 9.500 € geht nichts, und nur bar.")
     box.reply = AsyncMock(side_effect=RuntimeError("the site did not answer"))
     await negotiator(Claude(reads=[says(price=9500, bank_transfer=False)], writes=["Wie wäre es mit [BETRAG] per Überweisung?"]),
                      kept).follow_up(box)
+    if removed_field:
+        saved = kept.get("3535834511")
+        saved.before["terms"]["removed_field"] = True
+        kept.save(saved)
     box.seller("Keine Antwort? Dann eben 9.200 €, aber bar.")
     del box.reply
     claude = Claude(reads=[says(price=9200, bank_transfer=False)], writes=["Für [BETRAG] gern, aber nur per Überweisung."])

@@ -655,7 +655,7 @@ class Negotiator:
             negotiation.sent.remove(unshown.pop())
             if negotiation.before:  # kept before negotiations kept it, a message is taken back alone
                 negotiation.offered, negotiation.terms = negotiation.before["offered"], Terms(
-                    **{**negotiation.before["terms"], "lowest": negotiation.terms.lowest})
+                    **{**_known(Terms, negotiation.before["terms"]), "lowest": negotiation.terms.lowest})
             negotiation.status, negotiation.ends = "talking", ""
             self.negotiations.save(negotiation)
         if unshown:
