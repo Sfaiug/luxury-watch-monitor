@@ -1402,6 +1402,23 @@ async def opened(kept, box):
     await talking.follow_up(box)
 
 
+async def test_agreed_price_stands_when_the_seller_says_yes_to_what_follows(kept):
+    box = Box()
+    await opened(kept, box)  # the agent offered 7.550 €, and may pay 8.608 €
+    claude = Claude(reads=[says(price=8300), says(accepts_offer=True, bank_transfer=True)],
+                    writes=["[BETRAG] passt. Geht Überweisung?", "Super. Verschickst du sie versichert?"])
+    talking = negotiator(claude, kept)
+    box.seller("8.300 € und sie gehört dir.")
+    await talking.follow_up(box)
+    box.seller("Ja, passt.")
+    await talking.follow_up(box)
+
+    current = kept.get("3535834511")
+    assert (current.terms.price, current.offered, current.terms.bank_transfer) == (8300, 8300, True)
+    assert [s.text for s in box.said if s.outbound][-2:] == ["8.300 € passt. Geht Überweisung?",
+                                                            "Super. Verschickst du sie versichert?"]
+
+
 async def test_the_seller_s_counter_is_answered_and_nothing_new_asks_nothing(kept):
     box = Box()
     await opened(kept, box)
@@ -1509,7 +1526,8 @@ async def test_crossing_a_seller_message_drops_the_draft_and_reads_the_whole_cha
     reads = [json.loads(request)["messages"][0]["content"][0]["text"] for request in claude.requests
              if "reference" in json.loads(request)["output_config"]["format"]["schema"]["properties"]]
     assert all(text in reads[-1] for text in [*original.sent, earlier, latest])
-    assert current.offered == original.offered and notify.await_count == 0
+    # The dropped draft's offer is never the buyer's: only the price agreed on the whole chat is
+    assert current.offered == (original.offered if ended else 8400) and notify.await_count == 0
     if ended:
         assert current.status == "ended" and current.sent == original.sent
         assert current.terms.price is None and not current.terms.bank_transfer
