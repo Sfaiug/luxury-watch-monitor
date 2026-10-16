@@ -124,6 +124,7 @@ def move(limit: int, offered: int, terms: Terms, says: SellerSays, pictures: boo
             return Move("owner", why="the seller cannot confirm the watch's reference")
         if says.reference:
             terms.reference = says.reference
+    delivery, before = terms.delivery if says.delivery is None else says.delivery, terms.delivery
     refused = {
         said: name
         for said, name in (("bank_transfer", "bank transfer"), ("contract", "the purchase contract"),
@@ -132,9 +133,10 @@ def move(limit: int, offered: int, terms: Terms, says: SellerSays, pictures: boo
     }
     if says.delivery == "pickup" and not terms.in_person:
         refused["delivery"] = "insured shipping"  # a seller who only hands it over in person
+    if delivery == "pickup":
+        refused.pop("id_card", None)  # handed over in person, the card is shown there: no picture needed for that
     # A refusal takes back what was agreed; the ID card needs visual evidence in this reading.
     terms.bank_transfer = terms.bank_transfer if says.bank_transfer is None else says.bank_transfer
-    delivery, before = terms.delivery if says.delivery is None else says.delivery, terms.delivery
     terms.delivery = delivery if delivery != "pickup" or terms.in_person else None  # in person by the owner's word only
     terms.contract = terms.contract if says.contract is None else says.contract
     terms.id_card = says.id_card is True and pictures

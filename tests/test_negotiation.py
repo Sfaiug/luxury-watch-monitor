@@ -331,6 +331,20 @@ def test_a_seller_handing_it_over_in_person_only_is_asked_once_more_to_ship_then
     assert move(LIMIT, OPENING, terms, says(delivery="pickup"), False).kind == "farewell"
 
 
+def test_a_seller_refusing_the_id_picture_for_a_handover_in_person_is_left_to_the_owner():
+    terms = Terms(price=OPENING, bank_transfer=True, delivery="shipping", contract=True)
+    assert move(LIMIT, OPENING, terms, says(id_card=False), False).refused == ["a picture of the ID card"]
+
+    # Refused once more, to show it at a handover in person: shipping is asked for once more, then the owner decides
+    first = move(LIMIT, OPENING, terms, says(id_card=False, delivery="pickup"), False)
+    assert (first.kind, first.refused) == ("settle", ["insured shipping"])
+    assert move(LIMIT, OPENING, terms, says(id_card=False, delivery="pickup"), False).kind == "decide"
+
+    terms.in_person = True  # the owner's word: picked up, the card shown there
+    assert move(LIMIT, OPENING, terms, says(id_card=False, delivery="pickup"), False) == Move(
+        "done", OPENING, "all agreed", pickup=True)
+
+
 def test_a_watch_the_owner_picks_up_needs_the_id_card_shown_there_not_as_a_picture():
     terms = Terms(price=OPENING, bank_transfer=True, in_person=True)
 
