@@ -2640,6 +2640,35 @@ async def test_after_farewell_a_seller_saying_ok_is_not_answered_and_one_who_mov
     assert kept.get("3535834511").status == "talking" and box.said[-1].text == answer
 
 
+@pytest.mark.parametrize("term, agreed, word, next_term", [
+    ("bank_transfer", {}, "Überweisung", "Versand"),
+    ("contract", {"bank_transfer": True, "delivery": "shipping"}, "Kaufvertrag", "Ausweis"),
+])
+async def test_after_farewell_a_seller_renewing_a_withdrawn_agreement_is_answered(kept, term, agreed, word, next_term):
+    box = Box()
+    await opened(kept, box)
+    current = kept.get("3535834511")
+    current.terms = Terms(price=OPENING, **agreed)
+    kept.save(current)
+    answer = f"Klasse. Dann fehlt noch {next_term}."
+    claude = Claude(reads=[says(**{term: value}) for value in (False, True, False, True)],
+                    writes=[f"Wäre {word} vielleicht doch möglich?", f"Prima. Geht {next_term}?",
+                            "Schade, dann passt es leider nicht. Alles Gute!", answer])
+    talking = negotiator(claude, kept)
+    for value in (False, True, False):
+        box.seller(f"{word}: {value}")
+        await talking.follow_up(box)
+    stopped = kept.get(current.ad_id)
+    assert (stopped.status, stopped.ends) == ("ended", "ended")
+
+    box.seller(f"{word} geht doch klar.")
+    await talking.follow_up(box)
+
+    renewed = kept.get(current.ad_id)
+    assert renewed.status == "talking" and getattr(renewed.terms, term) is True
+    assert box.said[-1].outbound and box.said[-1].text == answer
+
+
 async def test_the_talk_loop_keeps_running_when_a_pass_or_telling_the_owner_fails(monkeypatch, kept, caplog):
     talking = negotiator(Claude(), kept)
     talking.waiting = Mock(side_effect=[TypeError("Negotiation.__init__() got an unexpected keyword argument"), []])

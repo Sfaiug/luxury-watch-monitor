@@ -131,18 +131,18 @@ def move(limit: int, offered: int, terms: Terms, says: SellerSays, pictures: boo
     }
     if says.delivery == "pickup" and not terms.in_person:
         refused["delivery"] = "insured shipping"  # a seller who only hands it over in person
-    again = [name for name in refused.values() if name in terms.asked_again]
-    if again == ["insured shipping"] and terms.in_person is None:
-        # Shipping refused once more, and nothing else: whether to pick it up is the owner's (owner rule, 13 Oct 2026)
-        return Move("decide", why="the seller hands it over in person only")
-    if again:
-        return Move("farewell", why="the seller refuses " + " and ".join(refused.values()))
     # A refusal takes back what was agreed; the ID card needs visual evidence in this reading.
     terms.bank_transfer = terms.bank_transfer if says.bank_transfer is None else says.bank_transfer
     delivery, before = terms.delivery if says.delivery is None else says.delivery, terms.delivery
     terms.delivery = delivery if delivery != "pickup" or terms.in_person else None  # in person by the owner's word only
     terms.contract = terms.contract if says.contract is None else says.contract
     terms.id_card = says.id_card is True and pictures
+    again = [name for name in refused.values() if name in terms.asked_again]
+    if again == ["insured shipping"] and terms.in_person is None:
+        # Shipping refused once more, and nothing else: whether to pick it up is the owner's (owner rule, 13 Oct 2026)
+        return Move("decide", why="the seller hands it over in person only")
+    if again:
+        return Move("farewell", why="the seller refuses " + " and ".join(refused.values()))
 
     answer = (Move("settle", why="next: " + next(iter(terms.open())))
               if terms.reference_required and not terms.reference else
