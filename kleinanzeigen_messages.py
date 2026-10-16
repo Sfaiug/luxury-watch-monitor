@@ -158,16 +158,17 @@ class Messages:
             ],
         )
 
-    async def picture(self, url: str) -> dict:
-        """A chat picture, as media type and base64 data, read through the owner's session without keeping it."""
+    async def picture(self, url: str) -> Optional[dict]:
+        """A chat picture, as media type and base64 data, read through the owner's session without keeping it; None
+        for one Kleinanzeigen refuses for good, or that is no picture the AI can see, such as a PDF."""
         try:
             picture = await asyncio.wait_for(self._page.evaluate(_PICTURE, url), CALL_LIMIT)
-            if "status" in picture:
+            refused = "status" in picture and 400 <= picture["status"] < 500 and picture["status"] not in (401, 429)
+            if "status" in picture and (not refused or picture.get("error")):
                 _data(picture)
             self._on_success()
-            if picture["media_type"] not in ("image/jpeg", "image/png", "image/gif", "image/webp") or not picture["data"]:
-                raise ValueError("not a picture")
-            return picture
+            seen = not refused and picture["media_type"] in ("image/jpeg", "image/png", "image/gif", "image/webp")
+            return picture if seen and picture["data"] else None
         except LoggedOut:
             raise LoggedOut("Kleinanzeigen answered a chat picture request with 401") from None
         except Exception:

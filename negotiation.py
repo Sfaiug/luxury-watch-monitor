@@ -214,6 +214,7 @@ def _price(limit: int, offered: int, terms: Terms, asked: Optional[int], accepts
     return Move("done", terms.price, "all agreed")
 
 
+UNSEEN = "The seller sent a picture here that cannot be opened."
 AMOUNT = "[BETRAG]"  # where the AI leaves the amount decided, for the code to write in
 # The owner's choices for a seller who hands the watch over in person only: the button's label, and a handover in person
 CHOICES = {"pickup": ("Pick it up", True), "ship": ("Shipping only", False)}
@@ -695,10 +696,11 @@ class Negotiator:
         if negotiation.status == "ended":
             # The seller wrote again after the agent let them go: they are read afresh
             negotiation.status, negotiation.ends, negotiation.why = "talking", "", ""
+        # A picture Kleinanzeigen will not give is read as one the seller sent, so the reading goes on without it
         pictures = [
-            {"type": "image", "source": {"type": "base64", **await messages.picture(url)}}
+            {"type": "image", "source": {"type": "base64", **picture}} if picture else {"type": "text", "text": UNSEEN}
             for message in said if not message.outbound
-            for url in message.attachments
+            for picture in [await messages.picture(url) for url in message.attachments]
         ]
         says = await ask(self.client, READ, [{"type": "text", "text": transcript(negotiation, said)}] + pictures, SellerSays)
         if says is None:
@@ -721,7 +723,7 @@ class Negotiator:
                 negotiation.offered = int(opening(Decimal(negotiation.asking) if negotiation.asking is not None
                                                  else verdict.limit, verdict.limit))
         answer = move(negotiation.limit, negotiation.offered, terms, says,
-                      bool(pictures),
+                      any(block["type"] == "image" for block in pictures),
                       not negotiation.opened, asking=negotiation.asking)
         if farewell is not None and not (terms.price is not None and negotiation.terms.price is None
                                          or len(terms.open()) < len(negotiation.terms.open())):

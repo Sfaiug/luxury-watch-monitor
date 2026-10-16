@@ -159,14 +159,24 @@ async def test_id_card_seen_picture_is_read_only_on_demand_through_the_session()
 
 @pytest.mark.parametrize("answer", [
     RuntimeError("private attachment URL and contents"),
-    {"media_type": "text/html", "data": "not a picture"},
-    {"media_type": "image/png", "data": ""},
+    response("chat picture", 503, "private contents"),
+    response("chat picture", 429, "private contents"),
 ])
 async def test_id_card_seen_unreadable_picture_does_not_leak_into_errors(answer):
     page = SimpleNamespace(evaluate=AsyncMock(**({"side_effect": answer} if isinstance(answer, Exception)
                                                else {"return_value": answer})))
     with pytest.raises(RuntimeError, match="^Could not read a chat picture$"):
         await Messages(page).picture("private attachment URL")
+
+
+@pytest.mark.parametrize("answer", [
+    {"media_type": "application/pdf", "data": "UERG"},
+    {"media_type": "image/png", "data": ""},
+    response("chat picture", 404, "private contents"),
+    response("chat picture", 403, "private contents"),
+])
+async def test_a_picture_kleinanzeigen_refuses_for_good_is_none(answer):
+    assert await Messages(SimpleNamespace(evaluate=AsyncMock(return_value=answer))).picture("private attachment URL") is None
 
 
 async def test_a_reply_counts_as_sent_once_its_conversation_shows_it():
