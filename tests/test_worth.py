@@ -107,7 +107,7 @@ async def test_only_priced_offers_count_toward_the_minimum_and_quarter(prices, m
         pages.append(str(soup))
     browser = AsyncMock()
     browser.__aenter__.return_value = browser
-    browser.page.side_effect = lambda url: pages[int(parse_qs(urlsplit(url).query).get("page", ["1"])[0]) - 1]
+    browser.page.side_effect = lambda url: pages[int(parse_qs(urlsplit(url).query).get("showPage", ["1"])[0]) - 1]
     monkeypatch.setattr(chrono24, "PAUSE", 0)
     seed = chrono24_offers(9000)
     seed[0].site_key = "worldoftime"

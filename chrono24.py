@@ -155,7 +155,7 @@ async def search_round(prices: Prices, chrome, now=datetime.now) -> int:
             # Count priced offers throughout the search, keeping only the cheapest page of them.
             for page in range(2, (found + PAGE - 1) // PAGE + 1):
                 await asyncio.sleep(PAUSE)
-                _, more = read(await browser.page(f"{url}&page={page}"), brand, reference, seen, page=page)
+                _, more = read(await browser.page(f"{url}&showPage={page}"), brand, reference, seen, page=page)
                 offers.extend(more)
             prices.searched(reference, kind, len(offers), offers[:PAGE], seen)
     return len(due)

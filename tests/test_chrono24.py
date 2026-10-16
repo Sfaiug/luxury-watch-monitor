@@ -15,7 +15,7 @@ from chrono24 import FULL_SET, KINDS, USED, NotResults, read, search_round, sear
 from models import ScrapingSession, WatchData
 from monitor import WatchMonitor
 from prices import Prices
-from worth import buy_limit
+from worth import buy_limit, worth
 
 PAGES = Path(__file__).parent / "pages"
 SEEN = datetime(2026, 10, 10, 11, 0)
@@ -59,7 +59,7 @@ class Chrome:
         words = asked["query"][0]
         self.asked.append(words)
         html = page(self.pages[words])
-        number = int(asked.get("page", ["1"])[0])
+        number = int(asked.get("showPage", ["1"])[0])
         if number > 1:
             soup = BeautifulSoup(html, "lxml")
             remaining = int(soup.find("strong").get_text().split()[0]) - (number - 1) * chrono24.PAGE
@@ -192,6 +192,7 @@ async def test_a_reference_the_shops_offer_is_searched_for_each_kind_and_its_eu_
         ("116610LN", FULL_SET, 192, "2026-10-10T11:00:00"),
         ("116610LN", USED, 192, "2026-10-10T11:00:00"),
     ]
+    assert [worth(prices, "116610LN", kind) for kind in KINDS] == [Decimal("10800")] * 2
 
 
 async def test_a_reference_is_searched_again_around_the_clock_an_hour_on_at_the_earliest(prices):
@@ -299,7 +300,7 @@ async def test_cards_unread_keep_the_last_good_offers_and_limit_leave_the_refere
     class ChangedChrome(Chrome):
         async def page(self, url):
             html = await super().page(url)
-            number = int(parse_qs(urlsplit(url).query).get("page", ["1"])[0])
+            number = int(parse_qs(urlsplit(url).query).get("showPage", ["1"])[0])
             return html.replace("wt-listing-item-price", "changed-price", unreadable) if number == failed_page else html
 
     chrome = ChangedChrome(pages)
