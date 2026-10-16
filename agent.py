@@ -14,7 +14,7 @@ from datetime import datetime, timedelta
 from decimal import Decimal
 from typing import List, Literal, Optional, Tuple, Type, TypeVar
 
-from anthropic import transform_schema
+from anthropic import AsyncAnthropic, transform_schema
 from bs4 import BeautifulSoup
 from pydantic import BaseModel, Field
 
@@ -33,6 +33,7 @@ TOO_CHEAP = Decimal("0.5")  # below this share of its worth an offer is not what
 TOO_DEAR = Decimal("1.2")  # above this share of the limit a seller will not come down far enough
 WAITS = timedelta(days=7)  # a match waits this long at most for its watch's prices: by then it is mostly sold or gone
 ATTEMPTS = 3  # attempts to read a match, including one interrupted by a restart
+HUB = "http://127.0.0.1:8411/anthropic"  # the server's AI hub: it holds the Anthropic keys and knows a project by its name
 
 INSTRUCTIONS = """You read a watch offer on Kleinanzeigen for a watch dealer who may buy it.
 Report what the offer states or its photos show; only likely_reference may be inferred.
@@ -125,6 +126,11 @@ def _sdk_diagnostics(record: logging.LogRecord) -> bool:
 
 
 logging.getLogger("anthropic._base_client").addFilter(_sdk_diagnostics)
+
+
+def claude(**options) -> AsyncAnthropic:
+    """The AI, through the AI hub, which sends each request with a key of its own that works."""
+    return AsyncAnthropic(base_url=HUB, api_key="luxury-watch-monitor", **options)
 
 
 async def ask(client, instructions: str, content: list, form: Type[Form]) -> Optional[Form]:

@@ -4,7 +4,7 @@ production code (the AI's reading and writing, `negotiation.move`, the terms, wh
 Kleinanzeigen message box is a list here, and nothing reaches Kleinanzeigen or Discord. Each brief says how the
 negotiation is to end: the run prints every conversation and whether it ended so, and fails when one did not.
 
-Where AGENT_MODEL and ANTHROPIC_API_KEY are set (on the server, in the checkout):
+Where AGENT_MODEL is set and the AI hub runs (on the server, in the checkout):
 venv/bin/python3 scripts/simulate_negotiations.py [seller ...]
 """
 
@@ -27,9 +27,7 @@ if str(ROOT) not in sys.path:
 
 load_dotenv(ROOT / ".env")
 
-from anthropic import AsyncAnthropic  # noqa: E402
-
-from agent import ask, opening  # noqa: E402
+from agent import ask, claude, opening  # noqa: E402
 from kleinanzeigen_messages import Conversation, Message  # noqa: E402
 from negotiation import ANSWERS, MOST_WRITTEN, Negotiation, Negotiations, Negotiator, euros  # noqa: E402
 
@@ -183,7 +181,7 @@ def report(name: str, seller: Seller, negotiation: Negotiation, said: List[Messa
 
 async def main(names: List[str]) -> int:
     logging.basicConfig(level=logging.WARNING)
-    client = AsyncAnthropic(max_retries=8)
+    client = claude(max_retries=8)
     sellers = {name: SELLERS[name] for name in names or SELLERS}
     ended = await asyncio.gather(*(simulate(name, seller, client) for name, seller in sellers.items()))
     for (name, seller), (negotiation, said, heard) in zip(sellers.items(), ended):

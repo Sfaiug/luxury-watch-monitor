@@ -19,7 +19,7 @@ from action_store import ActionStore
 import chrono24
 import controlling
 from prices import Prices
-from agent import Agent, Deals, Verdict, opening
+from agent import Agent, Deals, Verdict, claude, opening
 from negotiation import Negotiation, Negotiations, Negotiator, euros, keep_talking
 from scrapers.kleinanzeigen import offer_url
 from prices_page import PricesPage
@@ -146,10 +146,8 @@ class WatchMonitor:
 
         self.prices = Prices(APP_CONFIG.prices_file)
         await self._read_trades()
-        if APP_CONFIG.agent_model and os.getenv("ANTHROPIC_API_KEY"):
-            from anthropic import AsyncAnthropic
-
-            client = AsyncAnthropic()
+        if APP_CONFIG.agent_model:
+            client = claude()
             self.deals = Deals(APP_CONFIG.deals_file)
             self.agent = Agent(client, self._page, self.prices, self.deals, self.logger, self._negotiate_if_asked,
                                self._negotiate_by_hand, self._tell_owner)
