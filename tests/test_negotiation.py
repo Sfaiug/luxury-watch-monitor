@@ -1506,6 +1506,22 @@ async def test_phone_request_does_not_excuse_a_link_or_payment_outside_kleinanze
     assert "a link to follow or payment outside Kleinanzeigen" in read
 
 
+async def test_a_picture_that_cannot_be_opened_is_read_as_one_and_the_seller_answered(kept):
+    box = Box()
+    await opened(kept, box)
+    box.seller("Hier mein Ausweis.", pictures=1)
+    box.picture = AsyncMock(return_value=None)  # gone, or no picture the AI can see
+    claude = Claude(reads=[says(id_card=True, turns_down=False)],
+                    writes=["Das Foto geht bei mir leider nicht auf. Schickst du es nochmal?"])
+
+    await negotiator(claude, kept).follow_up(box)
+
+    content = json.loads(claude.requests[0])["messages"][0]["content"]
+    assert [block["type"] for block in content] == ["text", "text"] and content[1]["text"] == negotiation.UNSEEN
+    assert not kept.get("3535834511").terms.id_card  # no picture of it was seen
+    assert box.said[-1].text == "Das Foto geht bei mir leider nicht auf. Schickst du es nochmal?"
+
+
 @pytest.mark.parametrize("stage", ["read", "write", "third_draft"])
 @pytest.mark.parametrize("ended", [False, True])
 async def test_crossing_a_seller_message_drops_the_draft_and_reads_the_whole_chat(kept, monkeypatch, stage, ended):
