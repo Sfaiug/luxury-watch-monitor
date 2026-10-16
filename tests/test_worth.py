@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
+from bs4 import BeautifulSoup
 
 import chrono24
 import controlling
@@ -73,6 +74,33 @@ def test_fewer_than_five_offers_say_too_little(prices):
 
     searched(prices, 5, chrono24_offers("9000", "9500", "9800", "12000", "12500"))
     assert worth(prices, "116610LN", USED) == Decimal("9500")
+
+
+@pytest.mark.parametrize("kind", [USED, FULL_SET])
+@pytest.mark.parametrize("on_request,asked,expected", [
+    (5, (58000,), None),
+    (1, (48000, 50000, 52000, 54000), None),
+    (4, (48000, 50000, 52000, 54000, 56000), Decimal("50000")),
+    (2, (450, 850, 48000, 50000, 52000, 54000), None),
+    (4, (450, 850, 48000, 50000, 52000, 54000, 56000), Decimal("50000")),
+])
+def test_only_priced_offers_count_toward_the_minimum_and_quarter(prices, kind, on_request, asked, expected):
+    # Live, 16 Oct 2026: six EU offers, five on request, left one price of 58,000 euros.
+    soup = BeautifulSoup(PAGE, "lxml")
+    found = len(asked) + on_request
+    soup.find("strong").string = f"{found} Inserate"
+    for n, card in enumerate(soup.select(".js-listing-item-container")):
+        if n >= found:
+            card.decompose()
+        else:
+            card.select_one(".wt-listing-item-price").string = (
+                f"{asked[n]} €" if n < len(asked) else "Preis auf Anfrage"
+            )
+    count, offers = chrono24.read(str(soup), "Rolex", "116610LN", SEARCHED)
+    searched(prices, count, offers, kind=kind)
+
+    assert worth(prices, "116610LN", kind) == expected
+    assert buy_limit(prices, "116610LN", kind) == (most_to_pay(expected) if expected is not None else None)
 
 
 def test_a_watch_never_searched_has_no_worth(prices):

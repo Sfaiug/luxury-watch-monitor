@@ -69,7 +69,7 @@ def search_url(brand: Optional[str], reference: str, kind: str) -> str:
 
 
 def read(html: str, brand: Optional[str], reference: str, seen: datetime) -> Tuple[int, List[WatchData]]:
-    """How many offers a search found in all, and the ones on its page with a price."""
+    """The search's count, excluding cards without a price, and its priced offers."""
     soup = BeautifulSoup(html, "lxml")
     count = soup.find("strong", string=re.compile(r"^\s*[\d.]+ Inserate\s*$"))
     if count:
@@ -108,7 +108,7 @@ def read(html: str, brand: Optional[str], reference: str, seen: datetime) -> Tup
     # Losing most of a page's cards means its markup changed
     if cards < expected / 2:
         raise NotResults(f"could not read search result: {cards} of {expected} expected offers ({found} found)")
-    return found, offers
+    return found - (cards - len(offers)), offers
 
 
 async def _without_pictures(route):

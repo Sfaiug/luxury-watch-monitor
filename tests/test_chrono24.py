@@ -121,8 +121,8 @@ def test_cards_unread_are_compared_with_the_offers_expected_on_one_page(found, r
         assert (count, len(offers)) == (found, readable)
 
 
-@pytest.mark.parametrize(("found", "on_request"), [(1, 1), (4, 4), (192, 100)])
-def test_offers_whose_price_is_on_request_are_read_without_a_price(found, on_request):
+@pytest.mark.parametrize(("found", "on_request"), [(1, 1), (4, 4), (5, 1), (6, 5), (9, 4), (192, 100)])
+def test_only_priced_offers_count_without_treating_on_request_cards_as_unread(found, on_request):
     # Live, 15 Oct 2026: the one full-set Patek Philippe 3416 asked "Preis auf Anfrage"
     soup = BeautifulSoup(page("chrono24.html"), "lxml")
     soup.find("strong").string = f"{found} Inserate"
@@ -134,7 +134,7 @@ def test_offers_whose_price_is_on_request_are_read_without_a_price(found, on_req
 
     count, offers = read(str(soup), "Patek Philippe", "3416", SEEN)
 
-    assert (count, len(offers)) == (found, min(found, chrono24.PAGE) - on_request)
+    assert (count, len(offers)) == (found - on_request, min(found, chrono24.PAGE) - on_request)
 
 
 def test_cloudflare_s_human_check_is_no_search_result():
