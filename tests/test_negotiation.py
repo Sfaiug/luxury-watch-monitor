@@ -584,7 +584,49 @@ async def test_confirmed_reference_its_limit_stands_while_the_seller_keeps_to_it
     assert kept.get("3535834511").status == "owner"
 
 
-@pytest.mark.parametrize("reference, unavailable", [(None, True), ("unknown", False)])
+@pytest.mark.parametrize("taken_back", ["draft", "reply"])
+async def test_confirmed_reference_taken_back_with_a_draft_or_reply_takes_its_limit_back_too(
+        kept, tmp_path, monkeypatch, taken_back):
+    prices = Prices(tmp_path / "prices.sqlite3")
+    prices.set_buy_price("3445", 8000, datetime.now())
+    prices.set_buy_price("3425", 12000, datetime.now())
+    box = Box()
+    claude = Claude(reads=[says(), says(reference="3445"), says(price=9500, reference="3425"),
+                           says(price=9500, reference="3445")],
+                    writes=["Hallo, ist die Uhr noch da?", "Kannst du mir die Referenz aus den Papieren nennen?",
+                            "Ich würde [BETRAG] bieten.", "[BETRAG] passt. Geht Überweisung?",
+                            "Für [BETRAG] würde ich sie nehmen."])
+    talking = negotiator(claude, kept, prices=prices)
+    talking.ask_to_start(unconfirmed_watch())
+    await talking.start(box)
+    for text in ("Ja, noch da.", "Referenz ist 3445."):
+        box.seller(text)
+        await talking.follow_up(box)
+    retracted = "Sorry, doch 3445. 9.500 €."
+    ask = negotiation.ask
+
+    async def crossing(*args):
+        result = await ask(*args)
+        if taken_back == "draft" and claude.asked.count("write") == 4 and claude.asked[-1] == "write":
+            box.seller(retracted)  # written while the agent drafts its answer to 3425
+        return result
+
+    monkeypatch.setattr(negotiation, "ask", crossing)
+    if taken_back == "reply":
+        box.reply = AsyncMock(side_effect=RuntimeError("the site did not answer"))
+    box.seller("Korrektur: Referenz 3425, 9.500 €.")
+    await talking.follow_up(box)
+    if taken_back == "reply":
+        del box.reply
+        box.seller(retracted)
+        await talking.follow_up(box)
+
+    current = kept.get("3535834511")
+    assert (current.limit, current.terms.reference, current.terms.price) == (8000, "3445", None)
+    assert box.said[-1].text == "Für 7.500 € würde ich sie nehmen."
+
+
+@pytest.mark.parametrize("reference, unavailable",[(None, True), ("unknown", False)])
 async def test_confirmed_reference_an_unavailable_reference_or_its_missing_limit_goes_to_the_owner(
         kept, tmp_path, reference, unavailable):
     prices = Prices(tmp_path / "prices.sqlite3")
