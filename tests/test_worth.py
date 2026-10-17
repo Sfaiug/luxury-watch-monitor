@@ -20,9 +20,9 @@ from config import APP_CONFIG
 from models import WatchData
 from prices import Prices
 from prices_page import PATH, PricesPage, key
-from worth import buy_limit, least_profit, most_to_pay, ours, worth
+from worth import RECENT, buy_limit, least_profit, most_to_pay, ours, worth
 
-SEARCHED = datetime(2026, 10, 10, 11, 0)
+SEARCHED = datetime.now().replace(minute=0, second=0, microsecond=0) - timedelta(days=7)  # within the 90 days whose prices count
 PAGE = (Path(__file__).parent / "pages" / "chrono24.html").read_text(encoding="utf-8")
 
 
@@ -136,6 +136,16 @@ def test_only_the_offers_its_last_search_still_found_count(prices):
     searched(prices, 5, chrono24_offers("9000", "9500", "9800", "12000", "12500"))
 
     assert worth(prices, "116610LN", USED) == Decimal("9500")
+
+
+def test_a_search_from_before_the_last_90_days_counts_no_more(prices):
+    old = datetime.now() - RECENT - timedelta(minutes=1)
+    searched(prices, 5, chrono24_offers("9000", "9100", "9200", "9300", "9400", at=old), at=old)
+    assert worth(prices, "116610LN", USED) is None
+
+    recent = datetime.now() - RECENT + timedelta(minutes=1)
+    searched(prices, 5, chrono24_offers("9000", "9100", "9200", "9300", "9400", at=recent), at=recent)
+    assert worth(prices, "116610LN", USED) == Decimal("9100")
 
 
 def test_the_offers_a_search_read_count_whichever_reference_read_them_first(prices):

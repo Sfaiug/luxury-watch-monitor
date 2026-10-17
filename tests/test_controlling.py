@@ -16,7 +16,7 @@ from models import WatchData
 from monitor import WatchMonitor
 from prices import Prices
 from prices_page import PATH, PricesPage, key
-from worth import buy_limit, most_to_pay, worth
+from worth import RECENT, buy_limit, most_to_pay, worth
 
 # The export's own header (11 Oct 2026); the rows are made up, the seller column as full as in the real one
 HEADER = (
@@ -44,7 +44,7 @@ def export(tmp_path):
         HEADER,
         row("116610LN", "x", "x", day(60), "€8.100,000", day(40), "9.900,00 €"),
         row("116610 LN", "-", "x (Extract)", day(50), "€7.200,00", day(30), "8.800,00 €"),
-        row("116610LN", "X", "X", day(500), "€6.000,00", day(400), "7.000,00 €"),  # more than a year ago
+        row("116610LN", "X", "X", day(150), "€6.000,00", day(120), "7.000,00 €"),  # too long ago to count
         row("116610LN", "x", "x", day(5), "€8.500,00"),  # still in stock
         row("", "x", "x", day(5), "€100,00"),
     ]), encoding="utf-8-sig")
@@ -73,11 +73,11 @@ def chrono24(prices, kind, *asked):
     ], datetime.now())
 
 
-def test_a_watch_is_worth_the_lower_of_the_market_and_the_middle_of_our_sales_within_a_year(tmp_path, export):
+def test_a_watch_is_worth_the_lower_of_the_market_and_the_middle_of_our_recent_sales(tmp_path, export):
     prices = Prices(tmp_path / "prices.sqlite3")
     prices.traded(controlling.read(export))
 
-    # Too few offers: our sales alone, the year's two used ones, and the one full set for a full set
+    # Too few offers: our sales alone, the two recent used ones, and the one full set for a full set
     assert worth(prices, "116610LN", USED) == Decimal("9350")
     assert worth(prices, "116610LN", FULL_SET) == Decimal("9900")
 
@@ -87,10 +87,10 @@ def test_a_watch_is_worth_the_lower_of_the_market_and_the_middle_of_our_sales_wi
     assert worth(prices, "116610LN", FULL_SET) == Decimal("9900")  # ours lower
 
 
-def test_the_most_to_pay_is_no_more_than_the_middle_of_what_we_paid_within_a_year(tmp_path, export):
+def test_the_most_to_pay_is_no_more_than_the_middle_of_what_we_paid_lately(tmp_path, export):
     prices = Prices(tmp_path / "prices.sqlite3")
     prices.traded(controlling.read(export))
-    # Paid 7.200, 8.100 and 8.500 within the year: more than selling at 9.350 leaves room for
+    # Paid 7.200, 8.100 and 8.500 lately: more than selling at 9.350 leaves room for
     assert buy_limit(prices, "116610LN", USED) == most_to_pay(Decimal("9350"))
 
     export.write_text("\n".join([
@@ -111,7 +111,7 @@ async def test_a_newer_export_takes_the_place_of_the_last_one(tmp_path, export, 
     monitor.prices = Prices(tmp_path / "prices.sqlite3")
 
     await monitor._read_trades()
-    assert len(monitor.prices.traded_for("116610LN", False, date.today() - timedelta(days=365), True)) == 2
+    assert len(monitor.prices.traded_for("116610LN", False, date.today() - RECENT, True)) == 2
 
     export.write_text("\n".join([
         HEADER,
@@ -217,12 +217,12 @@ def test_existing_trades_gain_their_brand_when_the_export_is_read_again(tmp_path
     prices.close()
 
     prices = Prices(path)
-    assert prices.traded_for("116610LN", False, date.today() - timedelta(days=365), True, "Rolex") == [8800, 9900]
+    assert prices.traded_for("116610LN", False, date.today() - RECENT, True, "Rolex") == [8800, 9900]
     assert prices.traded_for("116610LN", False, date(2000, 1, 1), True, "Omega") == []
     prices.close()
 
 
-async def test_the_owner_sees_what_we_bought_and_sold_a_watch_for_within_a_year(tmp_path, export):
+async def test_the_owner_sees_what_we_bought_and_sold_a_watch_for_lately(tmp_path, export):
     prices = Prices(tmp_path / "prices.sqlite3")
     prices.saw([WatchData(title="Submariner", url="https://shop.example/1", site_name="Shop", site_key="worldoftime",
                           brand="Rolex", reference="116610LN", price=Decimal("9500"), scraped_at=datetime.now())])

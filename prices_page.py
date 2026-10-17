@@ -18,7 +18,7 @@ from chrono24 import FULL_SET, KINDS, USED
 from config import APP_CONFIG
 from prices import Prices, reference_key
 from utils import parse_price
-from worth import calculated_limit, ours, worth
+from worth import RECENT, calculated_limit, ours, worth
 
 PATH = "/muv/prices"  # atlas.hopcomp.com hands /muv/ to the monitor
 
@@ -92,7 +92,7 @@ class PricesPage:
                 f'<td class="n">{euros(calculated_limit(self.prices, reference, kind, brand))}</td>'
                 for kind in KINDS
             )
-            # How many we bought and sold within the year, and the middle of their prices
+            # How many we bought and sold lately, and the middle of their prices
             traded = "".join(
                 f"<td class=n>{f'{count} for {euros(middle)}' if count else '–'}</td>"
                 for count, middle in (ours(self.prices, reference, USED, sold, brand) for sold in (False, True))
@@ -112,11 +112,12 @@ class PricesPage:
         html = f"""<!doctype html><html lang=en><head><meta charset=utf-8>
 <meta name=viewport content="width=device-width, initial-scale=1"><title>Watch prices</title><style>{STYLE}</style></head>
 <body><h1>Watch prices</h1>
-<p>Worth: the price a quarter of a watch's used Chrono24 offers inside the EU ask less than, from five offers up;
-for a full set, a quarter of the used ones with their original box and papers. Where we sold the watch within the
-last year, the middle of those sales instead if lower (for a full set, of the full sets we sold).
+<p>Only prices of the last {RECENT.days} days count, Chrono24's and ours.
+Worth: the price a quarter of a watch's used Chrono24 offers inside the EU ask less than, from five offers up;
+for a full set, a quarter of the used ones with their original box and papers. Where we sold the watch,
+the middle of those sales instead if lower (for a full set, of the full sets we sold).
 Most to pay: what still leaves {share}&nbsp;% and at least {euros(APP_CONFIG.least_profit_eur)} profit after Chrono24's fee,
-shipping and the margin tax, and no more than the middle of what we paid for the watch within the last year
+shipping and the margin tax, and no more than the middle of what we paid for the watch
 (for a full set, of the full sets we bought). Your price, once set, is the most to pay in its place; an empty one gives it back.
 A price below half or above one and a half times a worked-out limit needs confirmation.</p>
 {matches}<input type=search placeholder="Find a watch: brand, model or reference">

@@ -2,7 +2,7 @@
 
 import asyncio
 import gc
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
 
@@ -21,7 +21,7 @@ from prices_page import PATH, PricesPage, key
 from worth import buy_limit, calculated_limit
 
 SECRET = "the-owner-s-secret"
-SEARCHED = datetime(2026, 10, 10, 11, 0)
+SEARCHED = datetime.now().replace(minute=0, second=0, microsecond=0) - timedelta(days=7)  # within the 90 days whose prices count
 PAGE = (Path(__file__).parent / "pages" / "chrono24.html").read_text(encoding="utf-8")
 
 
@@ -65,9 +65,9 @@ async def test_each_watch_shows_its_market_worth_and_most_to_pay(client):
     page = await (await client.get(PATH, params={"key": key(SECRET)})).text()
 
     rolex = page[page.index('id="116610LN"'):].split("</tr>")[0]
-    assert "192 used, 0 of them full sets, <time>2026-10-10</time>" in rolex  # a date kept whole on its line
+    assert f"192 used, 0 of them full sets, <time>{SEARCHED.date()}</time>" in rolex  # a date kept whole on its line
     bought, sold, used, full_set = rolex.split("<td class=n>")[1:5]
-    assert bought.startswith("–") and sold.startswith("–")  # bought and sold by us within the year: none
+    assert bought.startswith("–") and sold.startswith("–")  # bought and sold by us lately: none
     assert "10.800 €" in used and "8.608 €" in used  # worth, the 48th cheapest of 192, and most to pay
     assert full_set.count("–") == 2  # no full set offered: no worth, no most to pay
 

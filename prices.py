@@ -169,10 +169,14 @@ class Prices:
         key = reference_key(reference)
         return self._db.execute("SELECT 1 FROM searches WHERE reference = ? AND kind = ?", (key, kind)).fetchone() is not None
 
-    def market(self, reference: str, kind: str) -> Tuple[int, List[float]]:
-        """How many offers of this kind the last search of the market found for a reference, and the prices of those it read, cheapest first."""
+    def market(self, reference: str, kind: str, since: datetime = datetime.min) -> Tuple[int, List[float]]:
+        """How many offers of this kind the last search of the market found for a reference, and the prices of those it read, cheapest first:
+        none where that search was made before `since`."""
         key = reference_key(reference)
-        search = self._db.execute("SELECT found FROM searches WHERE reference = ? AND kind = ?", (key, kind)).fetchone()
+        search = self._db.execute(
+            "SELECT found FROM searches WHERE reference = ? AND kind = ? AND searched >= ?",
+            (key, kind, since.isoformat(timespec="seconds")),
+        ).fetchone()
         if not search:
             return 0, []
         read = self._db.execute(

@@ -4,7 +4,7 @@ import asyncio
 import json
 import logging
 from dataclasses import replace
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
 from unittest.mock import AsyncMock, Mock
@@ -30,7 +30,7 @@ from worth import worth
 
 PAGES = Path(__file__).parent / "pages"
 OFFER = (PAGES / "kleinanzeigen_offer.html").read_text(encoding="utf-8")
-SEARCHED = datetime(2026, 10, 10, 11, 0)
+SEARCHED = datetime.now().replace(minute=0, second=0, microsecond=0) - timedelta(days=7)  # within the 90 days whose prices count
 
 
 @pytest.fixture
