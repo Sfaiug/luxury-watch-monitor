@@ -2269,17 +2269,22 @@ async def test_a_settling_message_each_time_leaving_a_term_unnamed_goes_to_the_o
     assert gone.status == "owner" and "the AI wrote no message naming insured shipping" in gone.notice
 
 
-async def test_a_word_that_only_holds_a_term_s_word_does_not_name_it(kept):
+@pytest.mark.parametrize("agreed, unnamed, named", [
+    ({}, "Super, [BETRAG]! War das ein Vertragshändler?",
+     "Super, [BETRAG]! Ich mache dazu immer einen kurzen Kaufvertrag, passt das?"),
+    ({"contract": True}, "Super, [BETRAG]! Bist du die Person, die sie neu gekauft hat?",
+     "Super, [BETRAG]! Schickst du mir noch ein Foto deines Ausweises?"),
+])
+async def test_a_word_that_only_holds_a_term_s_word_does_not_name_it(kept, agreed, unnamed, named):
     box = Box()
     await opened(kept, box)
-    box.seller("Ok, 7.550 € passt, Überweisung und Versand gehen klar. Ich bin Privatperson.")
+    box.seller("Ok, 7.550 € passt, Überweisung und Versand gehen klar.")
 
-    await negotiator(Claude(reads=[says(accepts_offer=True, bank_transfer=True, delivery="shipping")],
-                            writes=["Super, [BETRAG]! Ich kaufe auch als Privatperson. War das ein Vertragshändler?",
-                                    "Super, [BETRAG]! Ich mache dazu immer einen kurzen Kaufvertrag, passt das?"]),
+    await negotiator(Claude(reads=[says(accepts_offer=True, bank_transfer=True, delivery="shipping", **agreed)],
+                            writes=[unnamed, named]),
                      kept).follow_up(box)
 
-    assert box.said[-1].text.endswith("kurzen Kaufvertrag, passt das?")
+    assert box.said[-1].text == named.replace("[BETRAG]", "7.550 €")
 
 
 @pytest.mark.parametrize("same_first", [False, True])
