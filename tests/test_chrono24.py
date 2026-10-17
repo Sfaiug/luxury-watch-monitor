@@ -19,7 +19,7 @@ from prices import Prices
 from worth import buy_limit, worth
 
 PAGES = Path(__file__).parent / "pages"
-SEEN = datetime(2026, 10, 10, 11, 0)
+SEEN = datetime.now().replace(minute=0, second=0, microsecond=0) - timedelta(days=7)  # within the 90 days whose prices count
 
 
 def page(name):
@@ -188,10 +188,10 @@ async def test_a_reference_the_shops_offer_is_searched_for_each_kind_and_its_eu_
     assert not chrome.open
     assert prices._db.execute(
         "SELECT COUNT(*), MIN(price), MIN(reference), MIN(first_seen) FROM offers WHERE site_key = 'chrono24'"
-    ).fetchone() == (120, 9189.0, "116610LN", "2026-10-10T11:00:00")
+    ).fetchone() == (120, 9189.0, "116610LN", SEEN.isoformat())
     assert sorted(prices._db.execute("SELECT * FROM searches").fetchall()) == [
-        ("116610LN", FULL_SET, 192, "2026-10-10T11:00:00"),
-        ("116610LN", USED, 192, "2026-10-10T11:00:00"),
+        ("116610LN", FULL_SET, 192, SEEN.isoformat()),
+        ("116610LN", USED, 192, SEEN.isoformat()),
     ]
     assert [worth(prices, "116610LN", kind) for kind in KINDS] == [Decimal("10800")] * 2
 

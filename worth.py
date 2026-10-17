@@ -3,7 +3,7 @@ and what the business itself bought and sold it for."""
 
 import math
 import statistics
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from decimal import ROUND_FLOOR, Decimal
 from typing import Optional, Tuple
 
@@ -12,17 +12,17 @@ from config import APP_CONFIG
 from prices import Prices
 
 FEWEST = 5  # offers below which the market says too little to go by
-# The business's own trades that count: prices change all the time (owner rule, 17 Oct 2026)
-TRADED_WITHIN = timedelta(days=90)
+# Prices older than this count no more, Chrono24's and the business's own: they change all the time (owner rule, 17 Oct 2026)
+RECENT = timedelta(days=90)
 MARGIN_TAX = Decimal("0.19")  # VAT on a used watch's margin (Differenzbesteuerung, § 25a UStG)
 
 
 def ours(prices: Prices, reference: str, kind: str, sold: bool = True,
          brand: Optional[str] = None) -> Tuple[int, Optional[Decimal]]:
-    """How many of this kind of the watch the business sold within `TRADED_WITHIN`, or bought if not sold, and the
+    """How many of this kind of the watch the business sold within `RECENT`, or bought if not sold, and the
     middle of their prices: of full sets for a full set (owner rule, 11 Oct 2026: the controlling tool's prices are
     price data)."""
-    amounts = prices.traded_for(reference, kind == FULL_SET, date.today() - TRADED_WITHIN, sold, brand)
+    amounts = prices.traded_for(reference, kind == FULL_SET, date.today() - RECENT, sold, brand)
     return len(amounts), Decimal(str(statistics.median(amounts))) if amounts else None
 
 
@@ -30,15 +30,15 @@ def worth(prices: Prices, reference: str, kind: str, brand: Optional[str] = None
     """What this kind of the watch is worth: the lower of what the market asks and what the business sold it for.
 
     The market: the price a quarter of the Chrono24 offers of this kind inside
-    the EU ask less than, from five offers up. Prices below half the middle of
+    the EU ask less than, from five offers up, its search made within `RECENT`. Prices below half the middle of
     those read count toward neither the quarter nor the five offers needed.
     A search reads the cheapest 120:
     for a watch offered more than 480 times the dearest of those stands in for
     the quarter, which only lowers it. A full set's market value is at least
     the same watch's used worth. The business: the middle of its own sales of
-    the watch within `TRADED_WITHIN`, which still caps its worth.
+    the watch within `RECENT`, which still caps its worth.
     """
-    found, asked = prices.market(reference, kind)
+    found, asked = prices.market(reference, kind, datetime.now() - RECENT)
     if asked:
         cutoff = statistics.median(asked) / 2
         kept = [price for price in asked if price >= cutoff]
@@ -74,7 +74,7 @@ def most_to_pay(worth: Decimal) -> Decimal:
 
 def buy_limit(prices: Prices, reference: str, kind: str, brand: Optional[str] = None) -> Optional[Decimal]:
     """The most to pay for this kind of a watch: the owner's own buy price, or else the one worked out from its worth,
-    no more than the middle of what the business paid for it within `TRADED_WITHIN`."""
+    no more than the middle of what the business paid for it within `RECENT`."""
     own = prices.buy_price(reference)
     if own is not None:
         return Decimal(str(own))

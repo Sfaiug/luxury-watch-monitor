@@ -16,7 +16,7 @@ from models import WatchData
 from monitor import WatchMonitor
 from prices import Prices
 from prices_page import PATH, PricesPage, key
-from worth import TRADED_WITHIN, buy_limit, most_to_pay, worth
+from worth import RECENT, buy_limit, most_to_pay, worth
 
 # The export's own header (11 Oct 2026); the rows are made up, the seller column as full as in the real one
 HEADER = (
@@ -111,7 +111,7 @@ async def test_a_newer_export_takes_the_place_of_the_last_one(tmp_path, export, 
     monitor.prices = Prices(tmp_path / "prices.sqlite3")
 
     await monitor._read_trades()
-    assert len(monitor.prices.traded_for("116610LN", False, date.today() - TRADED_WITHIN, True)) == 2
+    assert len(monitor.prices.traded_for("116610LN", False, date.today() - RECENT, True)) == 2
 
     export.write_text("\n".join([
         HEADER,
@@ -217,7 +217,7 @@ def test_existing_trades_gain_their_brand_when_the_export_is_read_again(tmp_path
     prices.close()
 
     prices = Prices(path)
-    assert prices.traded_for("116610LN", False, date.today() - TRADED_WITHIN, True, "Rolex") == [8800, 9900]
+    assert prices.traded_for("116610LN", False, date.today() - RECENT, True, "Rolex") == [8800, 9900]
     assert prices.traded_for("116610LN", False, date(2000, 1, 1), True, "Omega") == []
     prices.close()
 
