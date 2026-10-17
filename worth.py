@@ -12,13 +12,14 @@ from config import APP_CONFIG
 from prices import Prices
 
 FEWEST = 5  # offers below which the market says too little to go by
-TRADED_WITHIN = timedelta(days=365)  # the business's own trades that count, prices changing as they do
+# The business's own trades that count: prices change all the time (owner rule, 17 Oct 2026)
+TRADED_WITHIN = timedelta(days=90)
 MARGIN_TAX = Decimal("0.19")  # VAT on a used watch's margin (Differenzbesteuerung, § 25a UStG)
 
 
 def ours(prices: Prices, reference: str, kind: str, sold: bool = True,
          brand: Optional[str] = None) -> Tuple[int, Optional[Decimal]]:
-    """How many of this kind of the watch the business sold within the last year, or bought if not sold, and the
+    """How many of this kind of the watch the business sold within `TRADED_WITHIN`, or bought if not sold, and the
     middle of their prices: of full sets for a full set (owner rule, 11 Oct 2026: the controlling tool's prices are
     price data)."""
     amounts = prices.traded_for(reference, kind == FULL_SET, date.today() - TRADED_WITHIN, sold, brand)
@@ -35,7 +36,7 @@ def worth(prices: Prices, reference: str, kind: str, brand: Optional[str] = None
     for a watch offered more than 480 times the dearest of those stands in for
     the quarter, which only lowers it. A full set's market value is at least
     the same watch's used worth. The business: the middle of its own sales of
-    the watch within the last year, which still caps its worth.
+    the watch within `TRADED_WITHIN`, which still caps its worth.
     """
     found, asked = prices.market(reference, kind)
     if asked:
@@ -73,7 +74,7 @@ def most_to_pay(worth: Decimal) -> Decimal:
 
 def buy_limit(prices: Prices, reference: str, kind: str, brand: Optional[str] = None) -> Optional[Decimal]:
     """The most to pay for this kind of a watch: the owner's own buy price, or else the one worked out from its worth,
-    no more than the middle of what the business paid for it within the last year."""
+    no more than the middle of what the business paid for it within `TRADED_WITHIN`."""
     own = prices.buy_price(reference)
     if own is not None:
         return Decimal(str(own))
