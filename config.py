@@ -8,6 +8,9 @@ from typing import Dict, Optional
 
 from money import parse_price
 
+# ATLAS's site; it hands /muv/ and /discord/ to the monitor
+ATLAS_URL = "https://atlassakura.com"
+
 
 def _env_bool(name: str, default: str = "false") -> bool:
     """Parse common boolean environment values."""
@@ -207,7 +210,6 @@ class AppConfig:
     discord_alert_channel_id: str = os.getenv("DISCORD_ALERT_CHANNEL_ID", "")
     action_token_secret: str = os.getenv("ACTION_TOKEN_SECRET", "")
     muv_http_actions_enabled: bool = _env_bool("MUV_HTTP_ACTIONS_ENABLED", "false")
-    muv_action_base_url: str = os.getenv("MUV_ACTION_BASE_URL", "")
     muv_action_web_path: str = os.getenv("MUV_ACTION_WEB_PATH", "/muv/actions")
     muv_offer_webhook_path: str = os.getenv("MUV_OFFER_WEBHOOK_PATH", "/muv/offers")
     muv_offer_link_urls: str = os.getenv("MUV_OFFER_LINK_URLS", "")

@@ -6,6 +6,8 @@ from typing import Any, Optional, Tuple
 
 import aiohttp
 
+from config import ATLAS_URL
+
 
 class DiscordApi:
     """Calls Discord as the bot named in `config` (its token and Discord's address)."""
@@ -21,7 +23,7 @@ class DiscordApi:
         request = {
             "headers": {
                 "Authorization": f"Bot {self.config.discord_bot_token}",
-                "User-Agent": "DiscordBot (https://atlas.hopcomp.com, 1.0)",
+                "User-Agent": f"DiscordBot ({ATLAS_URL}, 1.0)",
             },
             "timeout": aiohttp.ClientTimeout(total=15),
         }

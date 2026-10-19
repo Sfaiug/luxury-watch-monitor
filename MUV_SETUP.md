@@ -62,13 +62,12 @@ confirmation.
 ## Signed Link Button Fallback
 
 If there is no Discord application public key yet, use a normal Discord link
-button. The click opens a signed VM URL, and the VM queues the MUV action
-server-side:
+button. The click opens a signed URL on `https://atlassakura.com`, and the VM
+queues the MUV action server-side:
 
 ```env
 ENABLE_MUV_ACTIONS=true
 MUV_HTTP_ACTIONS_ENABLED=true
-MUV_ACTION_BASE_URL=https://YOUR_DOMAIN
 MUV_ACTION_WEB_PATH=/muv/actions
 ACTION_TOKEN_SECRET=long-random-secret
 ```
