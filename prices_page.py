@@ -20,7 +20,7 @@ from prices import Prices, reference_key
 from utils import parse_price
 from worth import RECENT, calculated_limit, ours, worth
 
-PATH = "/muv/prices"  # atlas.hopcomp.com hands /muv/ to the monitor
+PATH = "/muv/prices"  # atlassakura.com hands /muv/ to the monitor
 
 
 def key(secret: str) -> str:

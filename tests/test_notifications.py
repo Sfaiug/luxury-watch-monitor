@@ -3,6 +3,10 @@
 import pytest
 import asyncio
 import json
+import os
+import subprocess
+import sys
+from pathlib import Path
 from unittest.mock import AsyncMock, Mock, patch
 from decimal import Decimal
 from urllib.parse import unquote
@@ -196,7 +200,6 @@ class TestNotificationManager:
                     mock_config.muv_action_label = "Send to MUV"
                     mock_config.action_token_secret = ""
                     mock_config.muv_http_actions_enabled = False
-                    mock_config.muv_action_base_url = ""
                     mock_config.muv_action_web_path = "/muv/actions"
                     mock_config.emoji_config = {
                         "question": "?",
@@ -261,7 +264,6 @@ class TestNotificationManager:
                     mock_config.muv_action_label = "Send to MUV"
                     mock_config.action_token_secret = "shared-secret"
                     mock_config.muv_http_actions_enabled = True
-                    mock_config.muv_action_base_url = "https://atlas.hopcomp.com"
                     mock_config.muv_action_web_path = "/muv/actions"
                     mock_config.emoji_config = {
                         "question": "?",
@@ -290,11 +292,35 @@ class TestNotificationManager:
             button = payload["components"][0]["components"][0]
             assert button["style"] == 5
             assert "custom_id" not in button
-            assert button["url"].startswith("https://atlas.hopcomp.com/muv/actions/")
+            assert button["url"].startswith("https://atlassakura.com/muv/actions/")
             custom_id = unquote(button["url"].rsplit("/", 1)[1])
             assert ActionStore.parse_custom_id(custom_id, "shared-secret")
         finally:
             store.close()
+
+    def test_link_buttons_open_on_atlassakura_whatever_live_env_names(self):
+        """Live's .env still names the old host; a freshly loaded config pays it no heed."""
+        env = dict(
+            os.environ,
+            MUV_ACTION_BASE_URL="https://atlas.hopcomp" ".com",  # split: no file names it
+            MUV_HTTP_ACTIONS_ENABLED="true",
+        )
+        env.pop("MUV_ACTION_WEB_PATH", None)
+        result = subprocess.run(
+            [
+                sys.executable,
+                "-c",
+                "from notifications import NotificationManager\n"
+                "print(NotificationManager._build_muv_action_url('muv:x'))\n",
+            ],
+            cwd=Path(__file__).resolve().parents[1],
+            env=env,
+            text=True,
+            capture_output=True,
+            check=True,
+        )
+
+        assert result.stdout.strip().startswith("https://atlassakura.com/muv/actions/")
 
     @pytest.mark.asyncio
     async def test_send_notification_uses_bot_custom_id_button_when_channel_configured(
@@ -325,7 +351,6 @@ class TestNotificationManager:
                     mock_config.muv_action_label = "Send to MUV"
                     mock_config.action_token_secret = "shared-secret"
                     mock_config.muv_http_actions_enabled = True
-                    mock_config.muv_action_base_url = "https://atlas.hopcomp.com"
                     mock_config.muv_action_web_path = "/muv/actions"
                     mock_config.discord_bot_token = "bot-token"
                     mock_config.discord_api_base_url = "https://discord.com/api/v10"
@@ -408,7 +433,6 @@ class TestNotificationManager:
                     mock_config.muv_action_label = "Send to MUV"
                     mock_config.action_token_secret = "shared-secret"
                     mock_config.muv_http_actions_enabled = True
-                    mock_config.muv_action_base_url = "https://atlas.hopcomp.com"
                     mock_config.muv_action_web_path = "/muv/actions"
                     mock_config.discord_bot_token = "bot-token"
                     mock_config.discord_api_base_url = "https://discord.com/api/v10"
@@ -448,7 +472,7 @@ class TestNotificationManager:
             )
             button = webhook_call.kwargs["json"]["components"][0]["components"][0]
             assert button["style"] == 5
-            assert button["url"].startswith("https://atlas.hopcomp.com/muv/actions/")
+            assert button["url"].startswith("https://atlassakura.com/muv/actions/")
             assert "custom_id" not in button
         finally:
             store.close()

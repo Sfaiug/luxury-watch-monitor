@@ -7,7 +7,7 @@ from urllib.parse import quote
 import aiohttp
 import logging
 
-from config import APP_CONFIG, SiteConfig
+from config import APP_CONFIG, ATLAS_URL, SiteConfig
 from models import WatchData
 from logging_config import PerformanceLogger
 from action_store import ActionStore
@@ -348,14 +348,8 @@ class NotificationManager:
         """Build a signed VM link-button URL when configured."""
         if APP_CONFIG.muv_http_actions_enabled is not True:
             return None
-        base_config = APP_CONFIG.muv_action_base_url
-        base_url = (
-            base_config.strip().rstrip("/") if isinstance(base_config, str) else ""
-        )
-        if not base_url:
-            return None
         path_config = APP_CONFIG.muv_action_web_path
         path = "/" + (
             path_config.strip("/") if isinstance(path_config, str) else "muv/actions"
         )
-        return f"{base_url}{path}/{quote(custom_id, safe='')}"
+        return f"{ATLAS_URL}{path}/{quote(custom_id, safe='')}"
