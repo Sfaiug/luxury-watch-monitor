@@ -1,8 +1,6 @@
 #!/usr/bin/env python3
-"""
-Watch Monitor - Production-Ready Windows Service
-Enhanced with webhook validation, Windows compatibility, and production features.
-"""
+"""The one live process: it scans the shops and the members' filters, posts each new listing to Discord, and runs
+the Chrono24 searches and the negotiations beside the scans."""
 
 import asyncio
 import argparse

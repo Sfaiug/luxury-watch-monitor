@@ -196,7 +196,10 @@ class WatchData:
         return chrono24.search(" ".join(query_parts))
 
     def to_discord_embed(self, color: int) -> Dict[str, Any]:
-        """Convert to Discord embed format."""
+        """The alert for this listing, built the same whatever its source, shop, eBay or Kleinanzeigen, with the
+        content it has and no more: no market price, spread or price history (owner rules, 9 Oct 2026: "Notification
+        structure should be the same everywhere. Should all look the same. Want consistency and ultimate
+        simplicity"; asked whether to add market prices: no)."""
         # Build title
         embed_title = self._build_embed_title()
 

@@ -1,4 +1,11 @@
-"""Pytest configuration and fixtures for watch monitor tests."""
+"""Pytest configuration and fixtures for watch monitor tests.
+
+A failing test is removed only when it cannot test this code (markup the scraper no longer reads, a method that does
+not exist), with what its removal leaves unused; one that shows a defect stays as a strict xfail narrowed to it, and
+one whose own setup fails is fixed. A reading defect is counted on the saved real pages in tests/pages before
+anything is built for it; a form no real page uses stays a strict xfail. (9 Oct 2026: three review rounds on
+removals, and four pull requests and eleven rounds on a form none of 19 real pages says.)
+"""
 
 import pytest
 import asyncio

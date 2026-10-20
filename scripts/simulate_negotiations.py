@@ -2,7 +2,8 @@
 """The agent negotiates with AI sellers of many kinds, an AI playing each seller as its brief says, through the
 production code (the AI's reading and writing, `negotiation.move`, the terms, what the owner is told); only the
 Kleinanzeigen message box is a list here, and nothing reaches Kleinanzeigen or Discord. Each brief says how the
-negotiation is to end: the run prints every conversation and whether it ended so, and fails when one did not.
+negotiation is to end: the run prints every conversation and whether it ended so, and fails when one did not. AI
+sellers of many kinds try the agent, never the owner playing one (owner rule, 13 Oct 2026).
 
 Where AGENT_MODEL is set and the AI hub runs (on the server, in the checkout):
 venv/bin/python3 scripts/simulate_negotiations.py [seller ...]

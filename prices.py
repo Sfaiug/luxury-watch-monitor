@@ -1,4 +1,8 @@
-"""What the watches the monitor reads are offered for: one row per offer, for as long as it is listed."""
+"""What the watches the monitor reads are offered for: one row per offer, for as long as it is listed.
+
+The price database a watch's worth comes from, our own, fed first by Chrono24 (owner rule, 10 Oct 2026: "a large
+matrix of watch prices in conditions and everything, so the AI agent has a reference point"; "I think chrono is the
+most accurate")."""
 
 import re
 import sqlite3
