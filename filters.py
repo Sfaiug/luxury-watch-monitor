@@ -21,6 +21,9 @@ class Store:
     search_url: Callable[..., str]
 
 
+# Members' filters search Kleinanzeigen only for now (owner rule, 14 Oct 2026: "We only do KA for now no ebay"). A
+# filter is made in Discord through the "New filter" flow, and its matches go to a channel only that member sees
+# (owner rule, 9 Oct 2026).
 STORES: Dict[str, Store] = {
     "kleinanzeigen": Store(
         name="Kleinanzeigen",

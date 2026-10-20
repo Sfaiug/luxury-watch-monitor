@@ -38,7 +38,7 @@ from scrapers.watch_out import WatchOutScraper
 from scrapers.rueschenbeck import RueschenbeckScraper
 from scrapers.bachmann_scher import BachmannScherScraper
 
-# Map site keys to scraper classes
+# Map site keys to scraper classes: a shop is one file in scrapers/, one entry in config.py and one line here
 SCRAPER_CLASSES: Dict[str, Type[BaseScraper]] = {
     "worldoftime": WorldOfTimeScraper,
     "grimmeissen": GrimmeissenScraper,
