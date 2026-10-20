@@ -4,8 +4,8 @@ Watches seven watch shops and members' Kleinanzeigen searches, and posts each ne
 
 ```bash
 cp .env.example .env    # fill in the Discord webhooks and bot token
-scripts/test.sh         # the test suite
-python3 main_production.py
+scripts/test.sh         # builds .venv and runs the test suite
+.venv/bin/python main_production.py
 ```
 
 On the server it runs as a systemd service that updates itself from `main` (`deploy/`).
